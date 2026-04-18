@@ -37,6 +37,9 @@ public class User {
     @Builder.Default
     private RegisterType registerType = RegisterType.EMAIL;
 
+    @Column(name = "selected_character_id")
+    private Long selectedCharacterId;
+
     // =========================================
     // [ 비즈니스 함수 ]
     // =========================================
