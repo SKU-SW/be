@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: "SKU_SW"
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver # MySQL JDBC 드라이버 클래스 지정
+  jpa:
+    database: mysql # 사용할 데이터베이스 종류 설정 (MySQL)
+    database-platform: org.hibernate.dialect.MySQLDialect # Hibernate에서 사용할 MySQL 방언(dialect) 설정
+    show-sql: false # 실행되는 SQL 쿼리를 콘솔에 출력할지 여부 설정
+    properties:
+      hibernate:
+        format_sql: true # 출력되는 SQL 쿼리를 보기 좋게 포맷팅
+
+# swagger 설정
+springdoc:
+  swagger-ui:
+    path: /swagger-ui # Swagger UI 접근을 위한 경로 설정 (기본값 : /swagger-ui/index.html)
+    display-request-duration: true # Swagger UI에서 API 요청 소요 시간을 표시하도록 설정 (밀리초, ms단위)
+    tags-sorter: alpha # Swagger UI에서 태그(컨트롤러/그룹) 목록 정렬 기준 설정 (alpha : 알파벳 순)
+    operations-sorter: method # 각 태그에 속한 오퍼레이션(API) 목록 정렬 기준 설정 => method: HTTP 메서드 순서(GET, POST, PUT, DELETE)로 정렬
+  api-docs:
+    path: /v3/api-docs # OpenAPI JSON 문서를 제공하는 엔드포인트. (기본값 /v3/api-docs임) => 외부툴/REST 클라이언트에서 사용할 API 스펙(JSON) 파일 경로 설정
+
+jwt:
+  # 24시간 (1000 * 60 * 60 * 24)
+  access-token-validity-in-ms: 86400000
+  # 3달 (1000 * 60 * 60 * 24 * 90)
+  refresh-token-validity-in-ms: 7776000000
+
+# ops 설정
+management:
+  endpoints:
+    web:
+      base-path: /manage # 기본경로(/actuator)를 /manage로 변경. /actuator를 외부에서 노출하지 않기 위해
