@@ -3,7 +3,6 @@ package com.example.sku_sw.global.config;
 import com.example.sku_sw.global.security.JwtAuthFilter;
 import com.example.sku_sw.global.security.handler.JwtAccessDeniedHandler;
 import com.example.sku_sw.global.security.handler.UserAuthenticationEntryPoint;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
