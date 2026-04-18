@@ -181,8 +181,7 @@ public class RedisUtil {
                 return;
             }
 
-            boolean hasKey = redisTemplate.hasKey(key);
-            if (hasKey) {
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(key))) {
                 return;
             }
 
