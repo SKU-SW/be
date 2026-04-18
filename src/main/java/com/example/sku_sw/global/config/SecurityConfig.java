@@ -26,7 +26,9 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
 
     private static final String[] AUTH_WHITELIST = {
-            "/api/v1/auth/**",
+            "/api/v1/auth/register/email",
+            "/api/v1/auth/login/email",
+            "/api/v1/auth/refresh",
             "/v3/api-docs/**",  // Swagger JSON 데이터
             "/swagger-ui/**",   // Swagger UI CSS, JS, 이미지
             "/swagger-ui-custom.html",  // Swagger UI 메인 페이지
