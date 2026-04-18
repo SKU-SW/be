@@ -1,0 +1,48 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: ${DB_URL}?useSSL=false&useUnicode=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    username: ${DB_USER}
+    password: ${DB_PW}
+  jpa:
+    show-sql: false       # dev 서버 로그 과부하 방지
+    hibernate:
+      ddl-auto: update
+  data:
+    redis:
+      host: ${DEV_REDIS_HOST}   # dev용 Redis 호스트
+      port: 6379
+      password: ${DEV_REDIS_PW}
+
+logging:
+  level:
+    root: INFO                           # 정상 흐름만 출력
+    org.hibernate.SQL: WARN              # SQL은 경고 이상만 (show-sql: false와 맞춤)
+    org.springframework.web: INFO        # 요청/응답 흐름 확인
+    org.springframework.security: INFO   # 인증/인가 흐름 확인
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true   # https 기준으로 운영 권장
+
+springdoc:
+  swagger-ui:
+    enabled: true   # dev 서버에서는 Swagger 허용 (prod에서는 false)
+
+# Actuator - dev에서는 주요 엔드포인트 추가 노출
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, loggers
+  endpoint:
+    health:
+      show-details: always   # 헬스체크 상세 정보 표시
+
+jwt:
+  token:
+    secretKey: ${JWT_SECRET_KEY}
