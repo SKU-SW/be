@@ -51,5 +51,9 @@ public class User {
                 .registerType(registerType == null ? RegisterType.EMAIL : registerType)
                 .build();
     }
+
+    public void updateSelectedCharacterId(Long selectedCharacterId) {
+        this.selectedCharacterId = selectedCharacterId;
+    }
     
 }

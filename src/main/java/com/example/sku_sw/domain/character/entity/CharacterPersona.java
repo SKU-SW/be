@@ -46,4 +46,14 @@ public class CharacterPersona {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Personality personality;
+
+    // ===============================================
+    // [비즈니스 로직]
+    // ===============================================
+    public void updateCharacterPersona(PresetType presetType, SpeechStyle speechStyle, Personality personality) {
+        this.presetType = presetType;
+        this.speechStyle = speechStyle;
+        this.personality = personality;
+    }
+
 }

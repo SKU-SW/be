@@ -30,7 +30,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-@Table(name = "character")
+@Table(name = "`character`")
 public class Character extends BaseTimeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -59,5 +59,16 @@ public class Character extends BaseTimeEntity {
     private CharacterPersona characterPersona;
 
     @OneToMany(mappedBy = "character", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
     private List<CharacterTriggerWord> triggerWords = new ArrayList<>();
+
+    // ======================================
+    // [비즈니스 로직]
+    // ======================================
+    public void updateCharacter(String name, Gender gender, VoiceType voiceType, CharacterImage characterImage) {
+        this.name = name;
+        this.gender = gender;
+        this.voiceType = voiceType;
+        this.characterImage = characterImage;
+    }
 }

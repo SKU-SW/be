@@ -37,5 +37,6 @@ public class CharacterImage {
     private String preset;
 
     @OneToMany(mappedBy = "characterImage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
     private List<CharacterImageDetail> imageDetails = new ArrayList<>();
 }
