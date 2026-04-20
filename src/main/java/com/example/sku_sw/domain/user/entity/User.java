@@ -37,6 +37,9 @@ public class User {
     @Builder.Default
     private RegisterType registerType = RegisterType.EMAIL;
 
+    @Column(name = "selected_character_id")
+    private Long selectedCharacterId;
+
     // =========================================
     // [ 비즈니스 함수 ]
     // =========================================
@@ -47,6 +50,10 @@ public class User {
                 .hashedPassword(hashedPassword)
                 .registerType(registerType == null ? RegisterType.EMAIL : registerType)
                 .build();
+    }
+
+    public void updateSelectedCharacterId(Long selectedCharacterId) {
+        this.selectedCharacterId = selectedCharacterId;
     }
     
 }

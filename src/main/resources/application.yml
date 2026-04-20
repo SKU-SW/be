@@ -9,6 +9,7 @@ spring:
     show-sql: false # 실행되는 SQL 쿼리를 콘솔에 출력할지 여부 설정
     properties:
       hibernate:
+        default_batch_fetch_size: 100 # 기본 배치 쿼리 연산 크기 -> 여러 값을 Lazy Loading해야할 때, 해당 배치만큼 한번에 쿼리문으로 가져온다.
         format_sql: true # 출력되는 SQL 쿼리를 보기 좋게 포맷팅
 
 # swagger 설정
