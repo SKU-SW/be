@@ -3,9 +3,9 @@ spring:
     activate:
       on-profile: dev
   datasource:
-    url: ${DB_URL}?useSSL=false&useUnicode=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
-    username: ${DB_USER}
-    password: ${DB_PW}
+    url: ${DEV_DB_URL}?useSSL=false&useUnicode=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    username: ${DEV_DB_USER}
+    password: ${DEV_DB_PW}
   jpa:
     show-sql: false       # dev 서버 로그 과부하 방지
     hibernate:
@@ -45,4 +45,4 @@ management:
 
 jwt:
   token:
-    secretKey: ${JWT_SECRET_KEY}
+    secretKey: ${DEV_JWT_SECRET_KEY}

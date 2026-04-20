@@ -1,0 +1,34 @@
+services:
+  # 1. redis 컨테이너 실행
+  redis:
+    image: redis:latest           # 최신 redis 이미지
+    container_name: redis-cache   # container 이름 설정
+    restart: always               # 서버 재시작 시 항상 같이 재시작
+    networks:
+      - spring-network            # docker network 등록
+    volumes:
+      - ./redis/data:/data         # redis 영속성을 위해 docker volume 설정
+
+  # 2. Spring Boot 애플리케이션 서비스 설정
+  app:
+    image: ${DOCKER_HUB_ID}/spring-api-server:latest  # 도커 허브에 올라가있는 spring-api-server 이미지 지정
+    container_name: spring-api-server                 # 컨테이너 이름 지정
+    ports:
+      - "8080:8080"                                   # 포트 바인딩
+    restart: always                                   # 서버 재시작 시 항상 재시작 되도록
+    depends_on:                                       # redis가 실행되고 나서 실행
+      - redis
+    environment:                                      # 환경변수 지정 (application-dev.yml에 필요한 변수들 지정)
+      - SPRING_PROFILES_ACTIVE=dev                    # 컨테이너 실행 시 dev 모드로 실행 설정
+      - DEV_DB_URL=${DEV_DB_URL}
+      - DEV_DB_USER=${DEV_DB_USER}
+      - DEV_DB_PW=${DEV_DB_PW}
+      - DEV_JWT_SECRET_KEY=${DEV_JWT_SECRET_KEY}
+      - DEV_REDIS_HOST=${DEV_REDIS_HOST}
+      - DEV_REDIS_PW=${DEV_REDIS_PW}
+    networks:
+      - spring-network
+
+networks:
+  spring-network:
+    driver: bridge
