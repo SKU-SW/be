@@ -24,6 +24,7 @@ logging:
     org.springframework.security: INFO   # 인증/인가 흐름 확인
 
 server:
+  forward-headers-strategy: framework   # Nginx 프록시 뒤 HTTPS 환경에서 forwarded header 처리
   servlet:
     session:
       cookie:

@@ -1,2 +1,139 @@
+name: Deploy to EC2
+
 on:
+  push:
+    branches: [ main, dev ]
+
 jobs:
+  # ========================================
+  # 1. Spring Boot 빌드 & Docker Hub 푸시
+  # ========================================
+  build-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew clean bootJar -x test
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Build and push Spring Boot image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/backend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/spring-api-server:latest
+            ${{ secrets.DOCKER_HUB_USERNAME }}/spring-api-server:${{ github.sha }}
+
+  # ========================================
+  # 2. Spring Boot EC2 배포 (Via Bastion Host)
+  # ========================================
+  deploy-backend:
+    needs: build-backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose to Backend EC2 via Bastion
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.BACKEND_EC2_HOST }}          #  Private EC2의 '프라이빗 IP' (예: 10.0.x.x)
+          username: ${{ secrets.BACKEND_EC2_SSH_USER }}
+          key: ${{ secrets.BACKEND_EC2_SSH_KEY }}                # Private EC2 접속용 프라이빗 키
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}        # 🟢 Bastion Host의 '퍼블릭 IP' (EIP)
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }} # 🟢 Bastion Host 접속 유저명 (예: ubuntu)
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}      # 🟢 Bastion Host 접속용 프라이빗 키
+          source: "docker/backend/docker-compose-dev.yml"
+          target: "/home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend"
+          strip_components: 2
+
+      - name: Deploy to Backend EC2 via Bastion
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.BACKEND_EC2_HOST }}          #  Private EC2의 '프라이빗 IP'
+          username: ${{ secrets.BACKEND_EC2_SSH_USER }}
+          key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}        # 🟢 Bastion Host의 '퍼블릭 IP' (EIP)
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend
+
+            # .env 파일 생성
+            cat > .env << EOF
+            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }}
+            DEV_DB_HOST=${{ secrets.DEV_DB_HOST }}
+            DEV_DB_NAME=${{ secrets.DEV_DB_NAME }}
+            DEV_DB_USER=${{ secrets.DEV_DB_USER }}
+            DEV_DB_PW=${{ secrets.DEV_DB_PW }}
+            DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }}
+            DEV_REDIS_HOST=${{ secrets.DEV_REDIS_HOST }}
+            DEV_REDIS_PW=${{ secrets.DEV_REDIS_PW }}
+            EOF
+
+            # 최신 이미지 pull
+            docker compose -f docker-compose-dev.yml pull
+
+            # 컨테이너 재시작
+            docker compose -f docker-compose-dev.yml up -d
+
+            # 사용하지 않는 이미지 정리
+            docker image prune -f
+
+  # ========================================
+  # 3. Nginx EC2 배포 (Public Subnet)
+  # ========================================
+  deploy-nginx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy nginx.config and docker-compose to Nginx EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.NGINX_EC2_HOST }} # Public IP
+          username: ${{ secrets.NGINX_EC2_SSH_USER }}
+          key: ${{ secrets.NGINX_EC2_SSH_KEY }}
+          source: "docker/nginx/"
+          target: "/home/${{ secrets.NGINX_EC2_SSH_USER }}/deploy/nginx"
+          strip_components: 2
+
+      - name: Deploy to Nginx EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.NGINX_EC2_HOST }} # Public IP
+          username: ${{ secrets.NGINX_EC2_SSH_USER }}
+          key: ${{ secrets.NGINX_EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.NGINX_EC2_SSH_USER }}/deploy/nginx
+
+            mkdir -p /etc/letsencrypt
+
+            docker compose up -d
+            docker exec nginx-proxy nginx -t || echo "Nginx config test failed - check nginx.conf"
