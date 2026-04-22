@@ -32,7 +32,7 @@ services:
     image: ${DEV_BACKEND_DOCKER_HUB_ID}/spring-api-server:latest
     container_name: spring-api-server
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     restart: always
     depends_on:
       - mysql
