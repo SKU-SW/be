@@ -3,9 +3,9 @@ spring:
     activate:
       on-profile: dev
   datasource:
-    url: ${DB_URL}?useSSL=false&useUnicode=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
-    username: ${DB_USER}
-    password: ${DB_PW}
+    url: jdbc:mysql://${DEV_DB_HOST}:3306/${DEV_DB_NAME}?useSSL=false&useUnicode=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    username: ${DEV_DB_USER}
+    password: ${DEV_DB_PW}
   jpa:
     show-sql: false       # dev 서버 로그 과부하 방지
     hibernate:
@@ -24,6 +24,7 @@ logging:
     org.springframework.security: INFO   # 인증/인가 흐름 확인
 
 server:
+  forward-headers-strategy: framework   # Nginx 프록시 뒤 HTTPS 환경에서 forwarded header 처리
   servlet:
     session:
       cookie:
@@ -45,4 +46,4 @@ management:
 
 jwt:
   token:
-    secretKey: ${JWT_SECRET_KEY}
+    secretKey: ${DEV_JWT_SECRET_KEY}
