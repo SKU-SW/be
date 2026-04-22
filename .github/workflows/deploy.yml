@@ -1,137 +1,319 @@
 name: Deploy to EC2
+# ▲ GitHub Actions 워크플로우의 이름
+#   GitHub 저장소 → Actions 탭에서 이 이름으로 표시됨
 
+# =============================================
+# 트리거 설정: 언제 이 워크플로우를 실행할지
+# =============================================
 on:
   push:
     branches: [ main, develop ]
+    # ▲ main 또는 develop 브랜치에 push 이벤트가 발생할 때만 실행
+    #   예: git push origin main → 워크플로우 자동 시작
+    #   예: PR 머지도 push로 간주되어 트리거됨
 
 jobs:
-  # ========================================
-  # 1. Spring Boot 빌드 & Docker Hub 푸시
-  # ========================================
+  # =============================================
+  # JOB 1. Spring Boot 빌드 & Docker Hub 푸시
+  # =============================================
   build-backend:
+    # ▲ Job의 고유 ID (다른 Job에서 needs: build-backend 로 참조)
+
     runs-on: ubuntu-latest
+    # ▲ 이 Job을 실행할 GitHub Actions Runner의 OS
+    #   ubuntu-latest = GitHub이 제공하는 무료 가상 Ubuntu 환경
+    #   매 실행마다 깨끗한 환경에서 시작 (상태 유지 안 됨)
+
     steps:
+      # ─────────────────────────────────────────
+      # STEP 1. 소스코드 체크아웃
+      # ─────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
+        # ▲ 현재 push된 브랜치의 소스코드를 Runner에 다운로드
+        #   이 step이 없으면 이후 단계에서 소스코드에 접근 불가
+        #   @v4 = 해당 Action의 버전 (업데이트 시 변경)
 
+      # ─────────────────────────────────────────
+      # STEP 2. Java 21 환경 세팅
+      # ─────────────────────────────────────────
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
+          # ▲ 사용할 Java 버전 (Spring Boot 3.x는 Java 17+ 필요)
           distribution: 'temurin'
+          # ▲ JDK 배포판 선택
+          #   temurin = Eclipse Temurin (구 AdoptOpenJDK), 가장 많이 사용
 
+      # ─────────────────────────────────────────
+      # STEP 3. Gradle 실행 권한 부여
+      # ─────────────────────────────────────────
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+        # ▲ gradlew 파일에 실행(+x) 권한 부여
+        #   Git은 기본적으로 실행 권한을 보존하지 않는 경우가 있어
+        #   Linux 환경에서 ./gradlew 실행 전 이 단계가 필요
 
+      # ─────────────────────────────────────────
+      # STEP 4. Gradle 빌드
+      # ─────────────────────────────────────────
       - name: Build with Gradle
         run: ./gradlew clean bootJar -x test
+        # ▲ Spring Boot 애플리케이션을 실행 가능한 JAR로 빌드
+        #
+        #   clean    → 이전 빌드 결과물(build/ 디렉토리) 삭제
+        #   bootJar  → 실행 가능한 fat JAR 생성
+        #              (의존성 라이브러리 전부 포함된 단일 JAR)
+        #   -x test  → 테스트 실행 생략 (빌드 속도 향상)
+        #              CI에서 테스트를 별도 Job으로 분리하는 경우 자주 사용
 
+      # ─────────────────────────────────────────
+      # STEP 5. QEMU 설치 (크로스 플랫폼 빌드 준비)
+      # ─────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        # ▲ QEMU = CPU 아키텍처 에뮬레이터
+        #   GitHub Runner는 amd64(x86_64) 환경이지만,
+        #   arm64(AWS Graviton EC2 등) 이미지를 빌드하려면 QEMU 필요
+        #   이 step으로 Runner에서 arm64 환경을 에뮬레이션 가능
 
+      # ─────────────────────────────────────────
+      # STEP 6. Docker Buildx 설정 (멀티 아키텍처 빌드)
+      # ─────────────────────────────────────────
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        # ▲ Docker Buildx = 멀티 플랫폼 이미지 빌드 도구
+        #   QEMU와 함께 사용하면 linux/arm64, linux/amd64 등
+        #   여러 아키텍처 이미지를 한 번에 빌드 가능
+        #   일반 docker build 명령어는 단일 플랫폼만 지원
 
+      # ─────────────────────────────────────────
+      # STEP 7. Docker Hub 로그인
+      # ─────────────────────────────────────────
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          # ▲ Docker Hub 계정명
+          #   secrets.XXX = GitHub 저장소 Settings → Secrets에 저장된 암호화 변수
+          #   코드에 직접 노출되지 않아 보안 유지
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+          # ▲ Docker Hub Access Token (비밀번호 대신 사용 권장)
+          #   Docker Hub → Account Settings → Security에서 발급
 
+      # ─────────────────────────────────────────
+      # STEP 8. Docker 이미지 빌드 & Docker Hub 푸시
+      # ─────────────────────────────────────────
       - name: Build and push Spring Boot image (arm64)
         uses: docker/build-push-action@v5
         with:
           context: .
+          # ▲ Docker 빌드 컨텍스트 경로
+          #   '.' = 저장소 루트 디렉토리를 컨텍스트로 사용
+          #   Dockerfile에서 COPY 등의 경로가 이 기준으로 해석됨
+
           file: docker/backend/Dockerfile
+          # ▲ 사용할 Dockerfile 경로 (기본값은 ./Dockerfile)
+          #   여기선 docker/backend/ 디렉토리 안의 파일 사용
+
           platforms: linux/arm64
+          # ▲ 빌드 대상 아키텍처
+          #   linux/arm64 = AWS Graviton(t4g, m7g 등) EC2 인스턴스용
+          #   amd64 추가 시: platforms: linux/amd64,linux/arm64
+
           push: true
+          # ▲ 빌드 완료 후 Docker Hub에 자동 push
+          #   false로 하면 빌드만 하고 push 안 함
+
           tags: |
             ${{ secrets.DOCKER_HUB_USERNAME }}/spring-api-server:latest
             ${{ secrets.DOCKER_HUB_USERNAME }}/spring-api-server:${{ github.sha }}
+          # ▲ 이미지에 붙일 태그 (복수 지정 가능)
+          #
+          #   :latest        → 항상 최신 이미지를 가리키는 태그
+          #                    docker pull 시 태그 생략하면 latest 사용
+          #
+          #   :${{github.sha}} → 커밋 해시 태그 (예: :a3f8c2d...)
+          #                    특정 커밋 시점의 이미지로 롤백 가능
+          #                    배포 이력 추적에 유용
 
-  # ========================================
-  # 2. Spring Boot EC2 배포 (Via Bastion Host)
-  # ========================================
+
+  # =============================================
+  # JOB 2. Spring Boot EC2 배포 (Bastion Host 경유)
+  # =============================================
   deploy-backend:
     needs: build-backend
+    # ▲ 의존성 선언: build-backend Job이 성공해야 이 Job 시작
+    #   build-backend 실패 시 이 Job은 실행되지 않음
+    #   선언 안 하면 병렬 실행됨
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # ▲ docker-compose.yml 등 설정 파일을 EC2로 복사하기 위해
+        #   소스코드 체크아웃 필요 (각 Job은 독립 환경이라 재실행 필요)
 
+      # ─────────────────────────────────────────
+      # STEP 2. docker-compose.yml을 Private EC2로 복사
+      # ─────────────────────────────────────────
       - name: Copy docker-compose to Backend EC2 via Bastion
         uses: appleboy/scp-action@v0.1.7
+        # ▲ SCP(Secure Copy Protocol)로 파일 전송하는 Action
+        #   SSH 터널을 이용해 Bastion Host를 경유하여 전송
         with:
-          host: ${{ secrets.BACKEND_EC2_HOST }}          #  Private EC2의 '프라이빗 IP' (예: 10.0.x.x)
+          # ── 최종 목적지: Private EC2 ──────────────────
+          host: ${{ secrets.BACKEND_EC2_HOST }}
+          # ▲ Private EC2의 프라이빗 IP (예: 10.0.2.100)
+          #   인터넷에서 직접 접근 불가, Bastion 경유 필수
           username: ${{ secrets.BACKEND_EC2_SSH_USER }}
-          key: ${{ secrets.BACKEND_EC2_SSH_KEY }}                # Private EC2 접속용 프라이빗 키
-          proxy_host: ${{ secrets.BASTION_EC2_HOST }}        # 🟢 Bastion Host의 '퍼블릭 IP' (EIP)
-          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }} # 🟢 Bastion Host 접속 유저명 (예: ubuntu)
-          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}      # 🟢 Bastion Host 접속용 프라이빗 키
-          source: "docker/backend/docker-compose.yml"
-          target: "/home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend"
-          strip_components: 2
+          # ▲ Private EC2 SSH 접속 유저명 (예: ubuntu, ec2-user)
+          key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
+          # ▲ Private EC2 접속용 SSH 프라이빗 키 (PEM 파일 내용)
 
+          # ── 경유지: Bastion Host ──────────────────────
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
+          # ▲ Bastion Host의 퍼블릭 IP 또는 EIP
+          #   인터넷에서 직접 접근 가능한 점프 서버
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          # ▲ Bastion Host SSH 접속 유저명
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          # ▲ Bastion Host 접속용 SSH 프라이빗 키
+          #   Private EC2 키와 다를 수 있음 (분리 관리 권장)
+
+          # ── 파일 전송 설정 ────────────────────────────
+          source: "docker/backend/docker-compose.yml"
+          # ▲ Runner에서 전송할 파일 경로 (저장소 기준)
+          target: "/home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend"
+          # ▲ Private EC2에서 파일을 저장할 경로
+          strip_components: 2
+          # ▲ 원본 경로에서 앞 디렉토리 2단계 제거
+          #   docker/backend/docker-compose.yml
+          #   → (docker/, backend/ 제거)
+          #   → target/docker-compose.yml 으로 저장
+
+      # ─────────────────────────────────────────
+      # STEP 3. Private EC2에서 배포 명령 실행
+      # ─────────────────────────────────────────
       - name: Deploy to Backend EC2 via Bastion
         uses: appleboy/ssh-action@v1.0.3
+        # ▲ SSH로 원격 명령어를 실행하는 Action
+        #   Bastion Host를 경유하는 프록시 SSH 지원
         with:
-          host: ${{ secrets.BACKEND_EC2_HOST }}          #  Private EC2의 '프라이빗 IP'
+          host: ${{ secrets.BACKEND_EC2_HOST }}
           username: ${{ secrets.BACKEND_EC2_SSH_USER }}
           key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
-          proxy_host: ${{ secrets.BASTION_EC2_HOST }}        # 🟢 Bastion Host의 '퍼블릭 IP' (EIP)
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
           proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
           proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          # ▲ SCP와 동일한 Bastion 경유 설정
+
           script: |
+            # ▲ Private EC2에서 실제로 실행될 쉘 스크립트
+
             cd /home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend
+            # ▲ SCP로 복사한 docker-compose.yml이 있는 디렉토리로 이동
 
             # .env 파일 생성
+            # ▲ docker-compose.yml이 참조할 환경변수 파일 생성
+            #   GitHub Secrets 값을 EC2 로컬 .env 파일로 주입
+            #   이 파일은 Git에 올라가지 않아 민감 정보 보호
             cat > .env << EOF
             DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }}
+            # ▲ docker-compose.yml에서 이미지 경로 구성에 사용
             DEV_DB_HOST=${{ secrets.DEV_DB_HOST }}
+            # ▲ RDS 등 데이터베이스 호스트 주소
             DEV_DB_NAME=${{ secrets.DEV_DB_NAME }}
+            # ▲ 사용할 데이터베이스 이름
             DEV_DB_USER=${{ secrets.DEV_DB_USER }}
+            # ▲ DB 접속 계정
             DEV_DB_PW=${{ secrets.DEV_DB_PW }}
+            # ▲ DB 접속 비밀번호
             DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }}
+            # ▲ JWT 토큰 서명에 사용할 시크릿 키
             DEV_REDIS_HOST=${{ secrets.DEV_REDIS_HOST }}
+            # ▲ Redis 서버 호스트 주소 (캐시/세션용)
             DEV_REDIS_PW=${{ secrets.DEV_REDIS_PW }}
+            # ▲ Redis 접속 비밀번호
             EOF
 
             # 최신 이미지 pull
             docker compose pull
+            # ▲ docker-compose.yml에 정의된 이미지의 최신 버전을 Docker Hub에서 다운로드
+            #   위 Job에서 push한 :latest 태그 이미지를 가져옴
 
             # 컨테이너 재시작
             docker compose up -d
+            # ▲ 컨테이너를 백그라운드(-d, detach)로 실행
+            #   이미 실행 중인 컨테이너가 있으면 변경된 것만 재생성
+            #   처음 실행이면 새로 생성
 
             # 사용하지 않는 이미지 정리
             docker image prune -f
+            # ▲ 태그가 없는(dangling) 이미지 강제(-f) 삭제
+            #   이전 배포에서 사용하던 이미지가 남아 디스크 낭비되는 것 방지
 
-  # ========================================
-  # 3. Nginx EC2 배포 (Public Subnet)
-  # ========================================
+
+  # =============================================
+  # JOB 3. Nginx EC2 배포 (Public Subnet)
+  # =============================================
   deploy-nginx:
+    # ▲ needs 선언 없음 → build-backend, deploy-backend와 병렬 실행
+    #   Nginx 설정은 백엔드 빌드 결과와 무관하므로 독립 실행 가능
+    #   (단, 백엔드가 아직 미배포 상태면 Nginx가 프록시할 대상이 없음 주의)
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # ▲ nginx.conf, docker-compose.yml 등 설정 파일 접근을 위해 체크아웃
 
+      # ─────────────────────────────────────────
+      # STEP 2. Nginx 설정 파일 복사
+      # ─────────────────────────────────────────
       - name: Copy nginx.config and docker-compose to Nginx EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.NGINX_EC2_HOST }} # Public IP
+          host: ${{ secrets.NGINX_EC2_HOST }}
+          # ▲ Nginx EC2는 Public Subnet에 있으므로 퍼블릭 IP 직접 사용
+          #   Bastion 경유 불필요 (proxy_host 설정 없음)
           username: ${{ secrets.NGINX_EC2_SSH_USER }}
           key: ${{ secrets.NGINX_EC2_SSH_KEY }}
           source: "docker/nginx/"
+          # ▲ 저장소의 docker/nginx/ 디렉토리 전체 전송
+          #   nginx.conf, docker-compose.yml 등이 포함됨
           target: "/home/${{ secrets.NGINX_EC2_SSH_USER }}/deploy/nginx"
+          # ▲ Nginx EC2에 저장할 경로
           strip_components: 2
+          # ▲ docker/nginx/ → (docker/, nginx/ 제거) → target/ 에 파일들 바로 저장
 
+      # ─────────────────────────────────────────
+      # STEP 3. Nginx EC2에서 배포 명령 실행
+      # ─────────────────────────────────────────
       - name: Deploy to Nginx EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.NGINX_EC2_HOST }} # Public IP
+          host: ${{ secrets.NGINX_EC2_HOST }}
           username: ${{ secrets.NGINX_EC2_SSH_USER }}
           key: ${{ secrets.NGINX_EC2_SSH_KEY }}
+          # ▲ Public EC2라 Bastion 없이 직접 SSH 접속
           script: |
             cd /home/${{ secrets.NGINX_EC2_SSH_USER }}/deploy/nginx
 
             docker compose up -d
+            # ▲ Nginx 컨테이너 실행/재시작
+            #   설정 파일이 변경됐어도 컨테이너를 재생성해야 반영됨
+
             docker exec nginx-proxy nginx -t || echo "Nginx config test failed - check nginx.conf"
+            # ▲ 실행 중인 nginx-proxy 컨테이너 안에서 nginx 설정 문법 검사
+            #
+            #   docker exec nginx-proxy  → nginx-proxy 컨테이너 내부에서 명령 실행
+            #   nginx -t                 → nginx.conf 문법 유효성 검사
+            #                              성공: "syntax is ok" 출력
+            #                              실패: 오류 위치 출력
+            #   || echo "..."            → nginx -t 실패해도 워크플로우가 중단되지 않고
+            #                              경고 메시지만 출력하고 계속 진행
+            #                              (설정 오류를 인지하되 배포 자체는 완료)
