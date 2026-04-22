@@ -68,7 +68,7 @@ jobs:
           proxy_host: ${{ secrets.BASTION_EC2_HOST }}        # 🟢 Bastion Host의 '퍼블릭 IP' (EIP)
           proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }} # 🟢 Bastion Host 접속 유저명 (예: ubuntu)
           proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}      # 🟢 Bastion Host 접속용 프라이빗 키
-          source: "docker/backend/docker-compose-dev.yml"
+          source: "docker/backend/docker-compose.yml"
           target: "/home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend"
           strip_components: 2
 
@@ -97,10 +97,10 @@ jobs:
             EOF
 
             # 최신 이미지 pull
-            docker compose -f docker-compose-dev.yml pull
+            docker compose pull
 
             # 컨테이너 재시작
-            docker compose -f docker-compose-dev.yml up -d
+            docker compose up -d
 
             # 사용하지 않는 이미지 정리
             docker image prune -f
@@ -132,8 +132,6 @@ jobs:
           key: ${{ secrets.NGINX_EC2_SSH_KEY }}
           script: |
             cd /home/${{ secrets.NGINX_EC2_SSH_USER }}/deploy/nginx
-
-            mkdir -p /etc/letsencrypt
 
             docker compose up -d
             docker exec nginx-proxy nginx -t || echo "Nginx config test failed - check nginx.conf"
