@@ -16,11 +16,6 @@ services:
       - MYSQL_ROOT_PASSWORD=${DEV_DB_PW}
     networks:
       - spring-network
-    healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${DEV_DB_USER}", "-p${DEV_DB_PW}" ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
   # 2. Redis
   redis:
