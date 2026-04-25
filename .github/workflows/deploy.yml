@@ -186,7 +186,7 @@ jobs:
           # ── 파일 전송 설정 ────────────────────────────
           source: "docker/backend/docker-compose.yml"
           # ▲ Runner에서 전송할 파일 경로 (저장소 기준)
-          target: "/home/${{ secrets.BACKEND_EC2_SSH_USER }}/deploy/backend"
+          target: "/home/${{ secrets.PRIVATE_EC2_SSH_USER }}/deploy/backend"
           # ▲ Private EC2에서 파일을 저장할 경로
           strip_components: 2
           # ▲ 원본 경로에서 앞 디렉토리 2단계 제거
@@ -307,13 +307,11 @@ jobs:
             # ▲ Nginx 컨테이너 실행/재시작
             #   설정 파일이 변경됐어도 컨테이너를 재생성해야 반영됨
 
-            docker exec nginx-proxy nginx -t || echo "Nginx config test failed - check nginx.conf"
-            # ▲ 실행 중인 nginx-proxy 컨테이너 안에서 nginx 설정 문법 검사
+            docker exec nginx-proxy nginx -t && docker exec nginx-proxy nginx -s reload || echo "Nginx config test failed"
+            # ▲ 실행 중인 nginx-proxy 컨테이너 안에서 설정 검사 후 안전하게 무중단 리로드 적용
             #
-            #   docker exec nginx-proxy  → nginx-proxy 컨테이너 내부에서 명령 실행
-            #   nginx -t                 → nginx.conf 문법 유효성 검사
-            #                              성공: "syntax is ok" 출력
-            #                              실패: 오류 위치 출력
-            #   || echo "..."            → nginx -t 실패해도 워크플로우가 중단되지 않고
-            #                              경고 메시지만 출력하고 계속 진행
-            #                              (설정 오류를 인지하되 배포 자체는 완료)
+            #   docker exec nginx-proxy nginx -t        → 1단계: nginx.conf 문법 유효성 검사
+            #   &&                                      → AND 연산: 앞선 문법 검사가 '성공(정상)'했을 때만 다음 명령어 실행
+            #   docker exec nginx-proxy nginx -s reload → 2단계: Nginx 프로세스 중단 없이 변경된 설정만 즉시 재적용 (다운타임 없음)
+            #   || echo "..."                           → OR 연산: 앞선 과정(검사 또는 리로드)이 '실패'하더라도 워크플로우 전체가
+            #                                             터지지 않도록 에러를 무시하고 경고 메시지만 로그에 출력
