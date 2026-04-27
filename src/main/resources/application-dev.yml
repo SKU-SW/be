@@ -25,6 +25,7 @@ logging:
 
 server:
   forward-headers-strategy: framework   # Nginx 프록시 뒤 HTTPS 환경에서 forwarded header 처리
+  url: https://dev.sku-sw.cloud
   servlet:
     session:
       cookie:
