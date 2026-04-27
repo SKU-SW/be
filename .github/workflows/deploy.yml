@@ -254,7 +254,7 @@ jobs:
             docker image prune -f
             # ▲ 태그가 없는(dangling) 이미지 강제(-f) 삭제
             #   이전 배포에서 사용하던 이미지가 남아 디스크 낭비되는 것 방지
-
+            
 
   # =============================================
   # JOB 3. Nginx EC2 배포 (Public Subnet)
