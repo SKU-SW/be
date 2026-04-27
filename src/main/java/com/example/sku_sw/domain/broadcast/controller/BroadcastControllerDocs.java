@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
 import com.example.sku_sw.global.response.GlobalResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -65,5 +66,36 @@ public interface BroadcastControllerDocs {
             @Parameter(description = "방송 시작하는 AI 캐릭터의 PK", required = true)
             @RequestParam Long characterId
     );
+
+    @Operation(summary = "현재 방송 종료", description = """
+            현재 로그인한 사용자의 진행 중인 방송을 종료하는 API입니다.
+
+            [Request Header]
+            - `Authorization: Bearer <Access Token>` 필요
+
+            [Request Body]
+            - 없음
+
+            [Response Body]
+            - `terminatedBroadcastStreamId`: 종료된 방송 고유 ID
+            - `broadcastTerminatedAt`: 방송 종료 시간
+
+            [예외]
+            - 진행 중인 방송이 없으면 404 예외가 발생합니다.
+            """)
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "방송 종료 성공",
+                    content = @Content(schema = @Schema(implementation = BroadcastTerminateResDto.class))
+            ),
+            @ApiResponse(responseCode = "401", description = "인증 실패 / 토큰 만료", content = @Content),
+            @ApiResponse(responseCode = "403", description = "접근 권한 없음", content = @Content),
+            @ApiResponse(responseCode = "404", description = "진행 중인 방송 없음", content = @Content),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content)
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/terminate")
+    ResponseEntity<GlobalResponse<BroadcastTerminateResDto>> terminateCurrentBroadcast();
 
 }

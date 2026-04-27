@@ -3,6 +3,10 @@ package com.example.sku_sw.domain.broadcast.repository;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
 
 public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 
@@ -20,4 +24,47 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
      * @return : 존재 여부 (true: 이미 존재, false: 사용 가능)
      */
     boolean existsByStreamId(String streamId);
+
+    /**
+     * streamId로 방송 단건 조회
+     * @param streamId : 조회할 스트림 ID
+     * @return : Optional<Broadcast>
+     */
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character " +
+            "where b.streamId=:streamId")
+    Optional<Broadcast> findByStreamId(@Param("streamId") String streamId);
+
+    /**
+     * streamId와 상태로 방송 단건 조회
+     * @param streamId : 조회할 스트림 ID
+     * @param status : 확인할 방송 상태
+     * @return : Optional<Broadcast>
+     */
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character " +
+            "where b.streamId=:streamId and b.status=:status")
+    Optional<Broadcast> findByStreamIdAndStatus(@Param("streamId") String streamId, @Param("status") BroadcastStatus status);
+
+    /**
+     * 사용자의 선택 캐릭터에 대한 활성 방송 조회
+     * - userId와 characterId로 진행 중인 방송을 조회한다.
+     * @param userId : 조회할 사용자 ID
+     * @param characterId : 조회할 캐릭터 ID
+     * @param status : 확인할 방송 상태
+     * @return : Optional<Broadcast>
+     */
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character c " +
+            "where c.user.id = :userId " +
+            "and c.id = :characterId " +
+            "and b.status = :status")
+    Optional<Broadcast> findActiveByUserIdAndCharacterId(
+            @Param("userId") Long userId,
+            @Param("characterId") Long characterId,
+            @Param("status") BroadcastStatus status
+    );
 }

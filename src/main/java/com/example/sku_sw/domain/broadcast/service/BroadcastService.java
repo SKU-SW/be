@@ -1,11 +1,13 @@
 package com.example.sku_sw.domain.broadcast.service;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketHandler;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.enums.CharacterErrorCode;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
@@ -16,6 +18,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.socket.CloseStatus;
 
 import java.time.format.DateTimeFormatter;
 
@@ -28,6 +33,7 @@ public class BroadcastService {
     private final CharacterRepository characterRepository;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastStreamIdGenerator streamIdGenerator;
+    private final BroadcastWebSocketHandler broadcastWebSocketHandler;
 
     /**
      * AI 캐릭터 방송 시작
@@ -93,13 +99,97 @@ public class BroadcastService {
         BroadcastStartResDto result = BroadcastStartResDto.builder()
                 .broadcastStreamId(savedBroadcast.getStreamId())
                 .broadcastStartedAt(savedBroadcast.getStartedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss")))
-                .broadcastTerminatedAt(savedBroadcast.getTerminatedAt() != null
-                        ? savedBroadcast.getTerminatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss"))
-                        : null)
                 .build();
 
         log.info("[BroadcastService] startBroadcast() - END | streamId: {}", streamId);
         return result;
+    }
+
+    /**
+     * 현재 사용자가 선택한 캐릭터의 진행 중인 방송 종료
+     * - 사용자의 selectedCharacterId 기준으로 진행 중인 방송을 조회한다.
+     * - 방송 상태를 TERMINATED로 변경하고 WebSocket 세션 종료를 예약한다.
+     *
+     * @param userId : 방송을 종료하는 사용자 ID
+     * @return : 방송 종료 응답 DTO
+     */
+    @Transactional
+    public BroadcastTerminateResDto terminateCurrentBroadcast(Long userId) {
+        log.info("[BroadcastService] terminateCurrentBroadcast() - START | userId: {}", userId);
+
+        /*
+            1. User row Write Lock 획득
+            - 동시 요청 직렬화를 위해 비관적 쓰기 락을 사용한다.
+         */
+        User user = userRepository.findByIdWithLock(userId)
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.USER_NOT_FOUND));
+
+        /*
+            2. 선택된 캐릭터 검증
+            - 선택된 캐릭터가 없으면 예외를 발생시킨다.
+         */
+        Long selectedCharacterId = user.getSelectedCharacterId();
+        if (selectedCharacterId == null) {
+            throw new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND);
+        }
+
+        /*
+            3. 활성 방송 조회
+            - 사용자의 선택 캐릭터에 대한 진행 중인 방송을 조회한다.
+         */
+        Broadcast broadcast = broadcastRepository.findActiveByUserIdAndCharacterId(
+                        userId,
+                        selectedCharacterId,
+                        BroadcastStatus.BROADCASTING
+                )
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND));
+
+        /*
+            4. 방송 정상 종료 처리
+            - DB 상태를 TERMINATED로 변경하고 종료 시간을 기록한다.
+         */
+        broadcast.normalTerminate();
+
+        /*
+            5. ResponseDto 생성
+         */
+        BroadcastTerminateResDto result = BroadcastTerminateResDto.builder()
+                .terminatedBroadcastStreamId(broadcast.getStreamId())
+                .broadcastStatus(broadcast.getStatus())
+                .broadcastTerminatedAt(broadcast.getTerminatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss")))
+                .build();
+
+        /*
+            6. WebSocket 세션 종료 예약
+            - 트랜잭션 커밋 후에 WebSocket 연결을 종료한다.
+            - 트랜잭션이 커밋되기 이전에 WebSocket 연결을 종료하면, DB에는 종료되지 않은 상태로 롤백되지만 WebSocket은 연결이 종료되어버리게 되므로 데이터가 다르게 설정된다.
+         */
+        registerDisconnectAfterCommit(broadcast.getStreamId());
+
+        log.info("[BroadcastService] terminateCurrentBroadcast() - END | streamId: {}", broadcast.getStreamId());
+        return result;
+    }
+
+    /**
+     * 트랜잭션 커밋 후 WebSocket 세션 종료 예약
+     * - DB 변경이 확정된 후에 외부 사이드 이펙트(WebSocket 종료)를 실행한다.
+     *
+     * @param broadcastStreamId : 종료할 방송 스트림 ID
+     */
+    private void registerDisconnectAfterCommit(String broadcastStreamId) {
+        /*
+            TransactionSynchronizationManager : Spring에서 트랜잭션 생명주기 이벤트에 콜백을 등록할 수 있게 해주는 유틸리티 클래스
+            - 트랜잭션의 특정 시점에 원하는 코드를 실행할 수 있다.
+         */
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                broadcastWebSocketHandler.disconnect(
+                        broadcastStreamId,
+                        CloseStatus.NORMAL.withReason("Broadcast terminated")
+                );
+            }
+        });
     }
 
 }

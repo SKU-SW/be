@@ -9,8 +9,6 @@ public record BroadcastStartResDto(
         @Schema(description = "해당 방송 고유 ID", example = "aB3dE7fG9hJ2kL5m")
         String broadcastStreamId,
         @Schema(description = "방송 시작 시간", example = "2026-04-26-14:30:00")
-        String broadcastStartedAt,
-        @Schema(description = "방송 종료 시간", example = "2026-04-26-15:30:00")
-        String broadcastTerminatedAt
+        String broadcastStartedAt
 ) {
 }
