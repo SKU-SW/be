@@ -3,6 +3,8 @@ package com.example.sku_sw.domain.broadcast.websocket;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastVoiceMetadataResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
+import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
+import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +18,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WebSocket 핸들러
@@ -30,12 +31,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
     private final ObjectMapper objectMapper;
-
-    /**
-     * 활성 WebSocket 세션 관리
-     * Key: broadcastStreamId, Value: WebSocketSession
-     */
-    private final ConcurrentHashMap<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final BroadcastRedisUtil broadcastRedisUtil;
+    private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
+    private final BroadcastWebSocketSessionRegistry sessionRegistry;
 
     /**
      * Pong 응답 타임아웃 (밀리초) - 기본 90초
@@ -45,8 +43,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     /**
      * WebSocket 연결 수립 후 실행
      * - HandshakeInterceptor에서 검증이 끝나면, 해당 단계에서 지정해준 Attribute가 담긴 WebSocketSession 객체가 생성되어 전달된다.
-     * - 세션을 ConcurrentHashMap에 등록한다.
-     * - lastPongAt 속성을 현재 시간으로 초기화한다.
+     * - Redis에 해당 broadcastStreamId key가 존재하는지 확인 후, 존재하지 않으면 WebSocket 연결 실패로 간주한다.
+     * - Redis key가 존재하면 세션을 등록하고 타임아웃을 취소한다.
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -54,10 +52,25 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         Long userId = (Long) session.getAttributes().get(WebSocketAttributes.USER_ID.getValue());
 
         /*
-            1. 기존 세션이 있으면 닫고 새 세션으로 교체
+            1. Redis에 해당 broadcastStreamId key 존재 여부 확인
+            - Redis key가 없다면 WebSocket 연결 실패로 간주하고 세션을 종료한다.
+         */
+        if (!broadcastRedisUtil.hasBroadcastCharacterValue(broadcastStreamId)) {
+            log.warn("[BroadcastWebSocketHandler] afterConnectionEstablished() - Redis key not found, closing session | userId: {}, streamId: {}", userId, broadcastStreamId);
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION.withReason("Broadcast not available"));
+            } catch (IOException e) {
+                log.warn("[BroadcastWebSocketHandler] afterConnectionEstablished() - Failed to close session | streamId: {}", broadcastStreamId);
+            }
+            sessionRegistry.removeSession(broadcastStreamId, session);
+            return;
+        }
+
+        /*
+            2. 기존 세션이 있으면 닫고 새 세션으로 교체
             - 동일 streamId로 재연결 시 이전 연결을 정리한다.
          */
-        WebSocketSession oldSession = sessions.put(broadcastStreamId, session); // 기존에 존재하던 value 값을 반환한다.
+        WebSocketSession oldSession = sessionRegistry.registerSession(broadcastStreamId, session);
         if (oldSession != null && oldSession.isOpen()) {
             try {
                 oldSession.close(CloseStatus.POLICY_VIOLATION.withReason("Replaced by new connection"));
@@ -67,9 +80,15 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         /*
-            2. Pong 응답 타임스탬프 초기화
+            3. Pong 응답 타임스탬프 초기화
          */
         session.getAttributes().put(WebSocketAttributes.LAST_PONG_AT.getValue(), Instant.now());
+
+        /*
+            4. 타임아웃 취소
+            - WebSocket 연결 성공 시 등록된 타임아웃 작업을 취소한다.
+         */
+        broadcastConnectionTimeoutService.cancelConnectionTimeout(broadcastStreamId);
 
         log.info("[BroadcastWebSocketHandler] afterConnectionEstablished() - Session registered | userId: {}, streamId: {}", userId, broadcastStreamId);
     }
@@ -113,7 +132,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         String broadcastStreamId = (String) session.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
 
         log.error("[BroadcastWebSocketHandler] handleTransportError() - Transport error | streamId: {}, error: {}", broadcastStreamId, exception.getMessage());
-        sessions.remove(broadcastStreamId);
+        sessionRegistry.removeSession(broadcastStreamId, session);
     }
 
     /**
@@ -125,7 +144,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         String broadcastStreamId = (String) session.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
         Long userId = (Long) session.getAttributes().get(WebSocketAttributes.USER_ID.getValue());
 
-        sessions.remove(broadcastStreamId);
+        sessionRegistry.removeSession(broadcastStreamId, session);
         log.info("[BroadcastWebSocketHandler] afterConnectionClosed() - Session removed | userId: {}, streamId: {}, status: {}", userId, broadcastStreamId, status);
     }
 
@@ -148,7 +167,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             String voiceText,
             Long broadcastDialogueId
     ) {
-        WebSocketSession session = sessions.get(broadcastStreamId);
+        WebSocketSession session = sessionRegistry.getSession(broadcastStreamId);
         if (session == null || !session.isOpen()) {
             log.warn("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Session not found or closed | streamId: {}", broadcastStreamId);
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
@@ -200,7 +219,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
      * @param closeStatus : 종료 상태
      */
     public void disconnect(String broadcastStreamId, CloseStatus closeStatus) {
-        WebSocketSession session = sessions.get(broadcastStreamId);
+        WebSocketSession session = sessionRegistry.getSession(broadcastStreamId);
         if (session != null && session.isOpen()) {
             try {
                 session.close(closeStatus);
@@ -219,7 +238,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
      * @return 활성 WebSocket 세션 수
      */
     public int getActiveSessionCount() {
-        return sessions.size();
+        return sessionRegistry.getActiveSessionCount();
     }
 
     /**
@@ -232,12 +251,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         Instant now = Instant.now();
         int closedCount = 0;
 
-        for (var entry : sessions.entrySet()) {
+        for (var entry : sessionRegistry.getActiveSessionsSnapshot()) {
             String broadcastStreamId = entry.getKey();
             WebSocketSession session = entry.getValue();
 
             if (!session.isOpen()) {
-                sessions.remove(broadcastStreamId);
+                sessionRegistry.removeSession(broadcastStreamId);
                 closedCount++;
                 continue;
             }
@@ -254,7 +273,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
                 } catch (IOException e) {
                     log.error("[BroadcastWebSocketHandler] pingActiveSessions() - Failed to close timed-out session | streamId: {}", broadcastStreamId);
                 }
-                sessions.remove(broadcastStreamId);
+                sessionRegistry.removeSession(broadcastStreamId);
                 closedCount++;
                 continue;
             }

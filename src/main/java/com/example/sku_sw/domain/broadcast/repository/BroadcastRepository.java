@@ -3,9 +3,11 @@ package com.example.sku_sw.domain.broadcast.repository;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 
 public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
@@ -47,6 +49,20 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
             "join fetch b.character " +
             "where b.streamId=:streamId and b.status=:status")
     Optional<Broadcast> findByStreamIdAndStatus(@Param("streamId") String streamId, @Param("status") BroadcastStatus status);
+
+    /**
+     * streamId와 상태로 방송 단건 조회 및 쓰기 락 획득
+     * - 타임아웃 비정상 종료와 정상 종료가 동시에 상태를 변경하지 않도록 방지한다.
+     * @param streamId : 조회할 스트림 ID
+     * @param status : 확인할 방송 상태
+     * @return : Optional<Broadcast>
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character " +
+            "where b.streamId=:streamId and b.status=:status")
+    Optional<Broadcast> findByStreamIdAndStatusForUpdate(@Param("streamId") String streamId, @Param("status") BroadcastStatus status);
 
     /**
      * 사용자의 선택 캐릭터에 대한 활성 방송 조회
