@@ -47,6 +47,7 @@ services:
       - DEV_JWT_SECRET_KEY=${DEV_JWT_SECRET_KEY}
       - DEV_REDIS_HOST=${DEV_REDIS_HOST}
       - DEV_REDIS_PW=${DEV_REDIS_PW}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     networks:
       - spring-network
 

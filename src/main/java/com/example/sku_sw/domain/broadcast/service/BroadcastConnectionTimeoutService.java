@@ -106,7 +106,7 @@ public class BroadcastConnectionTimeoutService {
             /*
                 1. WebSocket 세션 존재 여부 확인
                 - 이미 WebSocket 연결이 수립되었다면 타임아웃 처리를 중단한다.
-                - 밑에 있는 트랜잭션에서 2번 더 WebSocket Session 존재 여부를 확인하지만, Redis 조회 같은 무거운 로직이 실행되기 전에 바로 Timeout을 종료시키도록 하기 위해 해당 조건문 설정하였음
+                - 밑에 있는 트q랜잭션에서 2번 더 WebSocket Session 존재 여부를 확인하지만, Redis 조회 같은 무거운 로직이 실행되기 전에 바로 Timeout을 종료시키도록 하기 위해 해당 조건문 설정하였음
              */
             if (sessionRegistry.hasSession(broadcastStreamId)) {
                 log.info("[BroadcastConnectionTimeoutService] handleTimeout() - WebSocket session already exists, skipping timeout | streamId: {}", broadcastStreamId);

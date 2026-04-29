@@ -43,7 +43,7 @@ public class BroadcastService {
     private final BroadcastWebSocketHandler broadcastWebSocketHandler;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
 
-    /**
+    /**ㅋ
      * AI 캐릭터 방송 시작
      * - 사용자가 선택한 캐릭터로 방송을 시작한다.
      * - 선택되지 않은 캐릭터거나 이미 방송 중인 경우 예외를 발생시킨다.
