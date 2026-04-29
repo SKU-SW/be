@@ -48,3 +48,9 @@ management:
 jwt:
   token:
     secretKey: ${DEV_JWT_SECRET_KEY}
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY}
+    model: gemini-3.1-flash
+    base-url: https://generativelanguage.googleapis.com/v1beta

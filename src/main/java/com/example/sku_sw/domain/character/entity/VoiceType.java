@@ -30,9 +30,6 @@ public class VoiceType {
     @Column(nullable = false)
     private Gender gender;
 
-    @Column(nullable = false)
-    private String label;
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private AgeGroup ageGroup;

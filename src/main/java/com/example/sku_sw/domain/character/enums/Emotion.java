@@ -5,9 +5,12 @@ import lombok.RequiredArgsConstructor;
 
 @Getter
 @RequiredArgsConstructor
-public enum Gender {
-    MALE("male"),
-    FEMALE("female");
+public enum Emotion {
+    DEFAULT("Default"),
+    TALKING("Talking"),
+    HAPPY("Happy"),
+    SAD("Sad"),
+    FEAR("Fear");
 
     private final String value;
 }

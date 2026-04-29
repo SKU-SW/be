@@ -237,6 +237,7 @@ jobs:
             # ▲ Redis 서버 호스트 주소 (캐시/세션용)
             DEV_REDIS_PW=${{ secrets.DEV_REDIS_PW }}
             # ▲ Redis 접속 비밀번호
+            GEMINI_API_KEY=${{GEMINI_API_KEY}}
             EOF
 
             # 최신 이미지 pull
@@ -254,7 +255,7 @@ jobs:
             docker image prune -f
             # ▲ 태그가 없는(dangling) 이미지 강제(-f) 삭제
             #   이전 배포에서 사용하던 이미지가 남아 디스크 낭비되는 것 방지
-
+            
 
   # =============================================
   # JOB 3. Nginx EC2 배포 (Public Subnet)

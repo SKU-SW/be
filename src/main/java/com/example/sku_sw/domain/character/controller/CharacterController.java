@@ -9,6 +9,7 @@ import com.example.sku_sw.domain.character.dto.CharacterSettingsResDto;
 import com.example.sku_sw.domain.character.dto.CharacterUpdateReqDto;
 import com.example.sku_sw.domain.character.service.CharacterService;
 import com.example.sku_sw.global.response.GlobalResponse;
+import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.SliceResponse;
 import com.example.sku_sw.global.security.SecurityUtil;
 import jakarta.validation.Valid;

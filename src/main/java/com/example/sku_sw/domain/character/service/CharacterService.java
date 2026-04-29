@@ -23,6 +23,7 @@ import com.example.sku_sw.domain.character.repository.VoiceTypeRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
+import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.SliceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +37,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
