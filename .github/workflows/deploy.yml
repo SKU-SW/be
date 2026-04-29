@@ -237,7 +237,7 @@ jobs:
             # ▲ Redis 서버 호스트 주소 (캐시/세션용)
             DEV_REDIS_PW=${{ secrets.DEV_REDIS_PW }}
             # ▲ Redis 접속 비밀번호
-            GEMINI_API_KEY=${{GEMINI_API_KEY}}
+            GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
             EOF
 
             # 최신 이미지 pull
