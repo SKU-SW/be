@@ -140,7 +140,41 @@ jobs:
 
 
   # =============================================
-  # JOB 2. Spring Boot EC2 배포 (Bastion Host 경유)
+  # JOB 2. FastAPI 빌드 & Docker Hub 푸시
+  # =============================================
+  build-fastapi:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      - name: Build and push FastAPI image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/fastapi/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-tts-server:latest
+            ${{ secrets.DOCKER_HUB_USERNAME }}/fastapi-tts-server:${{ github.sha }}
+
+
+  # =============================================
+  # JOB 3. Spring Boot EC2 배포 (Bastion Host 경유)
   # =============================================
   deploy-backend:
     needs: build-backend
@@ -262,7 +296,65 @@ jobs:
             
 
   # =============================================
-  # JOB 3. Nginx EC2 배포 (Public Subnet)
+  # JOB 4. FastAPI EC2 배포 (Bastion Host 경유)
+  # =============================================
+  deploy-fastapi:
+    needs: build-fastapi
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose to FastAPI EC2 via Bastion
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.FASTAPI_PRIVATE_EC2_HOST }}
+          username: ${{ secrets.FASTAPI_PRIVATE_EC2_SSH_USER }}
+          key: ${{ secrets.FASTAPI_PRIVATE_EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          source: "docker/fastapi/docker-compose.yml"
+          target: "/home/${{ secrets.FASTAPI_PRIVATE_EC2_SSH_USER }}/deploy/fastapi"
+          strip_components: 2
+
+      - name: Deploy to FastAPI EC2 via Bastion
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.FASTAPI_PRIVATE_EC2_HOST }}
+          username: ${{ secrets.FASTAPI_PRIVATE_EC2_SSH_USER }}
+          key: ${{ secrets.FASTAPI_PRIVATE_EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.FASTAPI_PRIVATE_EC2_SSH_USER }}/deploy/fastapi
+
+            cat > .env << EOF
+            DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
+            LOG_LEVEL=INFO
+            HF_HOME=/app/.cache/huggingface
+            XDG_CACHE_HOME=/app/.cache
+            SUPERTONIC_CACHE_DIR=/app/.cache/supertonic
+            SUPERTONIC_LANG=ko
+            SUPERTONIC_DEFAULT_FEMALE=F3
+            SUPERTONIC_DEFAULT_MALE=M3
+            SUPERTONIC_TOTAL_STEPS=5
+            SUPERTONIC_SPEED=1.05
+            SUPERTONIC_AUTO_DOWNLOAD=true
+            SUPERTONIC_INTRA_OP_THREADS=2
+            SUPERTONIC_INTER_OP_THREADS=1
+            EOF
+
+            docker compose pull
+            docker compose up -d
+            docker image prune -f
+
+
+  # =============================================
+  # JOB 5. Nginx EC2 배포 (Public Subnet)
   # =============================================
   deploy-nginx:
     # ▲ needs 선언 없음 → build-backend, deploy-backend와 병렬 실행
