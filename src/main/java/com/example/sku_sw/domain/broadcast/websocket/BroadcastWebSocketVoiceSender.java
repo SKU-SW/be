@@ -13,6 +13,7 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.LocalDateTime;
 
 @Slf4j
 @Component
@@ -39,7 +40,8 @@ public class BroadcastWebSocketVoiceSender {
             byte[] voiceData,
             Long characterId,
             String voiceText,
-            Long broadcastDialogueId
+            Long broadcastDialogueId,
+            Long startTime
     ) {
         WebSocketSession session = sessionRegistry.getSession(broadcastStreamId);
         if (session == null || !session.isOpen()) {
@@ -68,7 +70,7 @@ public class BroadcastWebSocketVoiceSender {
                 session.sendMessage(new TextMessage(metadataJson));
             }
 
-            log.debug("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Sent | streamId: {}, dialogueId: {}", broadcastStreamId, broadcastDialogueId);
+            log.debug("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Sent | streamId: {}, dialogueId: {}, voice response time: {}", broadcastStreamId, broadcastDialogueId, System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             log.error("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Failed to send | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
