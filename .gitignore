@@ -44,3 +44,4 @@ application-local.yml
 
 test-frontend/node_modules/
 test-frontend/dist/
+test-frontend-dev-api/
