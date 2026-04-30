@@ -5,18 +5,27 @@ import com.example.sku_sw.domain.character.enums.Gender;
 import com.example.sku_sw.domain.character.enums.Personality;
 import com.example.sku_sw.domain.character.enums.SpeechStyle;
 import java.util.List;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
+@Getter
+@Setter
 @Builder
-public record BroadcastCharacterRedisDto(
-        Long characterId,
-        String characterName,
-        Gender characterGender,
-        AgeGroup characterVoiceAgeGroup,
-        String characterVoiceTtsId,
-        String characterImagePreset,
-        List<BroadcastCharacterImageRedisDto> characterImages,
-        SpeechStyle characterSpeechStyle,
-        Personality characterPersonality
-) {
+@NoArgsConstructor
+@AllArgsConstructor
+public class BroadcastCharacterRedisDto {
+    private Long characterId;
+    private String characterName;
+    private Gender characterGender;
+    private List<String> characterTriggerWords;
+    private AgeGroup characterVoiceAgeGroup;
+    private String characterVoiceTtsId;
+    private String characterImagePreset;
+    private List<BroadcastCharacterImageRedisDto> characterImages;
+    private SpeechStyle characterSpeechStyle;
+    private Personality characterPersonality;
+    private Boolean isTalking;
 }

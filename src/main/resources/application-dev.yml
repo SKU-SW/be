@@ -61,3 +61,10 @@ gemini:
     key: ${GEMINI_API_KEY}
     model: gemini-3.1-flash
     base-url: https://generativelanguage.googleapis.com/v1beta
+
+fastapi:
+  base-url: ${FASTAPI_BASE_URL:http://localhost:8000}
+  tts-path: ${FASTAPI_TTS_PATH:/api/tts/synthesize}
+  connect-timeout-ms: 5000
+  read-timeout-ms: 30000
+  max-in-memory-size-bytes: ${FASTAPI_MAX_IN_MEMORY_SIZE_BYTES:2097152}

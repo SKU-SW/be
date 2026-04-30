@@ -1,9 +1,15 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastMessageReqDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastVoiceMetadataResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
+import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
@@ -34,6 +41,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
+    private final BroadcastMessageService broadcastMessageService;
+    private final BroadcastRepository broadcastRepository;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * Pong 응답 타임아웃 (밀리초) - 기본 90초
@@ -95,20 +105,114 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
     /**
      * 클라이언트로부터 텍스트 메시지(JSON) 수신
-     * - 클라이언트가 전송한 JSON 형식의 메시지를 처리한다.
+     * - JSON 형식의 payload만 허용하며, plain text는 허용하지 않는다.
+     * - BroadcastMessageReqDto로 파싱하여 BroadcastMessageService로 전달한다.
+     * - JSON 파싱 실패 또는 Redis 데이터 없음 시 WebSocket 에러 응답 후 세션을 종료한다.
      */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        long startTime = System.currentTimeMillis();
         String broadcastStreamId = (String) session.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
         Long userId = (Long) session.getAttributes().get(WebSocketAttributes.USER_ID.getValue());
 
         log.info("[BroadcastWebSocketHandler] handleTextMessage() - Received | userId: {}, streamId: {}, payload: {}", userId, broadcastStreamId, message.getPayload());
 
         /*
-            TODO: 클라이언트 메시지 파싱 및 비즈니스 로직 처리
-            - 메시지 타입에 따른 분기 처리
-            - 예: 사용자 텍스트 입력, 방송 제어 명령 등
+            1. JSON 파싱
+            - payload를 BroadcastMessageReqDto로 파싱한다.
+            - JSON 형식이 아니거나 message 필드가 없으면 WebSocket 에러 응답 후 세션을 종료한다.
          */
+        BroadcastMessageReqDto reqDto;
+        try {
+            reqDto = objectMapper.readValue(message.getPayload(), BroadcastMessageReqDto.class);
+        } catch (Exception e) {
+            log.error("[BroadcastWebSocketHandler] handleTextMessage() - JSON parse failed | userId: {}, streamId: {}, error: {}", userId, broadcastStreamId, e.getMessage());
+            abnormalTerminateBroadcast(broadcastStreamId);
+            sendErrorAndClose(session, "Invalid JSON format");
+            return;
+        }
+
+        /*
+            2. message 필드 검증
+            - message가 null 또는 blank이면 Redis 저장 없이 그냥 return한다.
+         */
+        if (reqDto.message() == null || reqDto.message().isBlank()) {
+            log.info("[BroadcastWebSocketHandler] handleTextMessage() - Empty message, ignored | userId: {}, streamId: {}", userId, broadcastStreamId);
+            return;
+        }
+
+        /*
+            3. BroadcastMessageService 호출
+            - 파싱된 메시지를 BroadcastMessageService로 전달하여 비즈니스 로직을 처리한다.
+            - Redis 캐릭터 정보가 없으면 CustomException이 발생하며, 에러 응답 후 방송 종료 처리한다.
+         */
+        try {
+            broadcastMessageService.handleClientMessage(broadcastStreamId, reqDto.message(), startTime);
+        } catch (CustomException e) {
+            log.error("[BroadcastWebSocketHandler] handleTextMessage() - CustomException | userId: {}, streamId: {}, errorCode: {}", userId, broadcastStreamId, e.getErrorCode().getMessage());
+            abnormalTerminateBroadcast(broadcastStreamId);
+            sendErrorAndClose(session, e.getErrorCode().getMessage());
+            sessionRegistry.removeSession(broadcastStreamId, session);
+        } catch (Exception e) {
+            log.error("[BroadcastWebSocketHandler] handleTextMessage() - Unexpected error | userId: {}, streamId: {}, error: {}", userId, broadcastStreamId, e.getMessage());
+            abnormalTerminateBroadcast(broadcastStreamId);
+            sendErrorAndClose(session, "Internal server error");
+            sessionRegistry.removeSession(broadcastStreamId, session);
+        }
+    }
+
+    /**
+     * WebSocket 메시지 처리 중 예외가 발생한 방송을 비정상 종료 처리한다.
+     * - TransactionTemplate으로 별도 트랜잭션을 열어 방송 상태를 ABNORMAL_TERMINATED로 변경한다.
+     * - 이미 방송 중 상태가 아니거나 방송이 없으면 상태 변경 없이 로그만 남긴다.
+     *
+     * @param broadcastStreamId : 비정상 종료 처리할 방송 스트림 ID
+     */
+    private void abnormalTerminateBroadcast(String broadcastStreamId) {
+        log.info("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - START | streamId: {}", broadcastStreamId);
+
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                Broadcast broadcast = broadcastRepository.findByStreamIdAndStatusForUpdate(
+                                broadcastStreamId,
+                                BroadcastStatus.BROADCASTING
+                        )
+                        .orElse(null);
+
+                if (broadcast == null) {
+                    log.warn("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Active broadcast not found | streamId: {}", broadcastStreamId);
+                    return;
+                }
+
+                broadcast.abnormalTerminate();
+            });
+        } catch (Exception e) {
+            log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Failed | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
+        }
+
+        log.info("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - END | streamId: {}", broadcastStreamId);
+    }
+
+    /**
+     * WebSocket 세션에 에러 응답을 전송하고 세션을 종료한다.
+     *
+     * @param session      : WebSocket 세션
+     * @param errorMessage : 에러 메시지
+     */
+    private void sendErrorAndClose(WebSocketSession session, String errorMessage) {
+        try {
+            BroadcastWebSocketErrorResDto errorRes = BroadcastWebSocketErrorResDto.builder()
+                    .error("ERROR")
+                    .message(errorMessage)
+                    .build();
+            String errorJson = objectMapper.writeValueAsString(errorRes);
+            if (session.isOpen()) {
+                session.sendMessage(new TextMessage(errorJson));
+                session.close(CloseStatus.POLICY_VIOLATION.withReason(errorMessage));
+            }
+        } catch (IOException e) {
+            log.warn("[BroadcastWebSocketHandler] sendErrorAndClose() - Failed to send error and close session | error: {}", e.getMessage());
+        }
     }
 
     /**
@@ -146,59 +250,6 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
         sessionRegistry.removeSession(broadcastStreamId, session);
         log.info("[BroadcastWebSocketHandler] afterConnectionClosed() - Session removed | userId: {}, streamId: {}, status: {}", userId, broadcastStreamId, status);
-    }
-
-    /**
-     * 음성 데이터와 메타데이터를 클라이언트에게 전송
-     * - BinaryMessage로 음성 데이터 전송
-     * - TextMessage로 메타데이터(JSON) 전송
-     * - synchronized로 전송 순서 보장
-     *
-     * @param broadcastStreamId : 대상 방송 스트림 ID
-     * @param voiceData : 음성 데이터 (byte 배열)
-     * @param characterId : 캐릭터 ID
-     * @param voiceText : 음성 텍스트 데이터
-     * @param broadcastDialogueId : BroadcastDialogue PK (Cursor)
-     */
-    public void sendVoiceWithMetadata(
-            String broadcastStreamId,
-            byte[] voiceData,
-            Long characterId,
-            String voiceText,
-            Long broadcastDialogueId
-    ) {
-        WebSocketSession session = sessionRegistry.getSession(broadcastStreamId);
-        if (session == null || !session.isOpen()) {
-            log.warn("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Session not found or closed | streamId: {}", broadcastStreamId);
-            throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
-        }
-
-        /*
-            1. 메타데이터 JSON 직렬화
-         */
-        BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.builder()
-                .characterId(characterId)
-                .voiceText(voiceText)
-                .broadcastDialogueId(broadcastDialogueId)
-                .build();
-
-        try {
-            String metadataJson = objectMapper.writeValueAsString(metadata);
-
-            /*
-                2. 음성 데이터(바이너리) → 메타데이터(JSON) 순서로 전송
-                - synchronized로 동시 전송 시 순서 보장
-             */
-            synchronized (session) {
-                session.sendMessage(new BinaryMessage(ByteBuffer.wrap(voiceData)));
-                session.sendMessage(new TextMessage(metadataJson));
-            }
-
-            log.debug("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Sent | streamId: {}, dialogueId: {}", broadcastStreamId, broadcastDialogueId);
-        } catch (IOException e) {
-            log.error("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Failed to send | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
-            throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
-        }
     }
 
     /**
