@@ -50,7 +50,7 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
             "join fetch c.voiceType " +
             "join fetch c.characterPersona " +
             "join fetch c.characterImage ci " +
-            "left join fetch ci.imageDetails " +
+            "left join fetch c.triggerWords tw " +
             "where c.id=:characterId and c.user.id=:userId")
     Optional<Character> findBroadcastRedisCharacterByIdAndUserId(@Param("characterId") Long characterId, @Param("userId") Long userId);
 

@@ -13,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketHandler;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
+import com.example.sku_sw.domain.character.entity.CharacterTriggerWord;
 import com.example.sku_sw.domain.character.enums.CharacterErrorCode;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.user.entity.User;
@@ -191,6 +192,12 @@ public class BroadcastService {
     private BroadcastCharacterRedisDto buildBroadcastCharacterRedisDto(Character character) {
         log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - START | characterId: {}", character.getId());
 
+        List<String> characterTriggerWords = character.getTriggerWords()
+                .stream()
+                .sorted(Comparator.comparingInt(CharacterTriggerWord::getSortOrder))
+                .map(CharacterTriggerWord::getWord)
+                .toList();
+
         List<BroadcastCharacterImageRedisDto> characterImages = character.getCharacterImage().getImageDetails()
                 .stream()
                 .sorted(Comparator.comparingLong(CharacterImageDetail::getId))
@@ -204,12 +211,14 @@ public class BroadcastService {
                 .characterId(character.getId())
                 .characterName(character.getName())
                 .characterGender(character.getGender())
+                .characterTriggerWords(characterTriggerWords)
                 .characterVoiceAgeGroup(character.getVoiceType().getAgeGroup())
                 .characterVoiceTtsId(character.getVoiceType().getTtsId())
                 .characterImagePreset(character.getCharacterImage().getPreset())
                 .characterImages(characterImages)
                 .characterSpeechStyle(character.getCharacterPersona().getSpeechStyle())
                 .characterPersonality(character.getCharacterPersona().getPersonality())
+                .isTalking(false)
                 .build();
 
         log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - END | characterId: {}", character.getId());
