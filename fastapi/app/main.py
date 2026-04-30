@@ -1,7 +1,7 @@
 """
 FastAPI TTS Service - SKU_SW 프로젝트
 
-Microsoft Edge TTS(edge-sunhi/edge-tts) 를 활용한 음성 합성 REST API 서버.
+Supertonic-2 를 활용한 음성 합성 REST API 서버.
 Spring Boot 백엔드에서 HTTP 호출하여 TTS 음성을 생성하고 multipart 응답을 받습니다.
 
 실행 (로컬):
@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .router import router as tts_router
+from .tts_adapter import tts_adapter
 
 # ---------------------------------------------------------------------------
 # 로깅 설정
@@ -35,7 +36,7 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="SKU_SW TTS Service",
-    description="Edge TTS 기반 음성 합성 서비스 (Spring 연동)",
+    description="Supertonic-2 기반 음성 합성 서비스 (Spring 연동)",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -63,7 +64,19 @@ app.include_router(tts_router)
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["System"])
 async def health_check():
-    return {"status": "ok", "service": "tts-fastapi"}
+    return {
+        "status": "ok",
+        "service": "tts-fastapi",
+        "ttsEngine": getattr(tts_adapter, "_engine", None),
+    }
+
+
+@app.on_event("startup")
+async def warmup_tts_engine() -> None:
+    try:
+        tts_adapter._init_engine()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("TTS warmup failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

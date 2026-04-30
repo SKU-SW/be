@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
@@ -32,9 +33,10 @@ public class FastApiUtil {
 
     public FastApiUtil(
             @Value("${fastapi.base-url}") String baseUrl,
-             @Value("${fastapi.tts-path}") String ttsPath,
+            @Value("${fastapi.tts-path}") String ttsPath,
             @Value("${fastapi.connect-timeout-ms}") Integer connectTimeoutMs,
             @Value("${fastapi.read-timeout-ms}") Integer readTimeoutMs,
+            @Value("${fastapi.max-in-memory-size-bytes:1048576}") Integer maxInMemorySizeBytes,
             ObjectMapper objectMapper
     ) {
         this.ttsPath = ttsPath;
@@ -44,9 +46,14 @@ public class FastApiUtil {
                 .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, connectTimeoutMs)
                 .responseTimeout(Duration.ofMillis(readTimeoutMs));
 
+        ExchangeStrategies exchangeStrategies = ExchangeStrategies.builder()
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(maxInMemorySizeBytes))
+                .build();
+
         this.webClient = WebClient.builder()
                 .baseUrl(baseUrl)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .exchangeStrategies(exchangeStrategies)
                 .build();
     }
 

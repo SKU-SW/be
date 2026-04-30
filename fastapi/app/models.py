@@ -16,7 +16,7 @@ class TTSRequest(BaseModel):
         ..., description="캐릭터 ID (e.g. 1)"
     )
     ttsId: str = Field(
-        ..., description="TTS 음성 ID (e.g. 'Microsoft Server Speech Text to Speech Voice (ko-KR, SunHiNeural)')"
+        ..., description="TTS 음성 ID 또는 Supertonic voice style (e.g. 'Microsoft ... SunHiNeural', 'F3', 'M3')"
     )
     voiceText: str = Field(
         ..., description="합성할 텍스트 (e.g. '안녕하세요, 시청자 여러분!')"

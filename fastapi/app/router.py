@@ -39,7 +39,7 @@ async def synthesize_tts(req: TTSRequest) -> Response:
 
     Response (multipart/form-data):
       Part 1 - application/json : {characterId, voiceText, broadcastDialogueId}
-      Part 2 - audio/mpeg       : MP3 바이너리 데이터
+      Part 2 - audio/wav        : WAV 바이너리 데이터
 
     Spring 수신 예:
         WebClient 로 응답을 받은 뒤,
@@ -94,7 +94,7 @@ async def synthesize_tts(req: TTSRequest) -> Response:
     # Part 2: audio (binary)
     part_2_header = (
         f"--{_BOUNDARY}\r\n"
-        f'Content-Type: audio/mpeg\r\n'
+        f'Content-Type: audio/wav\r\n'
         f'Content-Disposition: form-data; name="audio"\r\n\r\n'
     ).encode("utf-8")
 
