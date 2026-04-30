@@ -28,58 +28,6 @@ public class GeminiUtil {
         this.webClient = webClientBuilder.baseUrl(baseUrl).build();
     }
     /**
-     * Gemini API에 텍스트 프롬프트를 전송하여 응답을 받아오는 함수
-     * @param prompt 사용자 입력 프롬프트
-     * @return Gemini 모델이 생성한 텍스트 응답
-     */
-    public String generateContent(String prompt) {
-        log.info("[START] GeminiUtil.generateContent - prompt length: {}", prompt != null ? prompt.length() : 0);
-
-        GeminiRequest request = new GeminiRequest(
-                List.of(new RequestContent(List.of(new RequestPart(prompt))))
-        );
-
-        String response = webClient.post()
-                .uri("/models/{model}:generateContent?key={key}", model, apiKey)
-                .header("Content-Type", "application/json")
-                .bodyValue(request)
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, clientResponse ->
-                        clientResponse.bodyToMono(String.class)
-                                .map(responseBody -> new IllegalStateException(
-                                        "Gemini API 호출 실패 - status="
-                                                + clientResponse.statusCode().value()
-                                                + ", body="
-                                                + responseBody
-                                ))
-                )
-                .bodyToMono(GeminiResponse.class)
-                .map(this::extractText)
-                .block();
-
-        log.info("[END] GeminiUtil.generateContent - response length: {}",
-                response != null ? response.length() : 0);
-
-        return response != null ? response : "";
-    }
-
-    private String extractText(GeminiResponse response) {
-        if (response == null || response.candidates() == null || response.candidates().isEmpty()) {
-            return "";
-        }
-
-        Candidate firstCandidate = response.candidates().get(0);
-        if (firstCandidate.content() == null
-                || firstCandidate.content().parts() == null
-                || firstCandidate.content().parts().isEmpty()) {
-            return "";
-        }
-
-        ResponsePart firstPart = firstCandidate.content().parts().get(0);
-        return firstPart.text() != null ? firstPart.text() : "";
-    }
-
-    /**
      * Gemini Function Calling API를 호출하는 함수
      * - tools/functionDeclarations에 ignore_streamer_sentence 함수를 정의하여 전송한다.
      * - toolConfig.mode=AUTO로 설정하여 모델이 자동으로 함수 호출 여부를 결정한다.

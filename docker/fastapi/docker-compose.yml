@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  fastapi-tts:
+    build:
+      context: ../../
+      dockerfile: docker/fastapi/Dockerfile
+    container_name: sku-sw-fastapi-tts
+    ports:
+      - "8000:8000"
+    environment:
+      - TZ=Asia/Seoul
+      # 로그 레벨 (DEBUG / INFO / WARNING / ERROR)
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    # Spring backend와 동일한 docker network 필요 시:
+    # networks:
+    #   - sku-sw-network
+
+# networks:
+#   sku-sw-network:
+#     external: true

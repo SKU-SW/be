@@ -53,7 +53,7 @@ public class BroadcastPromptBuilder {
                         
                         [Rules]
                         1. 절대 당신이 AI라는 것을 시청자에게 들키지 마세요.
-                        2. 답변은 너무 길지 않게, 실제 말로 내뱉기 좋은 길이(1~3문장)로 작성하세요.
+                        2. 답변은 너무 길지 않게, 실제 말로 내뱉기 좋은 길이(1~2문장)로 작성하세요.
                         3. 스트리머가 말한 문장이 문맥상 AI에게 말한 내용이 아닌 것 같으면 Function Call을 사용해서 false를 반환하세요.
                         
                         [오늘 방송 내용]
@@ -70,7 +70,7 @@ public class BroadcastPromptBuilder {
                 clientMessage
         );
 
-        log.info("[BroadcastPromptBuilder] buildPrompt() - END | prompt length: {}", prompt.length());
+        log.info("[BroadcastPromptBuilder] buildPrompt() - END | prompt:{} | prompt length: {}", prompt, prompt.length());
         return prompt;
     }
 

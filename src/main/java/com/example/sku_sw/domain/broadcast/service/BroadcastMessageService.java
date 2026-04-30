@@ -8,6 +8,7 @@ import com.example.sku_sw.global.util.GeminiFunctionCallingResponseDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
@@ -27,6 +28,7 @@ public class BroadcastMessageService {
 
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastGeminiService broadcastGeminiService;
+    private final BroadcastVoiceTransferService broadcastVoiceTransferService;
 
     /**
      * 클라이언트 텍스트 메시지를 처리한다.
@@ -102,36 +104,44 @@ public class BroadcastMessageService {
 
         broadcastGeminiService.processClientMessage(character, recentInfos, message)
                 .subscribeOn(Schedulers.boundedElastic())
-                // subcribe: 설정한대로 HTTP 요청 날아감
+                // flatMap: Gemini 응답을 처리하고 VoiceTransfer까지 연결하는 단일 reactive 체인
+                // map은 Mono 안에 들어있는 데이터를 처리하고, 다시 Mono 객체로 감싸준다. 이때, 해당 숨사의 반환값이 일반 DTO 값이 아니라 Mono인 경우 Mono<Mono<>>가 되어버린다
+                // flatMap을 쓰면 이 현상이 일어나지 않게 하나의 Mono로만 감싸버린다.
+                .flatMap(response -> handleGeminiResponseReactively(broadcastStreamId, response, startTime))
                 .subscribe(
-                        response -> handleGeminiResponse(broadcastStreamId, response, startTime),
-                        error -> log.error("[BroadcastMessageService] handleClientMessage() - Gemini call failed | streamId: {}, error: {}", broadcastStreamId, error.getMessage())
+                        null, // onNext - handled in flatMap
+                        error -> log.error("[BroadcastMessageService] handleClientMessage() - Gemini/Voice chain failed | streamId: {}, error: {}", broadcastStreamId, error.getMessage())
                 );
 
         log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: gemini_called", broadcastStreamId);
     }
 
     /**
-     * Gemini API 응답을 처리한다.
+     * Gemini API 응답을 reactive 체인으로 처리한다.
      * - functionCalled true -> isTalking false 갱신, AI 응답 저장 안 함
-     * - text 존재 -> AI BroadcastInfo 저장
+     * - text 존재 -> AI BroadcastInfo 저장 후 BroadcastVoiceTransferService로 TTS 처리 및 WebSocket 전송
      *
      * @param broadcastStreamId : 방송 스트림 ID
      * @param response          : Gemini Function Calling 응답 DTO
      * @param startTime         : handleTextMessage 시작 시각(ms)
+     * @return : 처리 완료 Mono (Void)
      */
-    private void handleGeminiResponse(String broadcastStreamId, GeminiFunctionCallingResponseDto response, long startTime) {
-        log.info("[BroadcastMessageService] handleGeminiResponse() - START | streamId: {}, functionCalled: {}", broadcastStreamId, response.functionCalled());
+    private Mono<Void> handleGeminiResponseReactively(String broadcastStreamId, GeminiFunctionCallingResponseDto response, long startTime) {
+        log.info("[BroadcastMessageService] handleGeminiResponseReactively() - START | streamId: {}, functionCalled: {}", broadcastStreamId, response.functionCalled());
 
         if (response.functionCalled()) {
             /*
                 Function Call 발생 -> isTalking false 갱신, AI 응답 저장 안 함
              */
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, false);
-            log.info("[BroadcastMessageService] handleGeminiResponse() - Function call, isTalking set to false | streamId: {}, aiResponse: false(functionCall)", broadcastStreamId);
-        } else if (response.text() != null && !response.text().isBlank()) {
+            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - Function call, isTalking set to false | streamId: {}, aiResponse: false(functionCall)", broadcastStreamId);
+            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
+            return Mono.empty();
+        }
+
+        if (response.text() != null && !response.text().isBlank()) {
             /*
-                텍스트 응답 존재 -> AI BroadcastInfo 저장
+                (1) 텍스트 응답 존재 -> AI BroadcastInfo 저장
              */
             BroadcastInfoRedisDto aiInfo = BroadcastInfoRedisDto.builder()
                     .role(BroadcastInfoRole.AI)
@@ -139,11 +149,19 @@ public class BroadcastMessageService {
                     .createdAt(LocalDateTime.now())
                     .build();
             broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, aiInfo);
-            log.info("[BroadcastMessageService] handleGeminiResponse() - AI response saved | streamId: {}, aiResponse: {}, responseLength: {}, elapsedMs: {}",
+            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - AI response saved | streamId: {}, aiResponse: {}, responseLength: {}, elapsedMs: {}",
                     broadcastStreamId, response.text(), response.text().length(), System.currentTimeMillis() - startTime);
+
+            /*
+                (2) BroadcastVoiceTransferService로 TTS 처리 및 WebSocket 전송 (reactive chain)
+                - Redis 저장 후 동일한 reactive 체인에서 voiceTransfer를 호출하여 nested subscribe를 방지한다.
+             */
+            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
+            return broadcastVoiceTransferService.processVoiceTransfer(broadcastStreamId, response.text());
         }
 
-        log.info("[BroadcastMessageService] handleGeminiResponse() - END | streamId: {}", broadcastStreamId);
+        log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
+        return Mono.empty();
     }
 
     /**

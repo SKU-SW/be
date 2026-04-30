@@ -1,0 +1,16 @@
+# FastAPI 서버
+fastapi>=0.104.0,<1.0.0
+uvicorn[standard]>=0.24.0,<1.0.0
+python-multipart>=0.0.6
+
+# TTS 엔진 (둘 중 하나 필수)
+# 공식 오픈소스: https://github.com/rany2/edge-tts
+edge-tts>=7.2.0,<8.0.0
+
+# 커스텀 edge-sunhi (사내/한글 래퍼, 있을 경우 주석 해제)
+# edge-sunhi>=0.1.0
+
+# 테스트
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+httpx>=0.25.0
