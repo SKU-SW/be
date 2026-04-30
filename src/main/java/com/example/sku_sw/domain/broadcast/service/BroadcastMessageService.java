@@ -157,7 +157,7 @@ public class BroadcastMessageService {
                 - Redis 저장 후 동일한 reactive 체인에서 voiceTransfer를 호출하여 nested subscribe를 방지한다.
              */
             log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
-            return broadcastVoiceTransferService.processVoiceTransfer(broadcastStreamId, response.text());
+            return broadcastVoiceTransferService.processVoiceTransfer(broadcastStreamId, response.text(), startTime);
         }
 
         log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);

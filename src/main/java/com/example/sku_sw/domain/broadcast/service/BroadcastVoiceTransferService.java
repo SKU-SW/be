@@ -37,7 +37,7 @@ public class BroadcastVoiceTransferService {
      * @param voiceText         : 음성으로 변환할 텍스트
      * @return : 음성 전송 결과 (Mono&lt;Void&gt;)
      */
-    public Mono<Void> processVoiceTransfer(String broadcastStreamId, String voiceText) {
+    public Mono<Void> processVoiceTransfer(String broadcastStreamId, String voiceText, long startTime) {
         log.info("[BroadcastVoiceTransferService] processVoiceTransfer() - START | streamId: {}, textLength: {}",
                 broadcastStreamId, voiceText != null ? voiceText.length() : 0);
 
@@ -76,7 +76,8 @@ public class BroadcastVoiceTransferService {
                             response.voiceData(),
                             response.characterId(),
                             response.voiceText(),
-                            response.broadcastDialogueId()
+                            response.broadcastDialogueId(),
+                            startTime
                     );
                 })
                 .subscribeOn(Schedulers.boundedElastic())
