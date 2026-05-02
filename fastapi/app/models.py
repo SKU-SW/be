@@ -21,6 +21,6 @@ class TTSRequest(BaseModel):
     voiceText: str = Field(
         ..., description="합성할 텍스트 (e.g. '안녕하세요, 시청자 여러분!')"
     )
-    broadcastDialogueId: Optional[int] = Field(
-        None, description="BroadcastDialogue PK (커서 용도, e.g. 42)"
+    broadcastDialogueCursorId: int = Field(
+        ..., description="BroadcastInfo Cursor ID (e.g. 42)"
     )

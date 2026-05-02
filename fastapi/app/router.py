@@ -35,16 +35,16 @@ async def synthesize_tts(req: TTSRequest) -> Response:
       - characterId        (int) - 캐릭터 ID
       - ttsId              (str) - Edge TTS 음성 식별자
       - voiceText          (str) - 합성할 텍스트
-      - broadcastDialogueId(int) - BroadcastDialogue PK (cursor)
+      - broadcastDialogueCursorId(int) - BroadcastInfo Cursor ID
 
     Response (multipart/form-data):
-      Part 1 - application/json : {characterId, voiceText, broadcastDialogueId}
+      Part 1 - application/json : {characterId, voiceText, broadcastDialogueCursorId}
       Part 2 - audio/wav        : WAV 바이너리 데이터
 
     Spring 수신 예:
         WebClient 로 응답을 받은 뒤,
         BroadcastWebSocketHandler.sendVoiceWithMetadata(
-            broadcastStreamId, voiceData, characterId, voiceText, broadcastDialogueId
+            broadcastStreamId, voiceData, characterId, voiceText, broadcastDialogueCursorId
         ) 를 호출합니다.
     """
     logger.info(
@@ -79,7 +79,7 @@ async def synthesize_tts(req: TTSRequest) -> Response:
     metadata = {
         "characterId": req.characterId,
         "voiceText": req.voiceText,
-        "broadcastDialogueId": req.broadcastDialogueId,
+        "broadcastDialogueCursorId": req.broadcastDialogueCursorId,
     }
     metadata_json = json.dumps(metadata, ensure_ascii=False)
 

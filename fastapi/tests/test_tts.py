@@ -28,7 +28,7 @@ SAMPLE_PAYLOAD = {
     "characterId": 7,
     "ttsId": "Microsoft Server Speech Text to Speech Voice (ko-KR, SunHiNeural)",
     "voiceText": "안녕하세요, 테스트입니다.",
-    "broadcastDialogueId": 42,
+    "broadcastDialogueCursorId": 42,
 }
 
 
@@ -38,7 +38,7 @@ def test_tts_request_model():
     assert req.characterId == 7
     assert req.ttsId.startswith("Microsoft")
     assert req.voiceText == "안녕하세요, 테스트입니다."
-    assert req.broadcastDialogueId == 42
+    assert req.broadcastDialogueCursorId == 42
 
 
 def test_tts_request_missing_field():

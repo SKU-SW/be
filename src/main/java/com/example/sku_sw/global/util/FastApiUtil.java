@@ -59,11 +59,11 @@ public class FastApiUtil {
 
     /**
      * FastAPI TTS 엔드포인트를 호출하여 음성 데이터를 생성한다.
-     * - 요청: application/json (broadcastStreamId, characterId, ttsId, voiceText, broadcastDialogueId)
+     * - 요청: application/json (broadcastStreamId, characterId, ttsId, voiceText, broadcastDialogueCursorId)
      * - 응답: multipart/form-data (JSON 메타데이터 Part + 음성 바이너리 Part)
      *
-     * @param request : TTS 요청 DTO (broadcastStreamId, characterId, ttsId, voiceText, broadcastDialogueId)
-     * @return : TTS 응답 DTO (characterId, voiceText, broadcastDialogueId, voiceData byte[])
+     * @param request : TTS 요청 DTO (broadcastStreamId, characterId, ttsId, voiceText, broadcastDialogueCursorId)
+     * @return : TTS 응답 DTO (characterId, voiceText, broadcastDialogueCursorId, voiceData byte[])
      */
     public Mono<FastApiTtsResDto> generateTts(FastApiTtsReqDto request) {
         log.info("[FastApiUtil] generateTts() - START | streamId: {}, characterId: {}, textLength: {}",
@@ -109,7 +109,7 @@ public class FastApiUtil {
 
     /**
      * multipart/form-data 응답 바이트를 파싱하여 FastApiTtsResDto로 변환한다.
-     * - metadata Part: JSON 메타데이터 (characterId, voiceText, broadcastDialogueId)
+     * - metadata Part: JSON 메타데이터 (characterId, voiceText, broadcastDialogueCursorId)
      * - audio Part: 바이너리 음성 데이터 (voiceData)
      *
      * @param contentType : 응답 Content-Type
@@ -136,7 +136,7 @@ public class FastApiUtil {
             FastApiTtsResDto result = FastApiTtsResDto.builder()
                     .characterId(node.has("characterId") && !node.get("characterId").isNull() ? node.get("characterId").asLong() : null)
                     .voiceText(node.has("voiceText") && !node.get("voiceText").isNull() ? node.get("voiceText").asText() : null)
-                    .broadcastDialogueId(node.has("broadcastDialogueId") && !node.get("broadcastDialogueId").isNull() ? node.get("broadcastDialogueId").asLong() : null)
+                    .broadcastDialogueCursorId(node.has("broadcastDialogueCursorId") && !node.get("broadcastDialogueCursorId").isNull() ? node.get("broadcastDialogueCursorId").asLong() : null)
                     .voiceData(audioBytes)
                     .build();
 
@@ -197,6 +197,6 @@ public class FastApiUtil {
     private record MetadataJson(
             Long characterId,
             String voiceText,
-            Long broadcastDialogueId
+            Long broadcastDialogueCursorId
     ) {}
 }

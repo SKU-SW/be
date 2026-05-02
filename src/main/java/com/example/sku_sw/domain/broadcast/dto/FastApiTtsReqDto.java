@@ -5,6 +5,6 @@ public record FastApiTtsReqDto(
         Long characterId,
         String ttsId,
         String voiceText,
-        Long broadcastDialogueId
+        Long broadcastDialogueCursorId
 ) {
 }

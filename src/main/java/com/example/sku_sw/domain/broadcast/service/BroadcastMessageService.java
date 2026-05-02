@@ -2,7 +2,7 @@ package com.example.sku_sw.domain.broadcast.service;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
-import com.example.sku_sw.domain.broadcast.enums.BroadcastInfoRole;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.global.util.GeminiFunctionCallingResponseDto;
 import lombok.RequiredArgsConstructor;
@@ -53,13 +53,9 @@ public class BroadcastMessageService {
             2. USER BroadcastInfo 저장
             - 클라이언트 메시지를 USER 역할로 BroadcastInfo Redis List에 저장한다.
          */
-        BroadcastInfoRedisDto userInfo = BroadcastInfoRedisDto.builder()
-                .role(BroadcastInfoRole.USER)
-                .message(message)
-                .createdAt(LocalDateTime.now())
-                .build();
-        broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, userInfo);
-        log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, clientMessage: {}", broadcastStreamId, message);
+        BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, message);
+        log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
+                broadcastStreamId, savedUserInfo.cursorId(), message);
 
         /*
             3. 메시지 정규화 및 트리거 워드 확인
@@ -143,21 +139,21 @@ public class BroadcastMessageService {
             /*
                 (1) 텍스트 응답 존재 -> AI BroadcastInfo 저장
              */
-            BroadcastInfoRedisDto aiInfo = BroadcastInfoRedisDto.builder()
-                    .role(BroadcastInfoRole.AI)
-                    .message(response.text())
-                    .createdAt(LocalDateTime.now())
-                    .build();
-            broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, aiInfo);
-            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - AI response saved | streamId: {}, aiResponse: {}, responseLength: {}, elapsedMs: {}",
-                    broadcastStreamId, response.text(), response.text().length(), System.currentTimeMillis() - startTime);
+            BroadcastInfoRedisDto savedAiInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, response.text());
+            log.info("[BroadcastMessageService] handleGeminiResponseReactively() - AI response saved | streamId: {}, cursorId: {}, aiResponse: {}, responseLength: {}, elapsedMs: {}",
+                    broadcastStreamId, savedAiInfo.cursorId(), response.text(), response.text().length(), System.currentTimeMillis() - startTime);
 
             /*
                 (2) BroadcastVoiceTransferService로 TTS 처리 및 WebSocket 전송 (reactive chain)
                 - Redis 저장 후 동일한 reactive 체인에서 voiceTransfer를 호출하여 nested subscribe를 방지한다.
              */
             log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
-            return broadcastVoiceTransferService.processVoiceTransfer(broadcastStreamId, response.text(), startTime);
+            return broadcastVoiceTransferService.processVoiceTransfer(
+                    broadcastStreamId,
+                    response.text(),
+                    savedAiInfo.cursorId(),
+                    startTime
+            );
         }
 
         log.info("[BroadcastMessageService] handleGeminiResponseReactively() - END | streamId: {}", broadcastStreamId);
