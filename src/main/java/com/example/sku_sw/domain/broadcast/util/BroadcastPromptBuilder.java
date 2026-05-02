@@ -78,7 +78,7 @@ public class BroadcastPromptBuilder {
      * 방송 대화 내역 목록을 프롬프트에 삽입할 문자열로 변환한다.
      *
      * @param recentInfos : 최근 방송 대화 내역 목록
-     * @return : "ROLE: message" 형태의 문자열 (개행 구분)
+     * @return : "SUBJECT: content" 형태의 문자열 (개행 구분)
      */
     private String buildRecentBroadcastContent(List<BroadcastInfoRedisDto> recentInfos) {
         if (recentInfos == null || recentInfos.isEmpty()) {
@@ -90,9 +90,9 @@ public class BroadcastPromptBuilder {
             if (sb.length() > 0) {
                 sb.append("\n");
             }
-            String role = info.role() != null ? info.role().toString() : "UNKNOWN";
-            String message = info.message() != null ? info.message() : "";
-            sb.append(role).append(": ").append(message);
+            String subject = info.subject() != null ? info.subject().toString() : "UNKNOWN";
+            String content = info.content() != null ? info.content() : "";
+            sb.append(subject).append(": ").append(content);
         }
         return sb.toString();
     }

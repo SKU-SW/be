@@ -33,14 +33,14 @@ public class BroadcastWebSocketVoiceSender {
      * @param voiceData : 음성 데이터 (byte 배열)
      * @param characterId : 캐릭터 ID
      * @param voiceText : 음성 텍스트 데이터
-     * @param broadcastDialogueId : BroadcastDialogue PK (Cursor)
+     * @param broadcastDialogueCursorId : BroadcastInfo Cursor ID
      */
     public void sendVoiceWithMetadata(
             String broadcastStreamId,
             byte[] voiceData,
             Long characterId,
             String voiceText,
-            Long broadcastDialogueId,
+            Long broadcastDialogueCursorId,
             Long startTime
     ) {
         WebSocketSession session = sessionRegistry.getSession(broadcastStreamId);
@@ -55,7 +55,7 @@ public class BroadcastWebSocketVoiceSender {
         BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.builder()
                 .characterId(characterId)
                 .voiceText(voiceText)
-                .broadcastDialogueId(broadcastDialogueId)
+                .broadcastDialogueCursorId(broadcastDialogueCursorId)
                 .build();
 
         try {
@@ -70,7 +70,7 @@ public class BroadcastWebSocketVoiceSender {
                 session.sendMessage(new TextMessage(metadataJson));
             }
 
-            log.debug("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Sent | streamId: {}, dialogueId: {}, voice response time: {}", broadcastStreamId, broadcastDialogueId, System.currentTimeMillis() - startTime);
+            log.info("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Sent | streamId: {}, cursorId: {}, voice response time: {}", broadcastStreamId, broadcastDialogueCursorId, System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             log.error("[BroadcastWebSocketHandler] sendVoiceWithMetadata() - Failed to send | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);

@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.util;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +13,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -23,6 +26,7 @@ import java.util.List;
 public class BroadcastRedisUtil {
     private static final String BROADCAST_CHARACTER_KEY_PREFIX = "BroadcastCharacter:";
     private static final String BROADCAST_INFO_KEY_PREFIX = "BroadcastInfo:";
+    private static final String BROADCAST_INFO_CURSOR_SEQUENCE_KEY = "BroadcastInfoCursor:GlobalSeq";
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
@@ -126,16 +130,26 @@ public class BroadcastRedisUtil {
     /**
      * 방송 대화 내역을 Redis List에 추가하는 함수
      * - Key: BroadcastInfo:{broadcastStreamId}
-     * - Value: BroadcastInfoRedisDto JSON (Right Push)
+     * - Value: cursorId가 포함된 BroadcastInfoRedisDto JSON (Right Push)
      * @param broadcastStreamId : 방송 스트림 ID
-     * @param value : 저장할 방송 대화 정보
+     * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
      */
-    public void pushBroadcastInfo(String broadcastStreamId, BroadcastInfoRedisDto value) {
+    public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content) {
         String key = BROADCAST_INFO_KEY_PREFIX + broadcastStreamId;
         try {
-            String jsonValue = objectMapper.writeValueAsString(value);
+            Long nextCursorId = redisTemplate.opsForValue().increment(BROADCAST_INFO_CURSOR_SEQUENCE_KEY);
+            BroadcastInfoRedisDto redisValue = BroadcastInfoRedisDto.builder()
+                    .cursorId(nextCursorId)
+                    .subject(subject)
+                    .content(content)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            String jsonValue = objectMapper.writeValueAsString(redisValue);
             redisTemplate.opsForList().rightPush(key, jsonValue);
-            log.debug("[BroadcastRedisUtil] pushBroadcastInfo() - Pushed | streamId: {}, role: {}", broadcastStreamId, value.role());
+            log.debug("[BroadcastRedisUtil] pushBroadcastInfo() - Pushed | streamId: {}, cursorId: {}, subject: {}",
+                    broadcastStreamId, redisValue.cursorId(), redisValue.subject());
+            return redisValue;
         } catch (JsonProcessingException e) {
             log.error("[BroadcastRedisUtil] Broadcast Info JSON 변환 오류 | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
             throw new RuntimeException("Broadcast Redis Save Error", e);

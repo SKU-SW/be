@@ -3,12 +3,10 @@ package com.example.sku_sw.domain.broadcast.service;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.FastApiTtsReqDto;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
-import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketHandler;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketVoiceSender;
 import com.example.sku_sw.global.util.FastApiUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -35,11 +33,13 @@ public class BroadcastVoiceTransferService {
      *
      * @param broadcastStreamId : 방송 스트림 ID
      * @param voiceText         : 음성으로 변환할 텍스트
+     * @param broadcastDialogueCursorId : Redis BroadcastInfo cursor ID
+     * @param startTime         : handleTextMessage 시작 시각(ms)
      * @return : 음성 전송 결과 (Mono&lt;Void&gt;)
      */
-    public Mono<Void> processVoiceTransfer(String broadcastStreamId, String voiceText, long startTime) {
-        log.info("[BroadcastVoiceTransferService] processVoiceTransfer() - START | streamId: {}, textLength: {}",
-                broadcastStreamId, voiceText != null ? voiceText.length() : 0);
+    public Mono<Void> processVoiceTransfer(String broadcastStreamId, String voiceText, Long broadcastDialogueCursorId, long startTime) {
+        log.info("[BroadcastVoiceTransferService] processVoiceTransfer() - START | streamId: {}, textLength: {}, cursorId: {}",
+                broadcastStreamId, voiceText != null ? voiceText.length() : 0, broadcastDialogueCursorId);
 
         /*
             1. Redis에서 캐릭터 정보 조회
@@ -55,7 +55,7 @@ public class BroadcastVoiceTransferService {
                 character.getCharacterId(),
                 character.getCharacterVoiceTtsId(),
                 voiceText,
-                null // broadcastDialogueId는 DB 저장 후 설정 예정
+                broadcastDialogueCursorId
         );
 
         /*
@@ -68,7 +68,18 @@ public class BroadcastVoiceTransferService {
                             broadcastStreamId, response.voiceData() != null ? response.voiceData().length : 0);
 
                     /*
-                        (1) WebSocket으로 음성 데이터 + 메타데이터 전송
+                        (1) FastAPI metadata cursor 검증
+                        - FastAPI 응답 cursor가 없거나 요청 cursor와 다르면, Spring이 보낸 cursor를 기준으로 메타데이터를 유지한다.
+                     */
+                    Long metadataCursorId = response.broadcastDialogueCursorId();
+                    if (metadataCursorId == null || !metadataCursorId.equals(broadcastDialogueCursorId)) {
+                        log.warn("[BroadcastVoiceTransferService] processVoiceTransfer() - Cursor mismatch detected | streamId: {}, requestCursorId: {}, responseCursorId: {}",
+                                broadcastStreamId, broadcastDialogueCursorId, metadataCursorId);
+                        metadataCursorId = broadcastDialogueCursorId;
+                    }
+
+                    /*
+                        (2) WebSocket으로 음성 데이터 + 메타데이터 전송
                         - sendVoiceWithMetadata()는 동기 호출이며, 내부에서 예외 발생 시 CustomException을 던진다.
                      */
                     broadcastWebSocketVoiceSender.sendVoiceWithMetadata(
@@ -76,7 +87,7 @@ public class BroadcastVoiceTransferService {
                             response.voiceData(),
                             response.characterId(),
                             response.voiceText(),
-                            response.broadcastDialogueId(),
+                            metadataCursorId,
                             startTime
                     );
                 })

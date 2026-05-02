@@ -9,7 +9,7 @@ public record BroadcastVoiceMetadataResDto(
         Long characterId,
         @Schema(description = "음성 텍스트 데이터", example = "안녕하세요")
         String voiceText,
-        @Schema(description = "BroadcastDialogue PK (Cursor)", example = "42")
-        Long broadcastDialogueId
+        @Schema(description = "BroadcastInfo Cursor ID", example = "42")
+        Long broadcastDialogueCursorId
 ) {
 }

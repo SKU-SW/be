@@ -1,14 +1,15 @@
 package com.example.sku_sw.domain.broadcast.dto;
 
-import com.example.sku_sw.domain.broadcast.enums.BroadcastInfoRole;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
 
 @Builder
 public record BroadcastInfoRedisDto(
-        BroadcastInfoRole role,
-        String message,
+        Long cursorId,
+        DialogueSubject subject,
+        String content,
         LocalDateTime createdAt
 ) {
 }

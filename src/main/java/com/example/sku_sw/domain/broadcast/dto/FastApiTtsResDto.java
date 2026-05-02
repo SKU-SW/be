@@ -6,7 +6,7 @@ import lombok.Builder;
 public record FastApiTtsResDto(
         Long characterId,
         String voiceText,
-        Long broadcastDialogueId,
+        Long broadcastDialogueCursorId,
         byte[] voiceData
 ) {
 }
