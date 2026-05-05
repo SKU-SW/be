@@ -9,6 +9,7 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.global.exception.CustomException;
@@ -42,6 +43,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastMessageService broadcastMessageService;
+    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
     private final BroadcastRepository broadcastRepository;
     private final TransactionTemplate transactionTemplate;
 
@@ -186,6 +188,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
                 broadcast.abnormalTerminate();
             });
+
+            boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+            if (compacted) {
+                broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
+            }
         } catch (Exception e) {
             log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Failed | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
         }

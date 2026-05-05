@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -29,12 +30,24 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-@Table(name = "broadcast_dialogue")
+@Table(
+        name = "broadcast_dialogue",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_broadcast_dialogue_broadcast_cursor", columnNames = {"broadcast_id", "cursor_id"})
+        }
+)
 public class BroadcastDialogue {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /**
+     * Redis에서 생성된 각 대화별 고유 Cursor용 ID값
+     * 데이터가 Redis에 쌓였을 때 BroadcastDialogue에 자동으로 저장되게되는데, 그때 Redis에 담긴 cursorId도 저장됨
+     */
+    @Column(name = "cursor_id", nullable = false)
+    private Long cursorId;
 
     /**
      * 대화 주체

@@ -43,8 +43,9 @@ public class BroadcastService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketHandler broadcastWebSocketHandler;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
+    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
 
-    /**ㅋ
+    /**
      * AI 캐릭터 방송 시작
      * - 사용자가 선택한 캐릭터로 방송을 시작한다.
      * - 선택되지 않은 캐릭터거나 이미 방송 중인 경우 예외를 발생시킨다.
@@ -240,6 +241,7 @@ public class BroadcastService {
             public void afterCommit() {
                 try {
                     broadcastRedisUtil.setBroadcastCharacterValue(broadcastStreamId, redisDto);
+                    broadcastRedisUtil.initializeSummarySlot(broadcastStreamId);
                     // Redis 저장 성공 시 WebSocket 연결 타임아웃 등록
                     broadcastConnectionTimeoutService.registerConnectionTimeout(broadcastStreamId);
                 } catch (Exception e) {
@@ -264,7 +266,11 @@ public class BroadcastService {
             @Override
             public void afterCommit() {
                 try {
+                    boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
                     broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+                    if (compacted) {
+                        broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
+                    }
                 } catch (Exception e) {
                     log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
                 }

@@ -40,18 +40,21 @@ public class BroadcastConnectionTimeoutService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final TransactionTemplate transactionTemplate;
+    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
 
     public BroadcastConnectionTimeoutService(
             TaskScheduler taskScheduler,
             BroadcastRepository broadcastRepository,
             BroadcastRedisUtil broadcastRedisUtil,
             BroadcastWebSocketSessionRegistry sessionRegistry,
+            BroadcastDialogueCompactionService broadcastDialogueCompactionService,
             PlatformTransactionManager transactionManager
     ) {
         this.taskScheduler = taskScheduler;
         this.broadcastRepository = broadcastRepository;
         this.broadcastRedisUtil = broadcastRedisUtil;
         this.sessionRegistry = sessionRegistry;
+        this.broadcastDialogueCompactionService = broadcastDialogueCompactionService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -138,9 +141,6 @@ public class BroadcastConnectionTimeoutService {
                     return null;
                 }
 
-                broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-                log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Redis backup & delete completed | streamId: {}", broadcastStreamId);
-
                 broadcast.abnormalTerminate();
                 broadcastRepository.save(broadcast);
 
@@ -161,6 +161,15 @@ public class BroadcastConnectionTimeoutService {
 
                 return null;
             });
+
+            if (!sessionRegistry.hasSession(broadcastStreamId)) {
+                boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+                broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+                if (compacted) {
+                    broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
+                }
+                log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Redis backup & delete completed | streamId: {}", broadcastStreamId);
+            }
 
             log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Abnormal termination processed | streamId: {}", broadcastStreamId);
         } catch (Exception e) {
