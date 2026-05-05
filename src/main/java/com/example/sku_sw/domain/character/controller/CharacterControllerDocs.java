@@ -8,7 +8,6 @@ import com.example.sku_sw.domain.character.dto.CharacterSelectResDto;
 import com.example.sku_sw.domain.character.dto.CharacterSettingsResDto;
 import com.example.sku_sw.domain.character.dto.CharacterUpdateReqDto;
 import com.example.sku_sw.global.response.GlobalResponse;
-import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.SliceResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;

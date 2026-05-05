@@ -23,7 +23,6 @@ import com.example.sku_sw.domain.character.repository.VoiceTypeRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
-import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.SliceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

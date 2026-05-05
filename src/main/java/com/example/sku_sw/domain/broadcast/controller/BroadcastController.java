@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
+import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
 import com.example.sku_sw.domain.broadcast.service.BroadcastService;
@@ -27,5 +28,12 @@ public class BroadcastController implements BroadcastControllerDocs {
         Long userId = SecurityUtil.getCurrentUserId();
         BroadcastTerminateResDto response = broadcastService.terminateCurrentBroadcast(userId);
         return ResponseEntity.ok(GlobalResponse.success("방송이 성공적으로 종료되었습니다.", response));
+    }
+
+    @Override
+    public ResponseEntity<GlobalResponse<CurrentStreamInfoResDto>> getCurrentStreamInfo(Integer size) {
+        Long userId = SecurityUtil.getCurrentUserId();
+        CurrentStreamInfoResDto response = broadcastService.getCurrentStreamInfo(userId, size);
+        return ResponseEntity.ok(GlobalResponse.success("현재 진행 중인 방송 정보 조회 성공", response));
     }
 }

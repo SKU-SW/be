@@ -83,4 +83,24 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
             @Param("characterId") Long characterId,
             @Param("status") BroadcastStatus status
     );
+
+    /**
+     * 사용자의 진행 중인 방송 단건 조회
+     * - userId 기준으로 BROADCASTING 상태 방송을 조회한다.
+     * @param userId : 조회할 사용자 ID
+     * @param status : 확인할 방송 상태
+     * @return : Optional<Broadcast>
+     */
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character c " +
+            "join fetch c.voiceType vt " +
+            "join fetch c.characterImage ci " +
+            "join fetch c.characterPersona cp " +
+            "where c.user.id = :userId " +
+            "and b.status = :status")
+    Optional<Broadcast> findActiveByUserId(
+            @Param("userId") Long userId,
+            @Param("status") BroadcastStatus status
+    );
 }
