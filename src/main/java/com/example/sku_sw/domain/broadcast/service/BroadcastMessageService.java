@@ -4,7 +4,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
-import com.example.sku_sw.global.util.GeminiFunctionCallingResponseDto;
+import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallingResponseDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,6 +29,7 @@ public class BroadcastMessageService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastGeminiService broadcastGeminiService;
     private final BroadcastVoiceTransferService broadcastVoiceTransferService;
+    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
 
     /**
      * 클라이언트 텍스트 메시지를 처리한다.
@@ -56,6 +57,7 @@ public class BroadcastMessageService {
         BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, message);
         log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
                 broadcastStreamId, savedUserInfo.cursorId(), message);
+        broadcastDialogueCompactionService.tryStartCompaction(broadcastStreamId);
 
         /*
             3. 메시지 정규화 및 트리거 워드 확인
@@ -96,9 +98,10 @@ public class BroadcastMessageService {
             - 최근 방송 대화 내역을 조회하여 프롬프트에 포함시킨다.
             - block하지 않고 Mono subscribe 방식으로 처리한다.
          */
-        List<BroadcastInfoRedisDto> recentInfos = broadcastRedisUtil.getRecentBroadcastInfos(broadcastStreamId, RECENT_BROADCAST_INFO_LIMIT);
+        BroadcastInfoRedisDto summary = broadcastRedisUtil.getSummary(broadcastStreamId);
+        List<BroadcastInfoRedisDto> recentInfos = broadcastRedisUtil.getRecentActiveDialogues(broadcastStreamId, RECENT_BROADCAST_INFO_LIMIT);
 
-        broadcastGeminiService.processClientMessage(character, recentInfos, message)
+        broadcastGeminiService.processClientMessage(character, summary, recentInfos, message)
                 .subscribeOn(Schedulers.boundedElastic())
                 // flatMap: Gemini 응답을 처리하고 VoiceTransfer까지 연결하는 단일 reactive 체인
                 // map은 Mono 안에 들어있는 데이터를 처리하고, 다시 Mono 객체로 감싸준다. 이때, 해당 숨사의 반환값이 일반 DTO 값이 아니라 Mono인 경우 Mono<Mono<>>가 되어버린다
@@ -142,6 +145,7 @@ public class BroadcastMessageService {
             BroadcastInfoRedisDto savedAiInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, response.text());
             log.info("[BroadcastMessageService] handleGeminiResponseReactively() - AI response saved | streamId: {}, cursorId: {}, aiResponse: {}, responseLength: {}, elapsedMs: {}",
                     broadcastStreamId, savedAiInfo.cursorId(), response.text(), response.text().length(), System.currentTimeMillis() - startTime);
+            broadcastDialogueCompactionService.tryStartCompaction(broadcastStreamId);
 
             /*
                 (2) BroadcastVoiceTransferService로 TTS 처리 및 WebSocket 전송 (reactive chain)

@@ -25,12 +25,14 @@ public class BroadcastPromptBuilder {
      */
     public String buildPrompt(
             BroadcastCharacterRedisDto character,
-            List<BroadcastInfoRedisDto> recentInfos,
+            BroadcastInfoRedisDto summary,
+            List<BroadcastInfoRedisDto> recentActiveInfos,
             String clientMessage
     ) {
         log.info("[BroadcastPromptBuilder] buildPrompt() - START | characterId: {}", character.getCharacterId());
 
-        String recentBroadcastContent = buildRecentBroadcastContent(recentInfos);
+        String summaryContent = buildSummaryContent(summary);
+        String recentBroadcastContent = buildRecentBroadcastContent(recentActiveInfos);
 
         String genderStr = character.getCharacterGender() != null ? character.getCharacterGender().getValue() : "";
         String ageGroupStr = character.getCharacterVoiceAgeGroup() != null ? character.getCharacterVoiceAgeGroup().name() : "";
@@ -56,7 +58,10 @@ public class BroadcastPromptBuilder {
                         2. 답변은 너무 길지 않게, 실제 말로 내뱉기 좋은 길이(1~2문장)로 작성하세요.
                         3. 스트리머가 말한 문장이 문맥상 AI에게 말한 내용이 아닌 것 같으면 Function Call을 사용해서 false를 반환하세요.
                         
-                        [오늘 방송 내용]
+                        [오늘 방송 흐름 요약]
+                        %s
+
+                        [최근 실시간 대화]
                         %s
                         
                         [방금 스트리머가 말한 문장]
@@ -66,6 +71,7 @@ public class BroadcastPromptBuilder {
                 ageGroupStr,
                 personalityStr,
                 speechStyleStr,
+                summaryContent,
                 recentBroadcastContent,
                 clientMessage
         );
@@ -95,5 +101,17 @@ public class BroadcastPromptBuilder {
             sb.append(subject).append(": ").append(content);
         }
         return sb.toString();
+    }
+
+    /**
+     * 방송 summary DTO를 프롬프트 문자열로 변환한다.
+     * @param summary : summary DTO
+     * @return : summary 문자열
+     */
+    private String buildSummaryContent(BroadcastInfoRedisDto summary) {
+        if (summary == null || summary.content() == null || summary.content().isBlank()) {
+            return "(없음)";
+        }
+        return summary.content();
     }
 }

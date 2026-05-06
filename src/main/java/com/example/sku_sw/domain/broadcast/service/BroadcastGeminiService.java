@@ -3,8 +3,8 @@ package com.example.sku_sw.domain.broadcast.service;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
-import com.example.sku_sw.global.util.GeminiFunctionCallingResponseDto;
 import com.example.sku_sw.global.util.GeminiUtil;
+import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallingResponseDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,13 +30,15 @@ public class BroadcastGeminiService {
      * - Gemini Function Calling API를 호출하여 응답을 받아온다.
      *
      * @param character     : 방송 캐릭터 정보 DTO
-     * @param recentInfos   : 최근 방송 대화 내역 목록
+     * @param summary       : 방송 요약 데이터
+     * @param recentActiveInfos   : 최근 방송 대화 내역 목록
      * @param clientMessage : 클라이언트가 보낸 메시지
      * @return : Gemini Function Calling 결과 DTO (Mono)
      */
     public Mono<GeminiFunctionCallingResponseDto> processClientMessage(
             BroadcastCharacterRedisDto character,
-            List<BroadcastInfoRedisDto> recentInfos,
+            BroadcastInfoRedisDto summary,
+            List<BroadcastInfoRedisDto> recentActiveInfos,
             String clientMessage
     ) {
         log.info("[BroadcastGeminiService] processClientMessage() - START | characterId: {}", character.getCharacterId());
@@ -45,13 +47,13 @@ public class BroadcastGeminiService {
             1. 프롬프트 생성
             - BroadcastPromptBuilder로 캐릭터 정보, 방송 내역, 클라이언트 메시지를 조합한다.
          */
-        String prompt = broadcastPromptBuilder.buildPrompt(character, recentInfos, clientMessage);
+        String prompt = broadcastPromptBuilder.buildPrompt(character, summary, recentActiveInfos, clientMessage);
 
         /*
             2. Gemini Function Calling API 호출
             - 생성된 프롬프트로 Gemini API를 비동기 호출한다.
          */
-        Mono<GeminiFunctionCallingResponseDto> result = geminiUtil.generateContentWithFunctionCalling(prompt)
+        Mono<GeminiFunctionCallingResponseDto> result = geminiUtil.generateDialogueWithFunctionCalling(prompt)
                 .doOnNext(response -> {
                     if (response.functionCalled()) {
                         log.info("[BroadcastGeminiService] processClientMessage() - Function call detected");

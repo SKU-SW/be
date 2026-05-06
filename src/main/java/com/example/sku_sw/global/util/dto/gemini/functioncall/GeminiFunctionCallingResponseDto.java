@@ -1,4 +1,4 @@
-package com.example.sku_sw.global.util;
+package com.example.sku_sw.global.util.dto.gemini.functioncall;
 
 import lombok.Builder;
 
