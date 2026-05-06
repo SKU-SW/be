@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.repository;
 
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -33,6 +34,36 @@ public interface BroadcastDialogueRepository extends JpaRepository<BroadcastDial
      * @return : 대화 목록
      */
     List<BroadcastDialogue> findByBroadcastIdAndCursorIdLessThanOrderByCursorIdDesc(Long broadcastId, Long cursorId, Pageable pageable);
+
+    /**
+     * 특정 방송에서 기준 cursorId 이하이면서 대화 주체 필터에 해당하는 최신 대화 목록을 cursorId 내림차순으로 조회하는 함수
+     * @param broadcastId : 방송 ID
+     * @param cursorId : 기준 cursorId
+     * @param subjects : 조회할 대화 주체 목록
+     * @param pageable : 조회 개수 Pageable
+     * @return : 대화 목록
+     */
+    List<BroadcastDialogue> findByBroadcastIdAndCursorIdLessThanEqualAndSubjectInOrderByCursorIdDesc(
+            Long broadcastId,
+            Long cursorId,
+            Collection<DialogueSubject> subjects,
+            Pageable pageable
+    );
+
+    /**
+     * 특정 방송에서 기준 cursorId 미만이면서 대화 주체 필터에 해당하는 최신 대화 목록을 cursorId 내림차순으로 조회하는 함수
+     * @param broadcastId : 방송 ID
+     * @param cursorId : 기준 cursorId
+     * @param subjects : 조회할 대화 주체 목록
+     * @param pageable : 조회 개수 Pageable
+     * @return : 대화 목록
+     */
+    List<BroadcastDialogue> findByBroadcastIdAndCursorIdLessThanAndSubjectInOrderByCursorIdDesc(
+            Long broadcastId,
+            Long cursorId,
+            Collection<DialogueSubject> subjects,
+            Pageable pageable
+    );
 
     /**
      * 특정 방송에서 기준 cursorId보다 작은 대화 존재 여부를 확인하는 함수

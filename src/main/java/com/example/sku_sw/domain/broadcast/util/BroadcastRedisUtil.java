@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -208,6 +209,38 @@ public class BroadcastRedisUtil {
             return activeInfos;
         }
         return activeInfos.subList(activeInfos.size() - limit, activeInfos.size());
+    }
+
+    /**
+     * Redis List에서 summary를 제외한 ACTIVE 방송 대화 내역 중 cursor 이하이며 subject 필터에 해당하는 데이터를 조회하는 함수
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param cursorId : 조회 시작 cursorId (inclusive)
+     * @param limit : 조회할 최대 개수
+     * @param subjects : 조회할 대화 주체 목록
+     * @return : 필터링된 방송 대화 정보 DTO 목록 (오름차순)
+     */
+    public List<BroadcastInfoRedisDto> getActiveDialoguesByCursor(
+            String broadcastStreamId,
+            Long cursorId,
+            int limit,
+            Collection<DialogueSubject> subjects
+    ) {
+        List<BroadcastInfoRedisDto> allInfos = getBroadcastInfos(broadcastStreamId);
+        if (allInfos.size() <= 1) {
+            return List.of();
+        }
+
+        List<BroadcastInfoRedisDto> filteredInfos = allInfos.stream()
+                .skip(1)
+                .filter(info -> info.dataStatus() == BroadcastDataStatus.ACTIVE)
+                .filter(info -> info.cursorId() <= cursorId)
+                .filter(info -> subjects.contains(info.subject()))
+                .toList();
+
+        if (filteredInfos.size() <= limit) {
+            return filteredInfos;
+        }
+        return filteredInfos.subList(filteredInfos.size() - limit, filteredInfos.size());
     }
 
     /**

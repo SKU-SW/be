@@ -13,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -40,8 +41,10 @@ import org.springframework.web.socket.CloseStatus;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -272,6 +275,92 @@ public class BroadcastService {
     }
 
     /**
+     * 현재 방송 대화 cursor 조회
+     * - 사용자의 진행 중인 방송이 있다면 cursorId 기준으로 과거 대화 데이터를 조회한다.
+     * - Redis에서 우선 조회하고, 부족한 경우 DB에서 추가 조회한다.
+     * - hasNext, nextCursor 계산을 위해 요청 개수보다 1개 더 조회한다.
+     * @param userId : 조회하는 사용자 ID
+     * @param size : 조회할 방송 대화 데이터 개수
+     * @param cursorId : 조회 시작 기준 cursorId
+     * @param aiCharacterDialogue : AI 캐릭터 대화 조회 여부
+     * @param streamerDialogue : 스트리머 대화 조회 여부
+     * @param viewerDialogue : 시청자 채팅 조회 여부
+     * @return : CursorSliceResponse<BroadcastDialogueCursorItemResDto>
+     */
+    @Transactional(readOnly = true)
+    public CursorSliceResponse<BroadcastDialogueCursorItemResDto> getBroadcastDialoguesByCursor(
+            Long userId,
+            Integer size,
+            Long cursorId,
+            Boolean aiCharacterDialogue,
+            Boolean streamerDialogue,
+            Boolean viewerDialogue
+    ) {
+        log.info("[BroadcastService] getBroadcastDialoguesByCursor() - START | userId: {}, size: {}, cursorId: {}, aiCharacterDialogue: {}, streamerDialogue: {}, viewerDialogue: {}",
+                userId, size, cursorId, aiCharacterDialogue, streamerDialogue, viewerDialogue);
+
+        /*
+            1. 요청값 정규화 및 대화 주체 필터 생성
+            - size는 최소 1 이상으로 보정한다.
+            - 대화 주체 필터가 하나도 선택되지 않은 경우 INVALID_DIALOGUE_FILTER 예외를 발생시킨다.
+         */
+        int normalizedSize = Math.max(size == null ? 10 : size, 1);
+        Set<DialogueSubject> dialogueSubjects = buildDialogueSubjectSet(
+                aiCharacterDialogue,
+                streamerDialogue,
+                viewerDialogue
+        );
+
+        /*
+            2. 활성 방송 조회
+            - userId 기준 진행 중인 방송이 없으면 ACTIVE_BROADCAST_NOT_FOUND 예외를 발생시킨다.
+         */
+        Broadcast activeBroadcast = broadcastRepository.findActiveByUserId(userId, BroadcastStatus.BROADCASTING)
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND));
+
+        /*
+            3. Redis cursor 대화 조회
+            - cursorId 이하이면서 주체 필터에 해당하는 최신 대화를 요청 개수보다 1개 더 조회한다.
+         */
+        int fetchSize = normalizedSize + 1;
+        List<BroadcastInfoRedisDto> redisDialogues = broadcastRedisUtil.getActiveDialoguesByCursor(
+                activeBroadcast.getStreamId(),
+                cursorId,
+                fetchSize,
+                dialogueSubjects
+        );
+
+        /*
+            4. DB 부족분 조회
+            - Redis 결과가 부족하면 DB에서 동일 필터 조건으로 부족한 개수만큼 추가 조회한다.
+         */
+        List<BroadcastDialogue> dbDialogues = getDbDialoguesByCursor(
+                activeBroadcast,
+                redisDialogues,
+                cursorId,
+                fetchSize,
+                dialogueSubjects
+        );
+
+        /*
+            5. CursorSliceResponse 생성
+            - 기존 현재 방송 정보 조회 API와 동일한 extra 1개 처리 규칙을 적용한다.
+         */
+        CursorSliceResponse<BroadcastDialogueCursorItemResDto> result = buildCurrentStreamDialogueSlice(
+                redisDialogues,
+                dbDialogues,
+                normalizedSize
+        );
+
+        log.info("[BroadcastService] getBroadcastDialoguesByCursor() - END | streamId: {}, contentSize: {}, hasNext: {}, nextCursor: {}",
+                activeBroadcast.getStreamId(),
+                result.content().size(),
+                result.hasNext(),
+                result.nextCursor());
+        return result;
+    }
+
+    /**
      * 캐릭터 엔티티를 방송 Redis 저장 DTO로 변환하는 함수
      * @param character : 방송 캐릭터 엔티티
      * @return : 방송 캐릭터 Redis DTO
@@ -429,6 +518,64 @@ public class BroadcastService {
     }
 
     /**
+     * cursor 기반 방송 대화 조회용 DB 부족분 조회
+     * @param broadcast : 진행 중인 방송 엔티티
+     * @param redisDialogues : Redis에서 조회한 대화 목록
+     * @param cursorId : 조회 시작 기준 cursorId
+     * @param fetchSize : 최대 조회 개수 (size + 1)
+     * @param dialogueSubjects : 조회할 대화 주체 목록
+     * @return : DB에서 조회한 대화 목록
+     */
+    private List<BroadcastDialogue> getDbDialoguesByCursor(
+            Broadcast broadcast,
+            List<BroadcastInfoRedisDto> redisDialogues,
+            Long cursorId,
+            int fetchSize,
+            Set<DialogueSubject> dialogueSubjects
+    ) {
+        log.info("[BroadcastService] getDbDialoguesByCursor() - START | broadcastId: {}, redisSize: {}, cursorId: {}, fetchSize: {}, dialogueSubjects: {}",
+                broadcast.getId(), redisDialogues.size(), cursorId, fetchSize, dialogueSubjects);
+
+        /*
+            1. DB에서 추가로 조회해야할 데이터 개수 계산
+            - 만약 추가로 조회해야할 데이터가 없다면 함수 종료
+         */
+        int dbFetchSize = fetchSize - redisDialogues.size();
+        if (dbFetchSize <= 0) {
+            log.info("[BroadcastService] getDbDialoguesByCursor() - END | action: skip_db_fetch");
+            return List.of();
+        }
+
+        /*
+            2. DB에서 추가로 조회해야할 데이터가 있다면 해당 데이터 개수만큼 조회
+                1) Redis에서 조회한 데이터가 없다면 cursorId 이하 데이터들을 cursorId 기준 내림차순 조회
+                2) Redis에서 조회한 데이터가 있다면 해당 데이터들 중 가장 작은 cursorId보다 더 적은 데이터들만 내림차순 조회
+         */
+        PageRequest pageable = PageRequest.of(0, dbFetchSize);
+        List<BroadcastDialogue> result;
+
+        if (redisDialogues.isEmpty()) {
+            result = broadcastDialogueRepository.findByBroadcastIdAndCursorIdLessThanEqualAndSubjectInOrderByCursorIdDesc(
+                    broadcast.getId(),
+                    cursorId,
+                    dialogueSubjects,
+                    pageable
+            );
+        } else {
+            Long oldestRedisCursorId = redisDialogues.getFirst().cursorId();
+            result = broadcastDialogueRepository.findByBroadcastIdAndCursorIdLessThanAndSubjectInOrderByCursorIdDesc(
+                    broadcast.getId(),
+                    oldestRedisCursorId,
+                    dialogueSubjects,
+                    pageable
+            );
+        }
+
+        log.info("[BroadcastService] getDbDialoguesByCursor() - END | resultSize: {}", result.size());
+        return result;
+    }
+
+    /**
      * 현재 방송 정보 조회용 CursorSliceResponse 생성
      * @param redisDialogues : Redis 대화 목록
      * @param dbDialogues : DB 대화 목록
@@ -461,9 +608,14 @@ public class BroadcastService {
         if(mergedDialogues.isEmpty() || !hasNext) nextCursor = null;
         else nextCursor = mergedDialogues.getFirst().cursorId();
 
+        List<BroadcastDialogueCursorProjection> responseDialogues = hasNext
+                ? mergedDialogues.stream()
+                    .skip(1) // 1개의 값을 건너뜀. 현재 mergedDialogues에 들어있는 0번 인덱스의 값은 Cursor를 위해 추가로 가져온 데이터이므로 건너뛴다.
+                    .toList()
+                : mergedDialogues;
+
         CursorSliceResponse<BroadcastDialogueCursorItemResDto> result = CursorSliceResponse.<BroadcastDialogueCursorItemResDto>builder()
-                .content(mergedDialogues.stream()
-                        .skip(1) // 1개의 값을 건너뜀. 현재 mergedDialogues에 들어있는 0번 인덱스의 값은 Cursor를 위해 추가로 가져온 데이터이므로 건너뛴다.
+                .content(responseDialogues.stream()
                         .map(this::toBroadcastDialogueCursorItemResDto)
                         .toList())
                 .size(size)
@@ -501,6 +653,35 @@ public class BroadcastService {
                 .map(CharacterImageDetail::getImageUrl)
                 .findFirst()
                 .orElse("");
+    }
+
+    /**
+     * 요청된 대화 필터를 DialogueSubject 집합으로 변환
+     * @param aiCharacterDialogue : AI 캐릭터 대화 조회 여부
+     * @param streamerDialogue : 스트리머 대화 조회 여부
+     * @param viewerDialogue : 시청자 채팅 조회 여부
+     * @return : 조회할 대화 주체 집합
+     */
+    private Set<DialogueSubject> buildDialogueSubjectSet(
+            Boolean aiCharacterDialogue,
+            Boolean streamerDialogue,
+            Boolean viewerDialogue
+    ) {
+        EnumSet<DialogueSubject> dialogueSubjects = EnumSet.noneOf(DialogueSubject.class);
+        if (Boolean.TRUE.equals(aiCharacterDialogue)) {
+            dialogueSubjects.add(DialogueSubject.AI_CHARACTER);
+        }
+        if (Boolean.TRUE.equals(streamerDialogue)) {
+            dialogueSubjects.add(DialogueSubject.STREAMER);
+        }
+        if (Boolean.TRUE.equals(viewerDialogue)) {
+            dialogueSubjects.add(DialogueSubject.VIEWER);
+        }
+
+        if (dialogueSubjects.isEmpty()) {
+            throw new CustomException(BroadcastErrorCode.INVALID_DIALOGUE_FILTER);
+        }
+        return dialogueSubjects;
     }
 
     /**
