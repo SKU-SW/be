@@ -163,6 +163,7 @@ public class GeminiUtil {
         return new GeminiFunctionCallingResponseDto(false, resultText);
     }
 
+    // Gemini Response에서 Text를 추출하는 함수
     private String extractText(GeminiGenerateContentResDto response) {
         if (response == null || response.candidates() == null || response.candidates().isEmpty()) {
             log.warn("[GeminiUtil] extractText() - Empty response");

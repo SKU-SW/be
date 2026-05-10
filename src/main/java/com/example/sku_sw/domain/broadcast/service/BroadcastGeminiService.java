@@ -47,7 +47,7 @@ public class BroadcastGeminiService {
             1. 프롬프트 생성
             - BroadcastPromptBuilder로 캐릭터 정보, 방송 내역, 클라이언트 메시지를 조합한다.
          */
-        String prompt = broadcastPromptBuilder.buildPrompt(character, summary, recentActiveInfos, clientMessage);
+        String prompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos, clientMessage);
 
         /*
             2. Gemini Function Calling API 호출
