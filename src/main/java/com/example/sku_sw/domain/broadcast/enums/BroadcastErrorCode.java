@@ -20,6 +20,7 @@ public enum BroadcastErrorCode implements BaseErrorCode {
     ACTIVE_BROADCAST_NOT_FOUND(HttpStatus.NOT_FOUND, "진행 중인 방송이 없습니다."),
     INVALID_DIALOGUE_FILTER(HttpStatus.BAD_REQUEST, "최소 하나 이상의 대화 주체 필터가 필요합니다."),
     WEBSOCKET_CONNECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "WebSocket 연결이 존재하지 않습니다."),
+    WEBSOCKET_SESSION_NOT_READY(HttpStatus.BAD_REQUEST, "Gemini WebSocket 세션이 아직 준비되지 않았습니다."),
     BROADCAST_CHARACTER_REDIS_NOT_FOUND(HttpStatus.NOT_FOUND, "방송 캐릭터 정보를 Redis에서 찾을 수 없습니다."),
     WEBSOCKET_MESSAGE_PARSE_FAILED(HttpStatus.BAD_REQUEST, "WebSocket 메시지 파싱에 실패했습니다."),
     GEMINI_RESPONSE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini API 응답 처리에 실패했습니다.");

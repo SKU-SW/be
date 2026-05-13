@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketStatusResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
@@ -69,7 +70,7 @@ public class BroadcastGeminiBootstrapService {
                 broadcastStreamId, generation);
 
         /*
-            1. Bootstrap 성공 후 반환된 clienSession이 현재 Session Registry에 저장된 Session Bundle과 일치하는지 확인한다.
+            1. Bootstrap 성공 후 반환된 clientSession이 현재 Session Registry에 저장된 Session Bundle과 일치하는지 확인한다.
             - 만약 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는다면, 새롭게 생성된 Gemini WebSocket Session을 종료시킨다.
             - 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는 경우는, Gemini WebSocket Session이 생성되는 도중에 클라이언트가 새로운 WebSocket 연결을 시도한 것이기 때문에 Gemini Session만 종료시킨다.
          */
@@ -91,6 +92,8 @@ public class BroadcastGeminiBootstrapService {
                     broadcastStreamId, generation);
             return;
         }
+
+        geminiSession.getAttributes().put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), broadcastStreamId);
 
         /*
             3. Gemini Session까지 현재 Session Bundle에 성공적으로 등록했다면, 해당 Session Bundle의 상태를 READY로 변경한다.

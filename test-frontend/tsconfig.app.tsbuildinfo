@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/lib/api.ts","./src/lib/config.ts","./src/lib/storage.ts","./src/pages/AuthPage.tsx","./src/pages/CharactersPage.tsx","./src/pages/ChatPage.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/lib/api.ts","./src/lib/audio.ts","./src/lib/config.ts","./src/lib/storage.ts","./src/pages/AuthPage.tsx","./src/pages/CharactersPage.tsx","./src/pages/ChatPage.tsx"],"version":"5.9.3"}

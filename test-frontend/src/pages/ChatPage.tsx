@@ -1,14 +1,23 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { terminateBroadcast } from '../lib/api';
+import {
+  createAudioBufferFromPcm16,
+  createPcmAudioContext,
+  resumeAudioContext,
+  scheduleAudioBuffer,
+  toArrayBuffer,
+} from '../lib/audio';
 import { getWebSocketBaseUrl } from '../lib/config';
 import { getAccessToken } from '../lib/storage';
 
 type ConnectionState = 'IDLE' | 'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR';
 
 interface AudioMessage {
-  url: string;
   createdAt: string;
+  byteLength: number;
+  sampleCount: number;
+  durationMs: number;
 }
 
 interface TextMessage {
@@ -21,6 +30,9 @@ export default function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const nextPlaybackTimeRef = useRef(0);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const broadcastStreamId = params.get('broadcastStreamId') || '';
@@ -46,14 +58,81 @@ export default function ChatPage() {
     return () => {
       wsRef.current?.close();
       wsRef.current = null;
-      setAudioMessages((prev) => {
-        prev.forEach((m) => URL.revokeObjectURL(m.url));
-        return [];
+
+      activeSourcesRef.current.forEach((source) => {
+        try {
+          source.stop();
+        } catch {
+          // no-op
+        }
       });
+      activeSourcesRef.current = [];
+      nextPlaybackTimeRef.current = 0;
+
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+
+      setAudioMessages([]);
     };
   }, []);
 
-  const connect = () => {
+  const ensureAudioContext = async () => {
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = createPcmAudioContext();
+      nextPlaybackTimeRef.current = 0;
+    }
+
+    await resumeAudioContext(audioContextRef.current);
+    return audioContextRef.current;
+  };
+
+  const resetAudioPlayback = async () => {
+    activeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {
+        // no-op
+      }
+    });
+    activeSourcesRef.current = [];
+    nextPlaybackTimeRef.current = 0;
+
+    if (audioContextRef.current) {
+      await audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+  };
+
+  const playPcmAudioChunk = async (binaryData: Blob | ArrayBuffer) => {
+    const audioContext = await ensureAudioContext();
+    const arrayBuffer = await toArrayBuffer(binaryData);
+    const { audioBuffer, playbackInfo } = createAudioBufferFromPcm16(audioContext, arrayBuffer);
+    const { source, nextPlaybackTime } = scheduleAudioBuffer(
+      audioContext,
+      audioBuffer,
+      nextPlaybackTimeRef.current,
+    );
+
+    nextPlaybackTimeRef.current = nextPlaybackTime;
+    activeSourcesRef.current.push(source);
+    source.onended = () => {
+      activeSourcesRef.current = activeSourcesRef.current.filter((current) => current !== source);
+    };
+
+    setAudioMessages((prev) => [
+      {
+        createdAt: new Date().toISOString(),
+        byteLength: playbackInfo.byteLength,
+        sampleCount: playbackInfo.sampleCount,
+        durationMs: playbackInfo.durationMs,
+      },
+      ...prev,
+    ]);
+  };
+
+  const connect = async () => {
     if (!broadcastStreamId) {
       setStatus('broadcastStreamId 쿼리 파라미터가 필요합니다.');
       return;
@@ -71,17 +150,26 @@ export default function ChatPage() {
     setConnectionState('CONNECTING');
     setStatus('WebSocket 연결 중...');
 
+    try {
+      await ensureAudioContext();
+    } catch (error) {
+      setConnectionState('ERROR');
+      setStatus(`AudioContext 생성 실패: ${(error as Error).message}`);
+      return;
+    }
+
     const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'blob';
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
       setConnectionState('OPEN');
-      setStatus('WebSocket 연결 성공');
+      setStatus('WebSocket 연결 성공 (PCM 24kHz 재생 준비 완료)');
     };
 
     ws.onclose = () => {
       setConnectionState('CLOSED');
       setStatus('WebSocket 연결 종료');
+      void resetAudioPlayback();
     };
 
     ws.onerror = () => {
@@ -90,15 +178,13 @@ export default function ChatPage() {
     };
 
     ws.onmessage = async (event) => {
-      if (event.data instanceof Blob) {
-        const blobUrl = URL.createObjectURL(event.data);
-        setAudioMessages((prev) => [
-          {
-            url: blobUrl,
-            createdAt: new Date().toISOString(),
-          },
-          ...prev,
-        ]);
+      if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+        try {
+          await playPcmAudioChunk(event.data);
+          setStatus('PCM 오디오 청크 수신 및 재생 예약 완료');
+        } catch (error) {
+          setStatus(`PCM 오디오 재생 실패: ${(error as Error).message}`);
+        }
         return;
       }
 
@@ -125,6 +211,7 @@ export default function ChatPage() {
   const disconnect = () => {
     wsRef.current?.close();
     wsRef.current = null;
+    void resetAudioPlayback();
   };
 
   const onSendChat = (e: FormEvent) => {
@@ -190,7 +277,7 @@ export default function ChatPage() {
       </section>
 
       <section className="card">
-        <h3>수신 음성 Blob 목록</h3>
+        <h3>수신 PCM 오디오 로그</h3>
         {audioMessages.length === 0 ? (
           <p>수신된 음성 없음</p>
         ) : (
@@ -200,7 +287,12 @@ export default function ChatPage() {
                 <div>
                   <small>{audio.createdAt}</small>
                 </div>
-                <audio controls src={audio.url} />
+                <div>
+                  <strong>{audio.durationMs}ms</strong>
+                  <p>
+                    {audio.byteLength} bytes / {audio.sampleCount} samples / PCM 24kHz mono
+                  </p>
+                </div>
               </li>
             ))}
           </ul>

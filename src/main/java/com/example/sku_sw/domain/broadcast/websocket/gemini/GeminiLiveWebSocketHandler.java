@@ -1,5 +1,9 @@
 package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
+import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -14,8 +18,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -25,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Gemini Live API WebSocket Handler
  * - setup 메시지를 전송하고 setupComplete 응답을 추적한다.
- * - Gemini 응답의 텍스트/오디오를 turn 단위로 누적한다.
+ * - Gemini 응답의 텍스트를 turn 단위로 누적하고, 오디오는 청크 단위로 즉시 전달한다.
  */
 @Slf4j
 @Component
@@ -33,8 +35,11 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
 
     private final ObjectMapper objectMapper;
+    private final BroadcastWebSocketSessionRegistry sessionRegistry;
+    private final BroadcastGeminiResponseService broadcastGeminiResponseService;
     private final ConcurrentHashMap<String, CompletableFuture<Void>> setupCompleteFutureHashMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, GeminiTurnAccumulator> turnAccumulatorHashMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> turnSequenceHashMap = new ConcurrentHashMap<>();
 
     @Value("${gemini.api.dialogue-model}")
     private String dialogueModel;
@@ -105,50 +110,172 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
-        GeminiTurnAccumulator accumulator = turnAccumulatorHashMap.computeIfAbsent(session.getId(), sessionId -> new GeminiTurnAccumulator());
-        appendOutputTranscription(serverContentNode, accumulator);
+        GeminiTurnAccumulator accumulator = turnAccumulatorHashMap.computeIfAbsent(
+                session.getId(),
+                sessionId -> new GeminiTurnAccumulator(nextTurnNumber(sessionId))
+        );
 
-        JsonNode modelTurnNode = serverContentNode.get("modelTurn");
-        if (modelTurnNode != null) {
-            JsonNode partsNode = modelTurnNode.get("parts");
-            if (partsNode != null && partsNode.isArray()) {
-                for (JsonNode partNode : partsNode) {
-                    JsonNode textNode = partNode.get("text");
-                    if (textNode != null && !textNode.isNull()) {
-                        accumulator.appendText(textNode.asText());
-                    }
+        String textChunk = extractOutputTranscription(serverContentNode);
+        if (textChunk != null && !textChunk.isBlank()) {
+            accumulator.appendText(textChunk);
+        }
 
-                    JsonNode inlineDataNode = partNode.get("inlineData");
-                    if (inlineDataNode != null) {
-                        JsonNode dataNode = inlineDataNode.get("data");
-                        if (dataNode != null && !dataNode.isNull()) {
-                            accumulator.appendAudio(Base64.getDecoder().decode(dataNode.asText()));
-                        }
-                    }
-                }
-            }
+        byte[] audioChunk = extractAudioChunk(serverContentNode);
+        if ((textChunk != null && !textChunk.isBlank()) || audioChunk.length > 0) {
+            dispatchStreamingChunk(session, accumulator.getTurnNumber(), textChunk, audioChunk);
         }
 
         JsonNode turnCompleteNode = serverContentNode.get("turnComplete");
         if (turnCompleteNode != null && turnCompleteNode.asBoolean(false)) {
-            accumulator.markTurnComplete();
-            log.info("[GeminiLiveWebSocketHandler] handleTextMessage() - Turn complete | sessionId: {}, textLength: {}, audioSize: {}",
-                    session.getId(), accumulator.getAccumulatedText().length(), accumulator.getAudioBytes().length);
+            CompletedGeminiTurn completedTurn = new CompletedGeminiTurn(
+                    accumulator.getTurnNumber(),
+                    accumulator.getAccumulatedText()
+            );
+            clearAccumulator(session.getId());
+
+            dispatchCompletedTurn(session, completedTurn);
+
+            log.info("[GeminiLiveWebSocketHandler] handleTextMessage() - Turn complete | sessionId: {}, turnNumber: {}, textLength: {}",
+                    session.getId(), completedTurn.turnNumber(), completedTurn.accumulatedText().length());
         }
     }
 
-    private void appendOutputTranscription(JsonNode serverContentNode, GeminiTurnAccumulator accumulator) {
+    private void dispatchStreamingChunk(WebSocketSession geminiSession, Long turnNumber, String textChunk, byte[] audioChunk) {
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
+        if (broadcastStreamId == null) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchStreamingChunk() - Broadcast stream not found | sessionId: {}, turnNumber: {}",
+                    geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchStreamingChunk() - Bundle not ready | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        if (bundle.getGeminiSession() != geminiSession) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchStreamingChunk() - Gemini session mismatch | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        broadcastGeminiResponseService.forwardStreamingChunk(
+                geminiSession,
+                broadcastStreamId,
+                bundle.getGeneration(),
+                turnNumber,
+                textChunk,
+                audioChunk
+        );
+    }
+
+    private void dispatchCompletedTurn(WebSocketSession geminiSession, CompletedGeminiTurn completedTurn) {
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
+        if (broadcastStreamId == null) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchCompletedTurn() - Broadcast stream not found | sessionId: {}, turnNumber: {}",
+                    geminiSession.getId(), completedTurn.turnNumber());
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchCompletedTurn() - Bundle not ready | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), completedTurn.turnNumber());
+            return;
+        }
+
+        if (bundle.getGeminiSession() != geminiSession) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchCompletedTurn() - Gemini session mismatch | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), completedTurn.turnNumber());
+            return;
+        }
+
+        broadcastGeminiResponseService.handleCompletedTurnAsync(
+                geminiSession,
+                broadcastStreamId,
+                bundle.getGeneration(),
+                completedTurn.turnNumber(),
+                completedTurn.accumulatedText()
+        );
+    }
+
+    private String resolveBroadcastStreamId(WebSocketSession geminiSession) {
+        Object broadcastStreamIdAttribute = geminiSession.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
+        if (broadcastStreamIdAttribute == null) {
+            return null;
+        }
+
+        return broadcastStreamIdAttribute.toString();
+    }
+
+    private String extractOutputTranscription(JsonNode serverContentNode) {
         JsonNode outputTranscriptionNode = serverContentNode.get("outputTranscription");
         if (outputTranscriptionNode == null) {
-            return;
+            return null;
         }
 
         JsonNode textNode = outputTranscriptionNode.get("text");
         if (textNode == null || textNode.isNull()) {
-            return;
+            return null;
         }
 
-        accumulator.appendText(textNode.asText());
+        return textNode.asText();
+    }
+
+    private byte[] extractAudioChunk(JsonNode serverContentNode) {
+        JsonNode modelTurnNode = serverContentNode.get("modelTurn");
+        if (modelTurnNode == null) {
+            return new byte[0];
+        }
+
+        JsonNode partsNode = modelTurnNode.get("parts");
+        if (partsNode == null || !partsNode.isArray()) {
+            return new byte[0];
+        }
+
+        int totalLength = 0;
+        byte[][] decodedChunks = new byte[partsNode.size()][];
+        int chunkCount = 0;
+
+        for (JsonNode partNode : partsNode) {
+            JsonNode inlineDataNode = partNode.get("inlineData");
+            if (inlineDataNode == null) {
+                continue;
+            }
+
+            JsonNode dataNode = inlineDataNode.get("data");
+            if (dataNode == null || dataNode.isNull()) {
+                continue;
+            }
+
+            byte[] audioBytes = Base64.getDecoder().decode(dataNode.asText());
+            decodedChunks[chunkCount++] = audioBytes;
+            totalLength += audioBytes.length;
+        }
+
+        if (totalLength == 0) {
+            return new byte[0];
+        }
+
+        byte[] mergedAudioChunk = new byte[totalLength];
+        int offset = 0;
+        for (int i = 0; i < chunkCount; i++) {
+            byte[] audioBytes = decodedChunks[i];
+            System.arraycopy(audioBytes, 0, mergedAudioChunk, offset, audioBytes.length);
+            offset += audioBytes.length;
+        }
+
+        return mergedAudioChunk;
+    }
+
+    private long nextTurnNumber(String sessionId) {
+        return turnSequenceHashMap.merge(sessionId, 1L, Long::sum);
+    }
+
+    private void clearTurnSequence(String sessionId) {
+        turnSequenceHashMap.remove(sessionId);
     }
 
     @Override
@@ -159,6 +286,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
         removeSetupCompleteFuture(session.getId());
         clearAccumulator(session.getId());
+        clearTurnSequence(session.getId());
 
         log.error("[GeminiLiveWebSocketHandler] handleTransportError() - Transport error | sessionId: {}, error: {}",
                 session.getId(), exception.getMessage());
@@ -172,6 +300,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
         removeSetupCompleteFuture(session.getId());
         clearAccumulator(session.getId());
+        clearTurnSequence(session.getId());
 
         log.info("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed | sessionId: {}, status: {}",
                 session.getId(), status);
@@ -193,36 +322,30 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return turnAccumulatorHashMap.remove(sessionId);
     }
 
-    public static class GeminiTurnAccumulator {
-        private final StringBuilder accumulatedText = new StringBuilder();
-        private final ByteArrayOutputStream audioOutputStream = new ByteArrayOutputStream();
-        private boolean turnComplete;
+    public record CompletedGeminiTurn(
+            Long turnNumber,
+            String accumulatedText
+    ) {
+    }
 
-        public GeminiTurnAccumulator() {
+    public static class GeminiTurnAccumulator {
+        private final Long turnNumber;
+        private final StringBuilder accumulatedText = new StringBuilder();
+
+        public GeminiTurnAccumulator(Long turnNumber) {
+            this.turnNumber = turnNumber;
         }
 
         public void appendText(String text) {
             accumulatedText.append(text);
         }
 
-        public void appendAudio(byte[] audioBytes) throws IOException {
-            audioOutputStream.write(audioBytes);
-        }
-
-        public void markTurnComplete() {
-            this.turnComplete = true;
-        }
-
-        public boolean isTurnComplete() {
-            return turnComplete;
+        public Long getTurnNumber() {
+            return turnNumber;
         }
 
         public String getAccumulatedText() {
             return accumulatedText.toString();
-        }
-
-        public byte[] getAudioBytes() {
-            return audioOutputStream.toByteArray();
         }
     }
 }

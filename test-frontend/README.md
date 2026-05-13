@@ -57,7 +57,8 @@ VITE_WS_BASE_URL=
 - 채팅 송신 JSON
   - `{ "type": "CHAT", "message": "..." }`
 - binary 수신
-  - Blob URL 생성 후 audio 목록에 표시 및 재생 가능
+  - Gemini PCM 24kHz raw audio를 Web Audio API로 즉시 재생
+  - 수신 chunk 길이 / sample 수 / duration 로그 표시
 - text 수신
   - JSON parse 시도 후 파싱 결과(또는 raw text) 로그 표시
 - 방송 종료 버튼
