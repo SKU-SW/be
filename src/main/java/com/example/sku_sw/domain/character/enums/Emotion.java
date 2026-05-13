@@ -9,6 +9,8 @@ public enum Emotion {
     DEFAULT("Default"),
     TALKING("Talking"),
     HAPPY("Happy"),
+    ANGRY("Angry"),
+    TIRED("Tired"),
     SAD("Sad"),
     FEAR("Fear");
 
