@@ -3,8 +3,11 @@ package com.example.sku_sw.global.config;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastHandshakeInterceptor;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketHandler;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
+
+import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;

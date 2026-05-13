@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.service;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.global.util.GeminiUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,7 @@ import java.util.List;
 public class BroadcastDialogueSummaryService {
 
     private final GeminiUtil geminiUtil;
-    private final BroadcastDialogueSummaryPromptBuilder promptBuilder;
+    private final BroadcastPromptBuilder promptBuilder;
 
     /**
      * 방송 summary를 비동기로 생성하는 함수
@@ -30,7 +31,7 @@ public class BroadcastDialogueSummaryService {
             1. 요약 프롬프트 생성
             - 기존 summary와 이번 batch 대화를 합쳐 요약용 프롬프트를 생성한다.
          */
-        String prompt = promptBuilder.buildPrompt(currentSummary, dialogues);
+        String prompt = promptBuilder.buildBroadcastDialogueSummaryPrompt(currentSummary, dialogues);
 
         /*
             2. Summary AI 호출

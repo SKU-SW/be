@@ -140,6 +140,7 @@ public class BroadcastDialogueCompactionService {
         log.info("[BroadcastDialogueCompactionService] compactInternalAsync() - END | streamId: {}", broadcastStreamId);
     }
 
+    // 동기적으로 방송 대화를 요약하는 함수
     private boolean compactInternalSync(String broadcastStreamId) {
         log.info("[BroadcastDialogueCompactionService] compactInternalSync() - START | streamId: {}", broadcastStreamId);
 
@@ -150,6 +151,7 @@ public class BroadcastDialogueCompactionService {
                 return true;
             }
 
+            // block() 함수로 Mono 객체에 데이터가 올때까지 동기적으로 대기하도록 한다.
             String summaryText = broadcastDialogueSummaryService.summarize(preparedData.summary(), preparedData.dialogues()).block();
             BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.builder()
                     .cursorId(0L)
@@ -199,19 +201,24 @@ public class BroadcastDialogueCompactionService {
         boolean allActive = snapshot.dialogues().stream()
                 .allMatch(item -> item.dialogue().dataStatus() != null && item.dialogue().dataStatus() == com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus.ACTIVE);
         if (allActive) {
+            // 대화 기록이 전부 ACTIVE 상태면 DB에 저장
             broadcastDialoguePersistenceService.saveDialogues(broadcastStreamId, dialogues);
 
+            // 저장한 대화 기록들의 Redis List 인덱스 추출
             List<Integer> indices = snapshot.dialogues().stream()
                     .map(BroadcastDialogueSnapshotItemDto::listIndex)
                     .toList();
+            // 추출한 인덱스들로 Redis List 값 status Inactive로 설정
             broadcastRedisUtil.markDialoguesInactive(broadcastStreamId, indices);
 
+            // Inactive로 설정한 후의 Redis 스냅샷 가져옴
             snapshot = broadcastRedisUtil.getCompactionSnapshot(broadcastStreamId);
             dialogues = snapshot.dialogues().stream()
                     .map(BroadcastDialogueSnapshotItemDto::dialogue)
                     .toList();
         }
 
+        // Inactive로 설정한 상태의 Redis 스냅샷으로 요약 준비 데이터 Dto 생성 후 반환
         return new CompactionPreparedData(snapshot.summary(), dialogues);
     }
 

@@ -11,5 +11,7 @@ public enum DialogueSubject {
     STREAMER,
     AI_CHARACTER,
     VIEWER,
+    DONATION,
+    GAME_EVENT,
     SYSTEM_SUMMARY
 }

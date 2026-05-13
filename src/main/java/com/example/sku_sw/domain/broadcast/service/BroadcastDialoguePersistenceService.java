@@ -5,6 +5,7 @@ import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueBulkRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.global.exception.CustomException;
@@ -13,6 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,6 +27,7 @@ public class BroadcastDialoguePersistenceService {
 
     private final BroadcastRepository broadcastRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
+    private final BroadcastDialogueBulkRepository broadcastDialogueBulkRepository;
 
     /**
      * Redis 방송 대화 batch를 DB에 저장하는 함수
@@ -35,6 +39,7 @@ public class BroadcastDialoguePersistenceService {
     public void saveDialogues(String broadcastStreamId, List<BroadcastInfoRedisDto> dialogues) {
         log.info("[BroadcastDialoguePersistenceService] saveDialogues() - START | streamId: {}, dialogueSize: {}",
                 broadcastStreamId, dialogues.size());
+        LocalDateTime startTime = LocalDateTime.now();
 
         if (dialogues.isEmpty()) {
             log.info("[BroadcastDialoguePersistenceService] saveDialogues() - END | streamId: {}, action: skip", broadcastStreamId);
@@ -77,10 +82,11 @@ public class BroadcastDialoguePersistenceService {
                 .toList();
 
         if (!newDialogues.isEmpty()) {
-            broadcastDialogueRepository.saveAll(newDialogues);
+            broadcastDialogueBulkRepository.saveAll(newDialogues);
         }
 
         log.info("[BroadcastDialoguePersistenceService] saveDialogues() - END | streamId: {}, savedSize: {}",
                 broadcastStreamId, newDialogues.size());
+        log.debug("[BroadcastDialoguePersistenceService] saveDialogues() - Execute Time: {}", Duration.between(startTime, LocalDateTime.now()).toMillis());
     }
 }

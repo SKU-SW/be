@@ -136,19 +136,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private Authentication createAuthentication(String accessToken) {
         // 1. Access Token에서 데이터 추출
         Long userId = jwtUtil.getUserIdFromToken(accessToken);
-        String roleString = jwtUtil.getRoleFromToken(accessToken);
-
-        // 2. DB에서 User 객체 추출
-        User user = userRepository.findById(userId).orElseThrow(() -> new CustomException(GlobalErrorCode.RESOURCE_NOT_FOUND));
 
         // 2. UserAuthDto & CustomUserDetails 생성
-        UserAuthDto userAuthDto = UserAuthDto.builder()
-                .userId(userId)
-                .email(user.getEmail())
-                .role(user.getRole())
-                .registerType(user.getRegisterType())
-                .build();
-        CustomUserDetails customUserDetails = new CustomUserDetails(userAuthDto);
+        CustomUserDetails customUserDetails = (CustomUserDetails)customUserDetailService.loadUserByUsername(Long.toString(userId));
 
         // 3. Spring Security 인증 객체 생성 및 반환
         return new UsernamePasswordAuthenticationToken(customUserDetails, null, customUserDetails.getAuthorities());
