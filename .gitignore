@@ -37,7 +37,14 @@ out/
 .vscode/
 
 application-local.yml
+application-test.yml
 
 # AI / Local tooling
 .opencode/
 .sisyphus/
+
+test-frontend/
+
+test-frontend/node_modules/
+test-frontend/dist/
+test-frontend-dev-api/

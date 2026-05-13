@@ -34,6 +34,7 @@ public class SecurityConfig {
             "/swagger-ui-custom.html",  // Swagger UI 메인 페이지
             "/manage/health",  // AWS의 ALB 헬스 체크 경로
             "/manage/prometheus", // Prometheus Metrics 수집 경로
+            "/api/v1/stream/ws", // WebSocket 핸드셰이크 경로 (HandshakeInterceptor에서 JWT 검증)
     };
 
     /**

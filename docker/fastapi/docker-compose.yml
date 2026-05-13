@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  fastapi-tts:
+    image: ${DOCKER_HUB_USERNAME}/fastapi-tts-server:latest
+    container_name: sku-sw-fastapi-tts
+    ports:
+      - "8000:8000"
+    environment:
+      - TZ=${TZ:-Asia/Seoul}
+      # 로그 레벨 (DEBUG / INFO / WARNING / ERROR)
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HF_HOME=${HF_HOME:-/app/.cache/huggingface}
+      - XDG_CACHE_HOME=${XDG_CACHE_HOME:-/app/.cache}
+      - SUPERTONIC_CACHE_DIR=${SUPERTONIC_CACHE_DIR:-/app/.cache/supertonic}
+      - SUPERTONIC_LANG=${SUPERTONIC_LANG:-ko}
+      - SUPERTONIC_DEFAULT_FEMALE=${SUPERTONIC_DEFAULT_FEMALE:-F3}
+      - SUPERTONIC_DEFAULT_MALE=${SUPERTONIC_DEFAULT_MALE:-M3}
+      - SUPERTONIC_TOTAL_STEPS=${SUPERTONIC_TOTAL_STEPS:-5}
+      - SUPERTONIC_SPEED=${SUPERTONIC_SPEED:-1.05}
+      - SUPERTONIC_AUTO_DOWNLOAD=${SUPERTONIC_AUTO_DOWNLOAD:-true}
+      - SUPERTONIC_INTRA_OP_THREADS=${SUPERTONIC_INTRA_OP_THREADS:-2}
+      - SUPERTONIC_INTER_OP_THREADS=${SUPERTONIC_INTER_OP_THREADS:-1}
+    volumes:
+      - fastapi-hf-cache:/app/.cache
+    restart: unless-stopped
+    # Spring backend와 동일한 docker network 필요 시:
+    # networks:
+    #   - sku-sw-network
+
+volumes:
+  fastapi-hf-cache:
+
+# networks:
+#   sku-sw-network:
+#     external: true

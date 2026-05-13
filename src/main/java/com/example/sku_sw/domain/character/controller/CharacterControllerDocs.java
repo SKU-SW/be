@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -126,7 +127,9 @@ public interface CharacterControllerDocs {
     @SecurityRequirement(name = "bearerAuth")
     @GetMapping
     ResponseEntity<GlobalResponse<SliceResponse<CharacterListResDto>>> getCharacterList(
+            @Parameter(description = "요청할 페이지 번호 (1 ~ n)")
             @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "한 페이지당 조회할 데이터 개수")
             @RequestParam(defaultValue = "10") int size
     );
 

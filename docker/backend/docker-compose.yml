@@ -1,0 +1,63 @@
+services:
+  # 1. MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-dev
+    restart: always
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-dev:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password # allowPublicKeyRetrieval 방식이 아니라 설정해준 Username, PW로 로그인을 시도한다.
+    environment:
+      - MYSQL_DATABASE=${DEV_DB_NAME}
+      - MYSQL_USER=${DEV_DB_USER}
+      - MYSQL_PASSWORD=${DEV_DB_PW}
+      - MYSQL_ROOT_PASSWORD=${DEV_DB_PW}
+    networks:
+      - spring-network
+
+  # 2. Redis
+  redis:
+    image: redis:latest
+    container_name: redis-cache
+    restart: always
+    command: redis-server --requirepass ${DEV_REDIS_PW}
+    volumes:
+      - redis-dev:/data
+    networks:
+      - spring-network
+
+  # 3. Spring Boot
+  app:
+    image: ${DEV_BACKEND_DOCKER_HUB_ID}/spring-api-server:latest
+    container_name: spring-api-server
+    ports:
+      - "8080:8080"
+    restart: always
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - DEV_DB_HOST=${DEV_DB_HOST}
+      - DEV_DB_NAME=${DEV_DB_NAME}
+      - DEV_DB_USER=${DEV_DB_USER}
+      - DEV_DB_PW=${DEV_DB_PW}
+      - DEV_JWT_SECRET_KEY=${DEV_JWT_SECRET_KEY}
+      - DEV_REDIS_HOST=${DEV_REDIS_HOST}
+      - DEV_REDIS_PW=${DEV_REDIS_PW}
+      - DEV_CLOUDFRONT_DOMAIN=${DEV_CLOUDFRONT_DOMAIN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FASTAPI_BASE_URL=${FASTAPI_BASE_URL}
+      - FASTAPI_TTS_PATH=${FASTAPI_TTS_PATH}
+    networks:
+      - spring-network
+
+networks:
+  spring-network:
+    driver: bridge
+
+volumes:
+  mysql-dev:
+  redis-dev:
