@@ -77,15 +77,10 @@ public class BroadcastMessageService {
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
         }
 
-        BroadcastInfoRedisDto summary = broadcastRedisUtil.getSummary(broadcastStreamId);
-        List<BroadcastInfoRedisDto> recentInfos = broadcastRedisUtil.getRecentActiveDialogues(broadcastStreamId, RECENT_BROADCAST_INFO_LIMIT);
-
         broadcastGeminiService.processClientMessage(
                 broadcastStreamId,
                 generation,
                 character,
-                summary,
-                recentInfos,
                 message
         );
 

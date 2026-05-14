@@ -60,6 +60,9 @@ gemini:
   api:
     key: ${GEMINI_API_KEY}
     base-url: https://generativelanguage.googleapis.com/v1beta
+    live-websocket-url: wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent
+    live-connect-timeout-ms: 5000
+    live-setup-timeout-ms: 5000
     dialogue-model: gemini-3.1-flash-live-preview
     broadcast-summary-model: gemini-3.1-flash-preview
 

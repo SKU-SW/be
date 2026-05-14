@@ -44,7 +44,6 @@ application-test.yml
 .sisyphus/
 
 test-frontend/
-
 test-frontend/node_modules/
 test-frontend/dist/
 test-frontend-dev-api/

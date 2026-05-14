@@ -47,10 +47,6 @@ class BroadcastGeminiResponseServiceTest {
     @Mock
     private BroadcastDialogueCompactionService broadcastDialogueCompactionService;
 
-    // ----------------------------------------------------------------
-    // handleCompletedTurnAsync
-    // ----------------------------------------------------------------
-
     @Test
     @DisplayName("handleCompletedTurnAsync 성공 - 유효한 번들과 세션 일치 시 Redis 저장, Compaction, 완료 메타데이터 전송")
     void handleCompletedTurnAsync_성공() {
@@ -226,10 +222,6 @@ class BroadcastGeminiResponseServiceTest {
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
     }
 
-    // ----------------------------------------------------------------
-    // forwardStreamingChunk
-    // ----------------------------------------------------------------
-
     @Test
     @DisplayName("forwardStreamingChunk 성공 - 유효한 번들과 세션 일치 시 음성 청크 메타데이터를 전송한다")
     void forwardStreamingChunk_성공() {
@@ -281,7 +273,7 @@ class BroadcastGeminiResponseServiceTest {
         long generation = 1L;
         long turnNumber = 1L;
 
-        // when - both text null and audio null
+        // when
         service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, null, null);
 
         // then

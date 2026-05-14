@@ -35,16 +35,12 @@ public class BroadcastGeminiService {
      * @param broadcastStreamId : 방송 스트림 ID
      * @param generation        : 현재 세션 generation
      * @param character         : 방송 캐릭터 정보
-     * @param summary           : 방송 요약 정보
-     * @param recentActiveInfos : 최근 방송 대화 내역
      * @param clientMessage     : 클라이언트 메시지
      */
     public void processClientMessage(
             String broadcastStreamId,
             long generation,
             BroadcastCharacterRedisDto character,
-            BroadcastInfoRedisDto summary,
-            List<BroadcastInfoRedisDto> recentActiveInfos,
             String clientMessage
     ) {
         log.info("[BroadcastGeminiService] processClientMessage() - START | streamId: {}, generation: {}",
@@ -63,12 +59,10 @@ public class BroadcastGeminiService {
             WebSocketSession geminiSession = bundle.getGeminiSession();
             geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
 
-            log.info("[BroadcastGeminiService] processClientMessage() - END | streamId: {}, generation: {}, characterId: {}, summaryCursorId: {}, recentDialogueSize: {}",
+            log.info("[BroadcastGeminiService] processClientMessage() - END | streamId: {}, generation: {}, characterId: {}",
                     broadcastStreamId,
                     generation,
-                    character.getCharacterId(),
-                    summary != null ? summary.cursorId() : null,
-                    recentActiveInfos != null ? recentActiveInfos.size() : 0);
+                    character.getCharacterId());
         } catch (Exception e) {
             log.error("[BroadcastGeminiService] processClientMessage() - Failed | streamId: {}, generation: {}, error: {}",
                     broadcastStreamId, generation, e.getMessage());
