@@ -716,6 +716,7 @@ public class BroadcastService {
      * @param broadcastStreamId : 종료할 방송 스트림 ID
      */
     private void registerBroadcastTerminateSideEffectsAfterCommit(String broadcastStreamId) {
+        log.debug("[BroadcastService] registerBroadcastTerminateSideEffectsAfterCommit() - START | broadcastStreamId: {}", broadcastStreamId);
         /*
             TransactionSynchronizationManager : Spring에서 트랜잭션 생명주기 이벤트에 콜백을 등록할 수 있게 해주는 유틸리티 클래스
             - 트랜잭션의 특정 시점에 원하는 코드를 실행할 수 있다.
@@ -726,9 +727,7 @@ public class BroadcastService {
                 try {
                     boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
                     broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-                    if (compacted) {
-                        broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
-                    }
+                    broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
                 } catch (Exception e) {
                     log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
                 }
@@ -739,6 +738,7 @@ public class BroadcastService {
                 );
             }
         });
+        log.debug("[BroadcastService] registerBroadcastTerminateSideEffectsAfterCommit() - END | broadcastStreamId: {}", broadcastStreamId);
     }
 
     @JsonPropertyOrder({"cursorId", "subject", "content", "createdAt"})
