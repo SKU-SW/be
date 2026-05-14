@@ -1,5 +1,7 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
@@ -9,6 +11,7 @@ import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionSe
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.gemini.GeminiLiveApiService;
+import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +27,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.LocalDateTime;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -67,6 +71,9 @@ class BroadcastWebSocketStartIntegrationTest {
     @Mock
     private GeminiLiveApiService geminiLiveApiService;
 
+    @Mock
+    private BroadcastPromptBuilder broadcastPromptBuilder;
+
     private ObjectMapper objectMapper;
     private BroadcastWebSocketSessionRegistry sessionRegistry;
     private BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
@@ -82,7 +89,9 @@ class BroadcastWebSocketStartIntegrationTest {
         broadcastGeminiBootstrapService = new BroadcastGeminiBootstrapService(
                 objectMapper,
                 sessionRegistry,
-                geminiLiveApiService
+                geminiLiveApiService,
+                broadcastRedisUtil,
+                broadcastPromptBuilder
         );
         broadcastWebSocketHandler = new BroadcastWebSocketHandler(
                 objectMapper,
@@ -117,7 +126,7 @@ class BroadcastWebSocketStartIntegrationTest {
 
         // then
         verify(clientSession, times(1)).close(any(CloseStatus.class));
-        verify(geminiLiveApiService, never()).connectGeminiApiWebSocketAsync();
+        verify(geminiLiveApiService, never()).connectGeminiApiWebSocketAsync(any(), any());
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
 
@@ -137,7 +146,8 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> failedFuture = new CompletableFuture<>();
         failedFuture.completeExceptionally(new RuntimeException("gemini bootstrap failed"));
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
-        given(geminiLiveApiService.connectGeminiApiWebSocketAsync()).willReturn(failedFuture);
+        stubPromptDependencies();
+        given(geminiLiveApiService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(failedFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
@@ -188,7 +198,8 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> firstGeminiFuture = new CompletableFuture<>();
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
-        given(geminiLiveApiService.connectGeminiApiWebSocketAsync()).willReturn(firstGeminiFuture, secondGeminiFuture);
+        stubPromptDependencies();
+        given(geminiLiveApiService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);
@@ -238,7 +249,8 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> firstGeminiFuture = new CompletableFuture<>();
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
-        given(geminiLiveApiService.connectGeminiApiWebSocketAsync()).willReturn(firstGeminiFuture, secondGeminiFuture);
+        stubPromptDependencies();
+        given(geminiLiveApiService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);
@@ -390,5 +402,22 @@ class BroadcastWebSocketStartIntegrationTest {
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
         verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
         verify(geminiSession, times(1)).close(any(CloseStatus.class));
+    }
+
+    private void stubPromptDependencies() {
+        BroadcastInfoRedisDto summary = BroadcastInfoRedisDto.builder()
+                .cursorId(0L)
+                .content("오늘 방송 요약")
+                .createdAt(LocalDateTime.now())
+                .build();
+        BroadcastCharacterRedisDto character = BroadcastCharacterRedisDto.builder()
+                .characterId(1L)
+                .characterName("테스트 캐릭터")
+                .build();
+
+        given(broadcastRedisUtil.getBroadcastCharacterDto(BROADCAST_STREAM_ID)).willReturn(character);
+        given(broadcastRedisUtil.getSummary(BROADCAST_STREAM_ID)).willReturn(summary);
+        given(broadcastRedisUtil.getRecentActiveDialogues(BROADCAST_STREAM_ID, 50)).willReturn(List.of());
+        given(broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, List.of())).willReturn("테스트 시스템 프롬프트");
     }
 }

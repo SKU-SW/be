@@ -725,7 +725,7 @@ public class BroadcastService {
             @Override
             public void afterCommit() {
                 try {
-                    boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+                    broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
                     broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
                     broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
                 } catch (Exception e) {

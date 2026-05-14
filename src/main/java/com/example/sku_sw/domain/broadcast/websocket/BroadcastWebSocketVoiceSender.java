@@ -94,19 +94,37 @@ public class BroadcastWebSocketVoiceSender {
     ) {
         BroadcastWebSocketSessionBundle bundle = getReadyBundle(broadcastStreamId, generation, methodName);
         WebSocketSession clientSession = bundle.getClientSession();
+        int voiceDataLength = voiceData == null ? 0 : voiceData.length;
+        boolean binarySent = voiceDataLength > 0;
 
         try {
             String metadataJson = objectMapper.writeValueAsString(metadata);
 
             synchronized (clientSession) {
-                if (voiceData != null && voiceData.length > 0) {
+                if (binarySent) {
                     clientSession.sendMessage(new BinaryMessage(ByteBuffer.wrap(voiceData)));
                 }
                 clientSession.sendMessage(new TextMessage(metadataJson));
             }
 
-            log.info("[BroadcastWebSocketVoiceSender] {}() - Sent | streamId: {}, generation: {}, eventType: {}, turnNumber: {}, cursorId: {}",
-                    methodName, broadcastStreamId, generation, metadata.eventType(), metadata.turnNumber(), metadata.broadcastDialogueCursorId());
+            log.info("[BroadcastWebSocketVoiceSender] {}() - Sent | streamId: {}, generation: {}, eventType: {}, turnNumber: {}, cursorId: {}, binarySent: {}, voiceDataLength: {}",
+                    methodName,
+                    broadcastStreamId,
+                    generation,
+                    metadata.eventType(),
+                    metadata.turnNumber(),
+                    metadata.broadcastDialogueCursorId(),
+                    binarySent,
+                    voiceDataLength);
+
+            if (metadata.eventType() == BroadcastVoiceEventType.VOICE_CHUNK && !binarySent) {
+                log.warn("[BroadcastWebSocketVoiceSender] {}() - VOICE_CHUNK metadata sent without audio binary | streamId: {}, generation: {}, turnNumber: {}, textLength: {}",
+                        methodName,
+                        broadcastStreamId,
+                        generation,
+                        metadata.turnNumber(),
+                        metadata.voiceText() == null ? 0 : metadata.voiceText().length());
+            }
         } catch (IOException e) {
             log.error("[BroadcastWebSocketVoiceSender] {}() - Failed to send | streamId: {}, error: {}",
                     methodName, broadcastStreamId, e.getMessage());

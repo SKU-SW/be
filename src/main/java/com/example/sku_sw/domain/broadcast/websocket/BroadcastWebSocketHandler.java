@@ -168,11 +168,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
                 broadcast.abnormalTerminate();
             });
 
-            boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+            broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
             broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-            if (compacted) {
-                broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
-            }
+            broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
         } catch (Exception e) {
             log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Failed | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
         }
