@@ -88,7 +88,6 @@ class GeminiLiveWebSocketHandlerTest {
         given(geminiSession.getId()).willReturn("gemini-1");
         given(geminiSession.isOpen()).willReturn(true);
 
-        // broadcastStreamId is resolved from session attributes
         Map<String, Object> attributes = new HashMap<>();
         attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
         given(geminiSession.getAttributes()).willReturn(attributes);
@@ -100,7 +99,6 @@ class GeminiLiveWebSocketHandlerTest {
                 .build();
         bundle.registerGeminiSession(geminiSession);
 
-        // Bundle lookup used by dispatchStreamingChunk and dispatchCompletedTurn
         given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
 
         String audioBase64 = Base64.getEncoder().encodeToString("audio".getBytes(StandardCharsets.UTF_8));
@@ -145,7 +143,6 @@ class GeminiLiveWebSocketHandlerTest {
         );
 
         // then
-        // First chunk: "안녕" text, no audio -> forwardStreamingChunk with turnNumber=1
         verify(broadcastGeminiResponseService, times(1)).forwardStreamingChunk(
                 eq(geminiSession),
                 eq("stream-1"),
@@ -155,7 +152,6 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(new byte[0])
         );
 
-        // Second chunk: "하세요" text + audio -> forwardStreamingChunk with turnNumber=1
         verify(broadcastGeminiResponseService, times(1)).forwardStreamingChunk(
                 eq(geminiSession),
                 eq("stream-1"),
@@ -165,10 +161,7 @@ class GeminiLiveWebSocketHandlerTest {
                 eq("audio".getBytes(StandardCharsets.UTF_8))
         );
 
-        // Accumulator cleared after turnComplete
         assertThat(geminiLiveWebSocketHandler.getTurnAccumulator(geminiSession)).isNull();
-
-        // handleCompletedTurnAsync called with turnNumber=1 and accumulated text
         verify(broadcastGeminiResponseService, times(1)).handleCompletedTurnAsync(
                 eq(geminiSession),
                 eq("stream-1"),
@@ -184,8 +177,6 @@ class GeminiLiveWebSocketHandlerTest {
         // given
         WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
         given(geminiSession.getId()).willReturn("gemini-1");
-
-        // Empty attributes -> resolveBroadcastStreamId returns null
         given(geminiSession.getAttributes()).willReturn(new HashMap<>());
 
         String payload = """

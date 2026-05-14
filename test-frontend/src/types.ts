@@ -49,3 +49,23 @@ export interface BroadcastStartData {
   broadcastStreamId: string;
   broadcastStartedAt: string;
 }
+
+export type BroadcastVoiceEventType = 'VOICE_CHUNK' | 'VOICE_TURN_COMPLETE';
+
+export interface BroadcastVoiceMetadata {
+  eventType: BroadcastVoiceEventType;
+  turnNumber: number;
+  characterId: number | null;
+  voiceText: string | null;
+  broadcastDialogueCursorId: number | null;
+}
+
+export interface BroadcastWebSocketStatusMessage {
+  status: string;
+  message: string;
+}
+
+export interface BroadcastWebSocketErrorMessage {
+  error: string;
+  message: string;
+}

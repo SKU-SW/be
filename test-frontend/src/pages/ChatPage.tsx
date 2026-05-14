@@ -10,21 +10,33 @@ import {
 } from '../lib/audio';
 import { getWebSocketBaseUrl } from '../lib/config';
 import { getAccessToken } from '../lib/storage';
+import type {
+  BroadcastVoiceMetadata,
+  BroadcastWebSocketErrorMessage,
+  BroadcastWebSocketStatusMessage,
+} from '../types';
 
 type ConnectionState = 'IDLE' | 'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR';
 
-interface AudioMessage {
-  createdAt: string;
-  byteLength: number;
-  sampleCount: number;
-  durationMs: number;
-}
-
-interface TextMessage {
+interface TextMessageLog {
   raw: string;
   parsed?: unknown;
   createdAt: string;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isBroadcastVoiceMetadata = (value: unknown): value is BroadcastVoiceMetadata =>
+  isRecord(value) &&
+  (value.eventType === 'VOICE_CHUNK' || value.eventType === 'VOICE_TURN_COMPLETE') &&
+  typeof value.turnNumber === 'number';
+
+const isBroadcastWebSocketStatusMessage = (value: unknown): value is BroadcastWebSocketStatusMessage =>
+  isRecord(value) && typeof value.status === 'string' && typeof value.message === 'string';
+
+const isBroadcastWebSocketErrorMessage = (value: unknown): value is BroadcastWebSocketErrorMessage =>
+  isRecord(value) && typeof value.error === 'string' && typeof value.message === 'string';
 
 export default function ChatPage() {
   const location = useLocation();
@@ -41,8 +53,7 @@ export default function ChatPage() {
   const [connectionState, setConnectionState] = useState<ConnectionState>('IDLE');
   const [status, setStatus] = useState('');
   const [chatInput, setChatInput] = useState('');
-  const [audioMessages, setAudioMessages] = useState<AudioMessage[]>([]);
-  const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
+  const [textMessages, setTextMessages] = useState<TextMessageLog[]>([]);
 
   const wsUrl = useMemo(() => {
     if (!broadcastStreamId || !accessToken) return '';
@@ -73,8 +84,6 @@ export default function ChatPage() {
         void audioContextRef.current.close();
         audioContextRef.current = null;
       }
-
-      setAudioMessages([]);
     };
   }, []);
 
@@ -108,7 +117,7 @@ export default function ChatPage() {
   const playPcmAudioChunk = async (binaryData: Blob | ArrayBuffer) => {
     const audioContext = await ensureAudioContext();
     const arrayBuffer = await toArrayBuffer(binaryData);
-    const { audioBuffer, playbackInfo } = createAudioBufferFromPcm16(audioContext, arrayBuffer);
+    const { audioBuffer } = createAudioBufferFromPcm16(audioContext, arrayBuffer);
     const { source, nextPlaybackTime } = scheduleAudioBuffer(
       audioContext,
       audioBuffer,
@@ -120,16 +129,6 @@ export default function ChatPage() {
     source.onended = () => {
       activeSourcesRef.current = activeSourcesRef.current.filter((current) => current !== source);
     };
-
-    setAudioMessages((prev) => [
-      {
-        createdAt: new Date().toISOString(),
-        byteLength: playbackInfo.byteLength,
-        sampleCount: playbackInfo.sampleCount,
-        durationMs: playbackInfo.durationMs,
-      },
-      ...prev,
-    ]);
   };
 
   const connect = async () => {
@@ -195,6 +194,7 @@ export default function ChatPage() {
       } catch {
         parsed = undefined;
       }
+
       setTextMessages((prev) => [
         {
           raw,
@@ -203,6 +203,27 @@ export default function ChatPage() {
         },
         ...prev,
       ]);
+
+      if (isBroadcastVoiceMetadata(parsed)) {
+        setStatus(
+          parsed.eventType === 'VOICE_TURN_COMPLETE'
+            ? `턴 ${parsed.turnNumber} 완료 메타데이터 수신`
+            : `턴 ${parsed.turnNumber} 음성 청크 메타데이터 수신`,
+        );
+        return;
+      }
+
+      if (isBroadcastWebSocketStatusMessage(parsed)) {
+        setStatus(`${parsed.status}: ${parsed.message}`);
+        return;
+      }
+
+      if (isBroadcastWebSocketErrorMessage(parsed)) {
+        setStatus(`${parsed.error}: ${parsed.message}`);
+        return;
+      }
+
+      setStatus(raw);
     };
 
     wsRef.current = ws;
@@ -277,30 +298,7 @@ export default function ChatPage() {
       </section>
 
       <section className="card">
-        <h3>수신 PCM 오디오 로그</h3>
-        {audioMessages.length === 0 ? (
-          <p>수신된 음성 없음</p>
-        ) : (
-          <ul className="list">
-            {audioMessages.map((audio, idx) => (
-              <li key={`${audio.createdAt}-${idx}`} className="list-item">
-                <div>
-                  <small>{audio.createdAt}</small>
-                </div>
-                <div>
-                  <strong>{audio.durationMs}ms</strong>
-                  <p>
-                    {audio.byteLength} bytes / {audio.sampleCount} samples / PCM 24kHz mono
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="card">
-        <h3>수신 텍스트(metadata) 로그</h3>
+        <h3>수신 텍스트/메타데이터 로그</h3>
         {textMessages.length === 0 ? (
           <p>수신된 텍스트 없음</p>
         ) : (
