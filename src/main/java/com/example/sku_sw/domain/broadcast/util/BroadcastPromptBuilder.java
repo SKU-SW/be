@@ -2,13 +2,19 @@ package com.example.sku_sw.domain.broadcast.util;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.character.enums.Personality;
 import com.example.sku_sw.domain.character.enums.SpeechStyle;
+import com.example.sku_sw.global.exception.CustomException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Gemini API에 전달할 방송 프롬프트를 생성하는 Builder
@@ -17,6 +23,7 @@ import java.util.List;
 @Slf4j
 @Component
 public class BroadcastPromptBuilder {
+    private static final Integer PERSONALITY_PROMPT_COUNT = 10;
 
     /**
      * Gemini Function Calling용 전체 프롬프트를 생성한다.
@@ -34,14 +41,10 @@ public class BroadcastPromptBuilder {
 
         String summaryContent = buildSummaryContent(summary);
         String recentBroadcastContent = buildRecentBroadcastContent(recentActiveInfos);
-        String goodExampleContent = buildGoodExampleContent(
-                character.getCharacterSpeechStyle(),
-                character.getCharacterPersonality()
-        );
-        String badExampleContent = buildBadExampleContent(
-                character.getCharacterSpeechStyle(),
-                character.getCharacterPersonality()
-        );
+        String personalityGoodExampleContent = buildPersonalityExampleContent(character.getCharacterPersonality().getGoodExamples(), PERSONALITY_PROMPT_COUNT);
+        String personalityBadExampleContent = buildPersonalityExampleContent(character.getCharacterPersonality().getBadExamples(), PERSONALITY_PROMPT_COUNT);
+        String speechStyleGoodExampleContent = buildSpeechStyleExampleContent(character.getCharacterSpeechStyle().getGoodExamples());
+        String speechStyleBadExampleContent = buildSpeechStyleExampleContent(character.getCharacterSpeechStyle().getBadExamples());
 
         String genderStr = character.getCharacterGender() != null ? character.getCharacterGender().getValue() : "";
         String ageGroupStr = character.getCharacterVoiceAgeGroup() != null ? character.getCharacterVoiceAgeGroup().name() : "";
@@ -57,27 +60,28 @@ public class BroadcastPromptBuilder {
                         - 성별: %s
                         - 연령대: %s
                         - 성격 키워드: %s
-                        - 기본 말투 키워드: %s
-
-                        [말투 규칙]
-                        - 답변은 짧은 구어체로 하세요.
-                        - 1~2문장만 말하세요.
-                        - 설명하지 말고 바로 반응하세요.
-                        - 방송 분위기에 맞으면 놀리거나 받아치는 말투를 사용하세요.
-                        - 과한 존댓말, 상담 말투, 비서 말투, AI 말투는 금지합니다.
-
-                        [좋은 답변 예시]
+                        [좋은 응답 예시]
                         %s
 
-                        [피해야 할 답변 예시]
+                        [피해야 할 응답 예시]
+                        %s
+                        
+                        - 기본 말투 키워드: %s
+                        [좋은 말투 예시]
+                        %s
+
+                        [피해야 할 말투 예시]
                         %s
 
                         [중요 규칙]
+                        - 1~2문장만 말하세요.
+                        - 설명하지 말고 바로 반응하세요.
+                        - 주어진 응답 예시는 참고만 하세요.
+                        - 주어진 말투 예시는 말투만 참고하세요.
                         - 스트리머가 AI를 직접 부르거나 직전 AI 발화에 이어서 반응을 요구하면 우선해서 답하세요.
                         - 직접 질문을 받으면 예전 드립보다 현재 질문에 대한 답을 우선하세요.
                         - 이전 드립이나 밈은 현재 상황과 정확히 맞을 때만 짧게 활용하세요.
-                        - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면 텍스트를 작성하지 말고 반드시 set_talking_state Function Call을 사용해 isTalking=false를 전달하세요.
-                        - 이 경우 일반 답변 텍스트를 출력하면 안 됩니다.
+                        - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면 텍스트를 작성하지 말고 반드시 set_talking_state Function Call을 사용해 isTalking=false를 전달하세요. 이 경우 일반 답변 텍스트를 출력하면 안 됩니다.
                         - AI에게 한 말이라고 판단되면 Function Call 없이 답변만 작성하세요.
                                 1. 답변해야 하는 경우
                                 - 스트리머가 AI 캐릭터에게 직접 말을 거는 경우
@@ -91,15 +95,17 @@ public class BroadcastPromptBuilder {
                         [오늘 방송 상태]
                         %s
 
-                        [최근 방송 로그]
+                        [최근 방송 대화]
                         %s""",
                 character.getCharacterName(),
                 genderStr,
                 ageGroupStr,
                 personalityStr,
+                personalityGoodExampleContent,
+                personalityBadExampleContent,
                 speechStyleStr,
-                goodExampleContent,
-                badExampleContent,
+                speechStyleGoodExampleContent,
+                speechStyleBadExampleContent,
                 summaryContent,
                 recentBroadcastContent
         );
@@ -188,28 +194,25 @@ public class BroadcastPromptBuilder {
     }
 
     /**
-     * 말투/성격 Enum에 정의된 좋은 답변 예시를 프롬프트 문자열로 변환한다.
-     * @param speechStyle : 말투 Enum
-     * @param personality : 성격 Enum
+     * 주어진 예시들 중 N개를 랜덤으로 골라 프롬프트 문자열로 변환한다.
+     * @param examples : 예시 응답들
      * @return : 좋은 답변 예시 문자열
      */
-    private String buildGoodExampleContent(SpeechStyle speechStyle, Personality personality) {
+    private String buildPersonalityExampleContent(List<String> examples, Integer count) {
+        List<String> randomExamples = filterRandomExamples(examples, count);
         StringBuilder sb = new StringBuilder();
-        appendExamples(sb, speechStyle != null ? speechStyle.getGoodExamples() : null);
-        appendExamples(sb, personality != null ? personality.getGoodExamples() : null);
+        appendExamples(sb, randomExamples);
         return sb.isEmpty() ? "- (없음)" : sb.toString();
     }
 
     /**
-     * 말투/성격 Enum에 정의된 피해야 할 답변 예시를 프롬프트 문자열로 변환한다.
-     * @param speechStyle : 말투 Enum
-     * @param personality : 성격 Enum
-     * @return : 피해야 할 답변 예시 문자열
+     * 말투 Enum에 정의된 답변 예시를 프롬프트 문자열로 변환한다.
+     * @param examples : 예시 응답들
+     * @return : 좋은 답변 예시 문자열
      */
-    private String buildBadExampleContent(SpeechStyle speechStyle, Personality personality) {
+    private String buildSpeechStyleExampleContent(List<String> examples) {
         StringBuilder sb = new StringBuilder();
-        appendExamples(sb, speechStyle != null ? speechStyle.getBadExamples() : null);
-        appendExamples(sb, personality != null ? personality.getBadExamples() : null);
+        appendExamples(sb, examples);
         return sb.isEmpty() ? "- (없음)" : sb.toString();
     }
 
@@ -233,5 +236,19 @@ public class BroadcastPromptBuilder {
             }
             sb.append("- ").append(example.trim());
         }
+    }
+
+    /**
+     * examples에서 count만큼 랜덤으로 꺼내는 함수
+     * @return
+     */
+    private List<String> filterRandomExamples(List<String> examples, Integer count) {
+        if(examples.size() < count) {
+            log.error("[BroadcastPromptBuilder] filterRandomExamples() - PERSONALITY_PROMPT_COUNT_IS_TOO_BIG");
+            throw new CustomException(BroadcastErrorCode.PERSONALITY_PROMPT_COUNT_IS_TOO_BIG);
+        }
+        List<String> copy = new ArrayList<>(examples);
+        Collections.shuffle(copy);
+        return copy.subList(0, count);
     }
 }

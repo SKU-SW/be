@@ -23,7 +23,8 @@ public enum BroadcastErrorCode implements BaseErrorCode {
     WEBSOCKET_SESSION_NOT_READY(HttpStatus.BAD_REQUEST, "Gemini WebSocket 세션이 아직 준비되지 않았습니다."),
     BROADCAST_CHARACTER_REDIS_NOT_FOUND(HttpStatus.NOT_FOUND, "방송 캐릭터 정보를 Redis에서 찾을 수 없습니다."),
     WEBSOCKET_MESSAGE_PARSE_FAILED(HttpStatus.BAD_REQUEST, "WebSocket 메시지 파싱에 실패했습니다."),
-    GEMINI_RESPONSE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini API 응답 처리에 실패했습니다.");
+    GEMINI_RESPONSE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini API 응답 처리에 실패했습니다."),
+    PERSONALITY_PROMPT_COUNT_IS_TOO_BIG(HttpStatus.INTERNAL_SERVER_ERROR, "성격 프롬프트 개수가 너무 큽니다.");
 
     private final HttpStatus httpStatus;
     private final String message;
