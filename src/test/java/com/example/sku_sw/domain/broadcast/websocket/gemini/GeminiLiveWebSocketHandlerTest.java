@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -35,6 +34,9 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(MockitoExtension.class)
 class GeminiLiveWebSocketHandlerTest {
 
+    private static final String DIALOGUE_MODEL = "gemini-3.1-flash-live-preview";
+    private static final String SYSTEM_PROMPT = "테스트 시스템 프롬프트";
+
     private ObjectMapper objectMapper;
     private GeminiLiveWebSocketHandler geminiLiveWebSocketHandler;
 
@@ -50,13 +52,14 @@ class GeminiLiveWebSocketHandlerTest {
         geminiLiveWebSocketHandler = new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
-                broadcastGeminiResponseService
+                broadcastGeminiResponseService,
+                DIALOGUE_MODEL,
+                SYSTEM_PROMPT
         );
-        ReflectionTestUtils.setField(geminiLiveWebSocketHandler, "dialogueModel", "gemini-3.1-flash-live-preview");
     }
 
     @Test
-    @DisplayName("Gemini setup 메시지 전송 성공 - AUDIO modality와 outputAudioTranscription을 포함한다")
+    @DisplayName("Gemini setup 메시지 전송 성공 - AUDIO modality와 outputAudioTranscription, systemInstruction을 포함한다")
     void Gemini_setup_메시지_전송_성공() throws Exception {
         // given
         WebSocketSession session = org.mockito.Mockito.mock(WebSocketSession.class);
@@ -75,8 +78,9 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("model").asText()).isEqualTo("models/gemini-3.1-flash-live-preview");
         assertThat(setupNode.get("generationConfig").get("responseModalities")).hasSize(1);
         assertThat(setupNode.get("generationConfig").get("responseModalities").get(0).asText()).isEqualTo("AUDIO");
+        assertThat(setupNode.get("systemInstruction").get("parts").get(0).get("text").asText()).isEqualTo(SYSTEM_PROMPT);
         assertThat(setupNode.has("outputAudioTranscription")).isTrue();
-        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture(session)).isNotNull();
+        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
     }
 
     @Test
@@ -161,7 +165,7 @@ class GeminiLiveWebSocketHandlerTest {
                 eq("audio".getBytes(StandardCharsets.UTF_8))
         );
 
-        assertThat(geminiLiveWebSocketHandler.getTurnAccumulator(geminiSession)).isNull();
+        assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
         verify(broadcastGeminiResponseService, times(1)).handleCompletedTurnAsync(
                 eq(geminiSession),
                 eq("stream-1"),
@@ -197,7 +201,7 @@ class GeminiLiveWebSocketHandlerTest {
         );
 
         // then
-        assertThat(geminiLiveWebSocketHandler.getTurnAccumulator(geminiSession)).isNull();
+        assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
         verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
         verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
     }
@@ -217,8 +221,8 @@ class GeminiLiveWebSocketHandlerTest {
         );
 
         // then
-        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture(session)).isNotNull();
-        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture(session).isDone()).isTrue();
-        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture(session).isCompletedExceptionally()).isFalse();
+        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
+        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture().isDone()).isTrue();
+        assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture().isCompletedExceptionally()).isFalse();
     }
 }

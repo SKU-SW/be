@@ -1,10 +1,14 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketStatusResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
+import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,9 +30,13 @@ import java.io.IOException;
 @RequiredArgsConstructor
 public class BroadcastGeminiBootstrapService {
 
+    private static final int RECENT_ACTIVE_DIALOGUE_LIMIT = 50;
+
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final GeminiLiveApiService geminiLiveApiService;
+    private final BroadcastRedisUtil broadcastRedisUtil;
+    private final BroadcastPromptBuilder broadcastPromptBuilder;
 
     /**
      * Gemini WebSocket bootstrap(초기 세팅) 비동기 작업을 시작한다.
@@ -44,12 +52,34 @@ public class BroadcastGeminiBootstrapService {
         log.info("[BroadcastGeminiBootstrapService] bootstrapGeminiAsync() - START | streamId: {}, generation: {}",
                 broadcastStreamId, generation);
 
-        geminiLiveApiService.connectGeminiApiWebSocketAsync()
-                .thenAccept(geminiSession -> handleBootstrapSuccess(broadcastStreamId, clientSession, generation, geminiSession))
-                .exceptionally(throwable -> {
-                    handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
-                    return null;
-                });
+        try {
+            /*
+                1. Gemini Live setup에 주입할 시스템 프롬프트를 생성한다.
+                - Redis에서 캐릭터, summary, 최근 활성 대화 내역을 조회한다.
+                - 조회한 방송 컨텍스트를 조합해 세션 초기용 시스템 프롬프트를 만든다.
+             */
+            BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
+            BroadcastInfoRedisDto summary = broadcastRedisUtil.getSummary(broadcastStreamId);
+            java.util.List<BroadcastInfoRedisDto> recentActiveInfos = broadcastRedisUtil.getRecentActiveDialogues(
+                    broadcastStreamId,
+                    RECENT_ACTIVE_DIALOGUE_LIMIT
+            );
+            String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos);
+
+            /*
+                2. 생성한 시스템 프롬프트를 포함해 Gemini Live WebSocket bootstrap을 시작한다.
+                - setupComplete까지 성공하면 후속 성공 처리로 연결한다.
+                - 실패하면 현재 generation bundle만 정리한다.
+             */
+            geminiLiveApiService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt)
+                    .thenAccept(geminiSession -> handleBootstrapSuccess(broadcastStreamId, clientSession, generation, geminiSession))
+                    .exceptionally(throwable -> {
+                        handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
+                        return null;
+                    });
+        } catch (Exception e) {
+            handleBootstrapFailure(broadcastStreamId, clientSession, generation, e);
+        }
     }
 
     /**
@@ -92,8 +122,6 @@ public class BroadcastGeminiBootstrapService {
                     broadcastStreamId, generation);
             return;
         }
-
-        geminiSession.getAttributes().put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), broadcastStreamId);
 
         /*
             3. Gemini Session까지 현재 Session Bundle에 성공적으로 등록했다면, 해당 Session Bundle의 상태를 READY로 변경한다.

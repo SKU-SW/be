@@ -23,14 +23,12 @@ public class BroadcastPromptBuilder {
      *
      * @param character       : 방송 캐릭터 정보 DTO
      * @param recentActiveInfos   : 최근 방송 대화 내역 목록
-     * @param clientMessage   : 클라이언트가 보낸 현재 메시지
      * @return : 완성된 프롬프트 문자열
      */
     public String buildBroadcastDialoguePrompt(
             BroadcastCharacterRedisDto character,
             BroadcastInfoRedisDto summary,
-            List<BroadcastInfoRedisDto> recentActiveInfos,
-            String clientMessage
+            List<BroadcastInfoRedisDto> recentActiveInfos
     ) {
         log.info("[BroadcastPromptBuilder] buildPrompt() - START | characterId: {}", character.getCharacterId());
 
@@ -93,9 +91,6 @@ public class BroadcastPromptBuilder {
                         %s
 
                         [최근 방송 로그]
-                        %s
-
-                        [방금 스트리머 발화]
                         %s""",
                 character.getCharacterName(),
                 genderStr,
@@ -105,8 +100,7 @@ public class BroadcastPromptBuilder {
                 goodExampleContent,
                 badExampleContent,
                 summaryContent,
-                recentBroadcastContent,
-                clientMessage
+                recentBroadcastContent
         );
 
         log.info("[BroadcastPromptBuilder] buildPrompt() - END | prompt:{} | prompt length: {}", prompt, prompt.length());

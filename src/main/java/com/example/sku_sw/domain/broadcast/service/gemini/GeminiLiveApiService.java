@@ -1,7 +1,9 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
+import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandlerFactory;
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +27,7 @@ import java.util.concurrent.TimeUnit;
 public class GeminiLiveApiService {
 
     private final StandardWebSocketClient webSocketClient;
-    private final GeminiLiveWebSocketHandler setupWebSocketHandler;
+    private final GeminiLiveWebSocketHandlerFactory geminiLiveWebSocketHandlerFactory;
 
     @Value("${gemini.api.key}")
     private String geminiApiKey;
@@ -46,32 +48,31 @@ public class GeminiLiveApiService {
      *
      * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
      */
-    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync() {
-        log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - START");
+    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(String broadcastStreamId, String systemPrompt) {
+        log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - START | streamId: {}", broadcastStreamId);
 
         /*
             1. StandardWebSocketClient.execute()로 Gemini Live API로 WebSocket 연동 요청을 보낸다.
             - 해당 함수 호출 직후 executeFuture 객체를 바로 반환받는다.
          */
         URI geminiUri = createGeminiLiveWebSocketUri();
+        GeminiLiveWebSocketHandler liveWebSocketHandler = geminiLiveWebSocketHandlerFactory.create(systemPrompt);
         CompletableFuture<WebSocketSession> executeFuture = webSocketClient.execute(
-                setupWebSocketHandler,
+                liveWebSocketHandler,
                 new WebSocketHttpHeaders(),
                 geminiUri
         ).orTimeout(liveConnectTimeoutMs, TimeUnit.MILLISECONDS);
 
         /*
             2. CompletableFuture<WebSocketSession> 객체가 돌아오면 thenCompose()로 다음 비동기 작업으로 연결시킨다.
-            - setupWebSocketHandler의 해당 Gemini WebSocketSession의 ID 별로 저장된 setupCompleteFuture 객체를 가져온다
+            - Gemini WebSocket Session attributes에 broadcastStreamId를 먼저 주입한다.
+            - 생성한 GeminiLiveWebSocketHandler가 보유한 setupCompleteFuture 객체를 가져온다.
             - 해당 setupCompleteFuture의 작업이 완료되면 geminiSession을 반환하도록 설정한다.
             - 만약 해당 과정에서 예외가 발생한다면 GeminiSession을 종료시킨다.
          */
         CompletableFuture<WebSocketSession> readyFuture = executeFuture.thenCompose(geminiSession -> {
-            CompletableFuture<Void> setupCompleteFuture = setupWebSocketHandler.getSetupCompleteFuture(geminiSession);
-            if (setupCompleteFuture == null) {
-                closeGeminiSessionQuietly(geminiSession);
-                return CompletableFuture.failedFuture(new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED));
-            }
+            geminiSession.getAttributes().put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), broadcastStreamId);
+            CompletableFuture<Void> setupCompleteFuture = liveWebSocketHandler.getSetupCompleteFuture();
 
             return setupCompleteFuture.orTimeout(liveSetupTimeoutMs, TimeUnit.MILLISECONDS)
                     .thenApply(ignored -> geminiSession)
@@ -83,7 +84,6 @@ public class GeminiLiveApiService {
 
         /*
             3. readyFuture 객체에 setup이 완료된 Gemini WebSocket Session이 들어오는 경우, 해당 Gemini Session을 검증한다
-            - Gemini Session값이 null인 경우, setupWebSocketHandler의 특정 setupCompleteFuture 객체를 삭제한다.
             - whenComplete()
                 - 성공/실패 시 모두 실행
                 - 예외도 확인 가능
@@ -91,13 +91,13 @@ public class GeminiLiveApiService {
          */
         return readyFuture.whenComplete((geminiSession, throwable) -> {
             if (geminiSession != null) {
-                setupWebSocketHandler.removeSetupCompleteFuture(geminiSession.getId());
-                log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - END | sessionId: {}", geminiSession.getId());
+                log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - END | streamId: {}, sessionId: {}",
+                        broadcastStreamId, geminiSession.getId());
                 return;
             }
 
-            log.error("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - Failed | error: {}",
-                    throwable != null ? throwable.getMessage() : "unknown error");
+            log.error("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - Failed | streamId: {}, error: {}",
+                    broadcastStreamId, throwable != null ? throwable.getMessage() : "unknown error");
         });
     }
 
