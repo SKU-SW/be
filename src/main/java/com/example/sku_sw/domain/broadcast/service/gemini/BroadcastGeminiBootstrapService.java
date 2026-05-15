@@ -5,7 +5,6 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketStatusResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
-import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -34,7 +33,7 @@ public class BroadcastGeminiBootstrapService {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final GeminiLiveApiService geminiLiveApiService;
+    private final BroadcastGeminiLiveService broadcastGeminiLiveService;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastPromptBuilder broadcastPromptBuilder;
 
@@ -71,7 +70,7 @@ public class BroadcastGeminiBootstrapService {
                 - setupComplete까지 성공하면 후속 성공 처리로 연결한다.
                 - 실패하면 현재 generation bundle만 정리한다.
              */
-            geminiLiveApiService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt)
+            broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt)
                     .thenAccept(geminiSession -> handleBootstrapSuccess(broadcastStreamId, clientSession, generation, geminiSession))
                     .exceptionally(throwable -> {
                         handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
@@ -105,7 +104,7 @@ public class BroadcastGeminiBootstrapService {
             - 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는 경우는, Gemini WebSocket Session이 생성되는 도중에 클라이언트가 새로운 WebSocket 연결을 시도한 것이기 때문에 Gemini Session만 종료시킨다.
          */
         if (!sessionRegistry.isCurrentClientSession(broadcastStreamId, generation, clientSession)) {
-            geminiLiveApiService.closeGeminiSessionQuietly(geminiSession);
+            broadcastGeminiLiveService.closeGeminiSessionQuietly(geminiSession);
             log.warn("[BroadcastGeminiBootstrapService] handleBootstrapSuccess() - Stale client session detected | streamId: {}, generation: {}",
                     broadcastStreamId, generation);
             return;
@@ -244,7 +243,7 @@ public class BroadcastGeminiBootstrapService {
             String errorMessage
     ) {
         sessionRegistry.updateBundleStatusIfCurrent(broadcastStreamId, generation, WebSocketSessionBundleStatus.FAILED);
-        geminiLiveApiService.closeGeminiSessionQuietly(geminiSession);
+        broadcastGeminiLiveService.closeGeminiSessionQuietly(geminiSession);
         sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
         sendErrorAndClose(clientSession, closeStatus, errorMessage);
     }

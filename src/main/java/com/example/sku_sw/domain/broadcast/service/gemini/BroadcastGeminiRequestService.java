@@ -1,7 +1,6 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
@@ -14,8 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.util.List;
-
 /**
  * Gemini Live WebSocket 메시지 전송 서비스
  * - 현재 READY 상태의 Gemini WebSocket 세션으로 클라이언트 메시지를 전달한다.
@@ -23,7 +20,7 @@ import java.util.List;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class BroadcastGeminiService {
+public class BroadcastGeminiRequestService {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;

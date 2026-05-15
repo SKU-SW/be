@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class GeminiLiveApiService {
+public class BroadcastGeminiLiveService {
 
     private final StandardWebSocketClient webSocketClient;
     private final GeminiLiveWebSocketHandlerFactory geminiLiveWebSocketHandlerFactory;
@@ -49,7 +49,7 @@ public class GeminiLiveApiService {
      * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
      */
     public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(String broadcastStreamId, String systemPrompt) {
-        log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - START | streamId: {}", broadcastStreamId);
+        log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - START | streamId: {}", broadcastStreamId);
 
         /*
             1. StandardWebSocketClient.execute()로 Gemini Live API로 WebSocket 연동 요청을 보낸다.
@@ -77,6 +77,8 @@ public class GeminiLiveApiService {
             return setupCompleteFuture.orTimeout(liveSetupTimeoutMs, TimeUnit.MILLISECONDS)
                     .thenApply(ignored -> geminiSession)
                     .exceptionally(throwable -> {
+                        log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Setup failed | streamId: {}, diagnostics: {}",
+                                broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
                         closeGeminiSessionQuietly(geminiSession);
                         throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
                     });
@@ -91,13 +93,13 @@ public class GeminiLiveApiService {
          */
         return readyFuture.whenComplete((geminiSession, throwable) -> {
             if (geminiSession != null) {
-                log.info("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - END | streamId: {}, sessionId: {}",
+                log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - END | streamId: {}, sessionId: {}",
                         broadcastStreamId, geminiSession.getId());
                 return;
             }
 
-            log.error("[GeminiLiveApiService] connectGeminiApiWebSocketAsync() - Failed | streamId: {}, error: {}",
-                    broadcastStreamId, throwable != null ? throwable.getMessage() : "unknown error");
+            log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Failed | streamId: {}, diagnostics: {}",
+                    broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
         });
     }
 
@@ -124,7 +126,7 @@ public class GeminiLiveApiService {
         try {
             geminiSession.close(CloseStatus.SERVER_ERROR.withReason("Gemini setup failed"));
         } catch (IOException e) {
-            log.warn("[GeminiLiveApiService] closeGeminiSessionQuietly() - Failed to close Gemini session | error: {}", e.getMessage());
+            log.warn("[BroadcastGeminiLiveService] closeGeminiSessionQuietly() - Failed to close Gemini session | error: {}", e.getMessage());
         }
     }
 }

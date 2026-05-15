@@ -4,7 +4,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
-import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
@@ -13,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Locale;
 
 /**
@@ -28,7 +27,7 @@ public class BroadcastMessageService {
     private static final int RECENT_BROADCAST_INFO_LIMIT = 50;
 
     private final BroadcastRedisUtil broadcastRedisUtil;
-    private final BroadcastGeminiService broadcastGeminiService;
+    private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
 
@@ -77,7 +76,7 @@ public class BroadcastMessageService {
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
         }
 
-        broadcastGeminiService.processClientMessage(
+        broadcastGeminiRequestService.processClientMessage(
                 broadcastStreamId,
                 generation,
                 character,
