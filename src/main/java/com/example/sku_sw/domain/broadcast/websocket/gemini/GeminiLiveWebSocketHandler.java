@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -31,9 +32,15 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiResponseService broadcastGeminiResponseService;
+    private final BroadcastGeminiToolCallService broadcastGeminiToolCallService;
     private final String dialogueModel;
     private final String systemPrompt;
     private final CompletableFuture<Void> setupCompleteFuture = new CompletableFuture<>();
+
+    private volatile String lastSentSetupPayload;
+    private volatile String lastReceivedPayload;
+    private volatile String lastGeminiErrorPayload;
+    private volatile CloseStatus lastCloseStatus;
 
     private GeminiTurnAccumulator turnAccumulator;
     private long turnSequence = 0L;
@@ -42,12 +49,14 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             ObjectMapper objectMapper,
             BroadcastWebSocketSessionRegistry sessionRegistry,
             BroadcastGeminiResponseService broadcastGeminiResponseService,
+            BroadcastGeminiToolCallService broadcastGeminiToolCallService,
             String dialogueModel,
             String systemPrompt
     ) {
         this.objectMapper = objectMapper;
         this.sessionRegistry = sessionRegistry;
         this.broadcastGeminiResponseService = broadcastGeminiResponseService;
+        this.broadcastGeminiToolCallService = broadcastGeminiToolCallService;
         this.dialogueModel = dialogueModel;
         this.systemPrompt = systemPrompt;
     }
@@ -74,11 +83,19 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             partsNode.addObject().put("text", systemPrompt);
         }
 
+        ArrayNode toolsNode = setupNode.putArray("tools");
+        ObjectNode toolNode = toolsNode.addObject();
+        ArrayNode functionDeclarationsNode = toolNode.putArray("functionDeclarations");
+        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
+
         setupNode.putObject("outputAudioTranscription");
 
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
+        String setupPayload = objectMapper.writeValueAsString(payload);
+        lastSentSetupPayload = setupPayload;
+        session.sendMessage(new TextMessage(setupPayload));
 
-        log.info("[GeminiLiveWebSocketHandler] afterConnectionEstablished() - Setup message sent | sessionId: {}", session.getId());
+        log.info("[GeminiLiveWebSocketHandler] afterConnectionEstablished() - Setup message sent | sessionId: {}, payload: {}",
+                session.getId(), abbreviate(setupPayload));
     }
 
     @Override
@@ -98,6 +115,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private void handleIncomingPayload(WebSocketSession session, String payload, String frameType) throws Exception {
         log.debug("[GeminiLiveWebSocketHandler] handleIncomingPayload() - Received {} frame | sessionId: {}, payload: {}",
                 frameType, session.getId(), payload);
+        lastReceivedPayload = payload;
 
         JsonNode rootNode = objectMapper.readTree(payload);
 
@@ -108,11 +126,18 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         if (rootNode.has("error")) {
+            lastGeminiErrorPayload = payload;
             if (!setupCompleteFuture.isDone()) {
                 setupCompleteFuture.completeExceptionally(new IllegalStateException(rootNode.get("error").toString()));
             }
             log.error("[GeminiLiveWebSocketHandler] handleTextMessage() - Gemini error received | sessionId: {}, payload: {}",
                     session.getId(), payload);
+            return;
+        }
+
+        JsonNode toolCallNode = rootNode.get("toolCall");
+        if (toolCallNode != null) {
+            handleToolCall(session, toolCallNode);
             return;
         }
 
@@ -282,6 +307,30 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return mergedAudioChunk;
     }
 
+    private void handleToolCall(WebSocketSession geminiSession, JsonNode toolCallNode) {
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
+        if (broadcastStreamId == null) {
+            log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Broadcast stream not found | sessionId: {}",
+                    geminiSession.getId());
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+            log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Bundle not ready | streamId: {}, sessionId: {}",
+                    broadcastStreamId, geminiSession.getId());
+            return;
+        }
+
+        if (bundle.getGeminiSession() != geminiSession) {
+            log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Gemini session mismatch | streamId: {}, sessionId: {}",
+                    broadcastStreamId, geminiSession.getId());
+            return;
+        }
+
+        broadcastGeminiToolCallService.handleToolCall(geminiSession, broadcastStreamId, toolCallNode);
+    }
+
     private void logServerContentSummary(
             WebSocketSession session,
             JsonNode serverContentNode,
@@ -330,14 +379,17 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
         clearAccumulator();
 
-        log.error("[GeminiLiveWebSocketHandler] handleTransportError() - Transport error | sessionId: {}, error: {}",
-                session.getId(), exception.getMessage());
+        log.error("[GeminiLiveWebSocketHandler] handleTransportError() - Transport error | sessionId: {}, diagnostics: {}",
+                session.getId(), getSetupFailureDiagnostics(), exception);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        lastCloseStatus = status;
         if (!setupCompleteFuture.isDone()) {
             setupCompleteFuture.completeExceptionally(new IllegalStateException("Gemini setup not completed before close. status=" + status));
+            log.error("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed before setupComplete | sessionId: {}, diagnostics: {}",
+                    session.getId(), getSetupFailureDiagnostics());
         }
         clearAccumulator();
 
@@ -349,6 +401,16 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return setupCompleteFuture;
     }
 
+    public String getSetupFailureDiagnostics() {
+        return String.format(
+                "lastCloseStatus=%s, lastReceivedPayload=%s, lastGeminiErrorPayload=%s, lastSentSetupPayload=%s",
+                lastCloseStatus,
+                abbreviate(lastReceivedPayload),
+                abbreviate(lastGeminiErrorPayload),
+                abbreviate(lastSentSetupPayload)
+        );
+    }
+
     public GeminiTurnAccumulator getTurnAccumulator() {
         return turnAccumulator;
     }
@@ -357,6 +419,19 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         GeminiTurnAccumulator previousAccumulator = turnAccumulator;
         turnAccumulator = null;
         return previousAccumulator;
+    }
+
+    private String abbreviate(String value) {
+        if (value == null) {
+            return "null";
+        }
+
+        int maxLength = 2000;
+        if (value.length() <= maxLength) {
+            return value;
+        }
+
+        return value.substring(0, maxLength) + "...(truncated)";
     }
 
     public record CompletedGeminiTurn(

@@ -3,10 +3,12 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,9 +26,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,20 +50,25 @@ class GeminiLiveWebSocketHandlerTest {
     @Mock
     private BroadcastGeminiResponseService broadcastGeminiResponseService;
 
+    @Mock
+    private BroadcastGeminiToolCallService broadcastGeminiToolCallService;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
+        lenient().when(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration()).thenReturn(buildTalkingStateFunctionDeclaration());
         geminiLiveWebSocketHandler = new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiResponseService,
+                broadcastGeminiToolCallService,
                 DIALOGUE_MODEL,
                 SYSTEM_PROMPT
         );
     }
 
     @Test
-    @DisplayName("Gemini setup 메시지 전송 성공 - AUDIO modality와 outputAudioTranscription, systemInstruction을 포함한다")
+    @DisplayName("Gemini setup 메시지 전송 성공 - AUDIO modality(only)와 outputAudioTranscription, systemInstruction, functionDeclaration을 포함한다")
     void Gemini_setup_메시지_전송_성공() throws Exception {
         // given
         WebSocketSession session = org.mockito.Mockito.mock(WebSocketSession.class);
@@ -79,8 +88,16 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("generationConfig").get("responseModalities")).hasSize(1);
         assertThat(setupNode.get("generationConfig").get("responseModalities").get(0).asText()).isEqualTo("AUDIO");
         assertThat(setupNode.get("systemInstruction").get("parts").get(0).get("text").asText()).isEqualTo(SYSTEM_PROMPT);
+        assertThat(setupNode.get("tools")).hasSize(1);
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(1);
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0).get("name").asText()).isEqualTo("set_talking_state");
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
+                .get("parameters").get("properties").get("isTalking").get("type").asText()).isEqualTo("boolean");
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
+                .get("parameters").get("properties").get("isTalking").get("enum")).isNull();
         assertThat(setupNode.has("outputAudioTranscription")).isTrue();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
+        assertThat(geminiLiveWebSocketHandler.getSetupFailureDiagnostics()).contains("lastSentSetupPayload=");
     }
 
     @Test
@@ -153,7 +170,7 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(1L),
                 eq(1L),
                 eq("안녕"),
-                eq(new byte[0])
+                aryEq(new byte[0])
         );
 
         verify(broadcastGeminiResponseService, times(1)).forwardStreamingChunk(
@@ -162,7 +179,7 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(1L),
                 eq(1L),
                 eq("하세요"),
-                eq("audio".getBytes(StandardCharsets.UTF_8))
+                aryEq("audio".getBytes(StandardCharsets.UTF_8))
         );
 
         assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
@@ -224,5 +241,110 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture().isDone()).isTrue();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture().isCompletedExceptionally()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Gemini toolCall 수신 성공 - ToolCallService로 위임하고 스트리밍 응답은 전달하지 않는다")
+    void Gemini_toolCall_수신_성공_ToolCallService로_위임() throws Exception {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.isOpen()).willReturn(true);
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+
+        String payload = """
+                {
+                  "toolCall": {
+                    "functionCalls": [
+                      {
+                        "id": "fc-123",
+                        "name": "set_talking_state",
+                        "args": {
+                          "isTalking": false
+                        }
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        // when
+        geminiLiveWebSocketHandler.handleTextMessage(
+                geminiSession,
+                new TextMessage(payload)
+        );
+
+        // then
+        ArgumentCaptor<JsonNode> captor = ArgumentCaptor.forClass(JsonNode.class);
+        verify(broadcastGeminiToolCallService, times(1)).handleToolCall(eq(geminiSession), eq("stream-1"), captor.capture());
+        assertThat(captor.getValue().get("functionCalls")).hasSize(1);
+        assertThat(captor.getValue().get("functionCalls").get(0).get("name").asText()).isEqualTo("set_talking_state");
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Gemini toolCall 수신 실패 - streamId가 없으면 ToolCallService로 위임하지 않는다")
+    void Gemini_toolCall_수신_실패_streamId_없음() throws Exception {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.getAttributes()).willReturn(new HashMap<>());
+
+        String payload = """
+                {
+                  "toolCall": {
+                    "functionCalls": [
+                      {
+                        "id": "fc-123",
+                        "name": "set_talking_state",
+                        "args": {
+                          "isTalking": false
+                        }
+                      }
+                    ]
+                  }
+                }
+                """;
+
+        // when
+        geminiLiveWebSocketHandler.handleTextMessage(
+                geminiSession,
+                new TextMessage(payload)
+        );
+
+        // then
+        verify(broadcastGeminiToolCallService, never()).handleToolCall(any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
+    }
+
+    private ObjectNode buildTalkingStateFunctionDeclaration() {
+        ObjectNode functionDeclarationNode = objectMapper.createObjectNode();
+        functionDeclarationNode.put("name", "set_talking_state");
+        functionDeclarationNode.put("description", "Set the broadcast character talking state when the streamer was not speaking to the AI.");
+
+        ObjectNode parametersNode = functionDeclarationNode.putObject("parameters");
+        parametersNode.put("type", "object");
+
+        ObjectNode propertiesNode = parametersNode.putObject("properties");
+        ObjectNode isTalkingNode = propertiesNode.putObject("isTalking");
+        isTalkingNode.put("type", "boolean");
+        isTalkingNode.put("description", "Whether the AI character should remain in talking mode.");
+
+        parametersNode.putArray("required").add("isTalking");
+        return functionDeclarationNode;
     }
 }

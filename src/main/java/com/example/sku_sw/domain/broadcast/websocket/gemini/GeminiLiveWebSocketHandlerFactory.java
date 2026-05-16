@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ public class GeminiLiveWebSocketHandlerFactory {
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiResponseService broadcastGeminiResponseService;
+    private final BroadcastGeminiToolCallService broadcastGeminiToolCallService;
 
     @Value("${gemini.api.dialogue-model}")
     private String dialogueModel;
@@ -32,6 +34,7 @@ public class GeminiLiveWebSocketHandlerFactory {
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiResponseService,
+                broadcastGeminiToolCallService,
                 dialogueModel,
                 systemPrompt
         );
