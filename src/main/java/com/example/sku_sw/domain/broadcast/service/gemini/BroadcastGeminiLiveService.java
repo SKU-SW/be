@@ -5,16 +5,15 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandlerFactory;
 import com.example.sku_sw.global.exception.CustomException;
+import com.example.sku_sw.global.util.GeminiUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +27,7 @@ public class BroadcastGeminiLiveService {
 
     private final StandardWebSocketClient webSocketClient;
     private final GeminiLiveWebSocketHandlerFactory geminiLiveWebSocketHandlerFactory;
+    private final GeminiUtil geminiUtil;
 
     @Value("${gemini.api.key}")
     private String geminiApiKey;
@@ -79,7 +79,7 @@ public class BroadcastGeminiLiveService {
                     .exceptionally(throwable -> {
                         log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Setup failed | streamId: {}, diagnostics: {}",
                                 broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
-                        closeGeminiSessionQuietly(geminiSession);
+                        geminiUtil.closeGeminiSessionQuietly(geminiSession);
                         throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
                     });
         });
@@ -111,22 +111,5 @@ public class BroadcastGeminiLiveService {
     private URI createGeminiLiveWebSocketUri() {
         String encodedApiKey = URLEncoder.encode(geminiApiKey, StandardCharsets.UTF_8);
         return URI.create(geminiLiveWebSocketUrl + "?key=" + encodedApiKey);
-    }
-
-    /**
-     * Gemini WebSocket 세션을 조용히 종료한다.
-     *
-     * @param geminiSession : 종료할 Gemini 세션
-     */
-    public void closeGeminiSessionQuietly(WebSocketSession geminiSession) {
-        if (geminiSession == null || !geminiSession.isOpen()) {
-            return;
-        }
-
-        try {
-            geminiSession.close(CloseStatus.SERVER_ERROR.withReason("Gemini setup failed"));
-        } catch (IOException e) {
-            log.warn("[BroadcastGeminiLiveService] closeGeminiSessionQuietly() - Failed to close Gemini session | error: {}", e.getMessage());
-        }
     }
 }

@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.util;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCompactionSnapshotDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueRefreshSnapshotDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueSnapshotItemDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus;
@@ -209,6 +210,54 @@ public class BroadcastRedisUtil {
             return activeInfos;
         }
         return activeInfos.subList(activeInfos.size() - limit, activeInfos.size());
+    }
+
+    /**
+     * refresh용 ACTIVE 스냅샷을 조회하는 함수
+     * - summary와 최근 ACTIVE 대화 목록, 마지막 cursor를 함께 반환한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param limit : 조회할 최대 ACTIVE 개수
+     * @return : refresh 스냅샷 DTO
+     */
+    public BroadcastDialogueRefreshSnapshotDto getRefreshSnapshot(String broadcastStreamId, int limit) {
+        // 1. 현재 Redis의 전체 대화 중 ACTIVE인 데이터와 요약 데이터를 가져온다.
+        List<BroadcastInfoRedisDto> allInfos = getBroadcastInfos(broadcastStreamId);
+        BroadcastInfoRedisDto summary = allInfos.isEmpty() ? createSummaryDto(DEFAULT_SUMMARY_CONTENT) : allInfos.get(0);
+        List<BroadcastInfoRedisDto> activeInfos = allInfos.stream()
+                .skip(1)
+                .filter(info -> info.dataStatus() == BroadcastDataStatus.ACTIVE)
+                .toList();
+
+        // 2. 전체 대화 기록을 snapshot으로 저장하고, 해당 대화 중 가장 마지막 대화의 cursor Id를 저장한다.
+        List<BroadcastInfoRedisDto> snapshotDialogues;
+        if (activeInfos.size() <= limit) {
+            snapshotDialogues = activeInfos;
+        } else {
+            snapshotDialogues = activeInfos.subList(activeInfos.size() - limit, activeInfos.size());
+        }
+        Long snapshotCursorId = snapshotDialogues.isEmpty()
+                ? summary.cursorId()
+                : snapshotDialogues.get(snapshotDialogues.size() - 1).cursorId();
+
+        return BroadcastDialogueRefreshSnapshotDto.builder()
+                .summary(summary)
+                .dialogues(snapshotDialogues)
+                .snapshotCursorId(snapshotCursorId)
+                .build();
+    }
+
+    /**
+     * Redis List에서 지정된 cursor를 초과하는 ACTIVE 상태 대화를 조회하는 함수
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param cursorId : 기준 cursor
+     * @return : cursor 초과 ACTIVE 대화 목록
+     */
+    public List<BroadcastInfoRedisDto> getActiveDialoguesAfterCursor(String broadcastStreamId, Long cursorId) {
+        return getBroadcastInfos(broadcastStreamId).stream()
+                .skip(1)
+                .filter(info -> info.dataStatus() == BroadcastDataStatus.ACTIVE)
+                .filter(info -> cursorId == null || info.cursorId() > cursorId)
+                .toList();
     }
 
     /**
@@ -420,6 +469,40 @@ public class BroadcastRedisUtil {
 
         redisTemplate.execute(script, Collections.singletonList(key), summaryJson);
         log.info("[BroadcastRedisUtil] atomicReplaceSummaryAndDeleteInactive() - Applied | streamId: {}", broadcastStreamId);
+    }
+
+    /**
+     * 지정된 cursor 이하 대화 데이터를 원자적으로 삭제하는 함수
+     * - summary slot은 유지한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param cursorId : 삭제 기준 cursor
+     */
+    public void atomicDeleteDialoguesUpToCursor(String broadcastStreamId, Long cursorId) {
+        String key = getBroadcastInfoKey(broadcastStreamId);
+        String cursorArg = cursorId == null ? String.valueOf(SUMMARY_CURSOR_ID) : String.valueOf(cursorId);
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setResultType(Long.class);
+        script.setScriptText("""
+                local values = redis.call('LRANGE', KEYS[1], 0, -1)
+                if #values == 0 then
+                    return 0
+                end
+                local cursor = tonumber(ARGV[1])
+                redis.call('DEL', KEYS[1])
+                redis.call('RPUSH', KEYS[1], values[1])
+                for i = 2, #values do
+                    local item = cjson.decode(values[i])
+                    local itemCursor = tonumber(item['cursorId'])
+                    if itemCursor == nil or itemCursor > cursor then
+                        redis.call('RPUSH', KEYS[1], values[i])
+                    end
+                end
+                return redis.call('LLEN', KEYS[1])
+                """);
+
+        redisTemplate.execute(script, Collections.singletonList(key), cursorArg);
+        log.info("[BroadcastRedisUtil] atomicDeleteDialoguesUpToCursor() - Applied | streamId: {}, cursorId: {}", broadcastStreamId, cursorId);
     }
 
     /**

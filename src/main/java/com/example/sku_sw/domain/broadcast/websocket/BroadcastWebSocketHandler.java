@@ -105,7 +105,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
         // 1. Session Registry에서
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation != null ? generation : -1L);
-        if (bundle == null || !bundle.matchesClientSession(session) || bundle.getStatus().isLocked()) {
+        if (bundle == null || !bundle.matchesClientSession(session) || !bundle.canAcceptClientMessage()) {
             sendStatusMessage(session, WebSocketSessionBundleStatus.GEMINI_CONNECTING.name(), BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY.getMessage());
             return;
         }

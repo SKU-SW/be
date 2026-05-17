@@ -3,11 +3,15 @@ package com.example.sku_sw.domain.broadcast.service;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCompactionSnapshotDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueSnapshotItemDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRefreshService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import reactor.core.scheduler.Schedulers;
 
@@ -25,6 +29,8 @@ public class BroadcastDialogueCompactionService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
     private final BroadcastDialogueSummaryService broadcastDialogueSummaryService;
+    private final BroadcastGeminiRefreshService broadcastGeminiRefreshService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * compaction 시작 가능 여부를 확인하고 비동기 실행하는 함수
@@ -37,7 +43,13 @@ public class BroadcastDialogueCompactionService {
             1. summary 진행 여부 및 threshold 확인
             - 이미 요약 중이면 중복 실행하지 않는다.
             - INACTIVE가 있거나 ACTIVE 개수가 기준 이상인 경우에만 진행한다.
+            - Gemini refresh 중이면 compaction을 시작하지 않는다.
          */
+        if (broadcastGeminiRefreshService.isRefreshBlockingCompaction(broadcastStreamId)) {
+            log.info("[BroadcastDialogueCompactionService] tryStartCompaction() - END | streamId: {}, action: refreshing", broadcastStreamId);
+            return;
+        }
+
         if (broadcastRedisUtil.isSummaryInProgress(broadcastStreamId)) {
             log.info("[BroadcastDialogueCompactionService] tryStartCompaction() - END | streamId: {}, action: in_progress", broadcastStreamId);
             return;
@@ -92,10 +104,15 @@ public class BroadcastDialogueCompactionService {
         return result;
     }
 
+    /**
+     * 비동기적으로 방송 장보를 요약하는 함수
+     * @param broadcastStreamId 방송 고유 ID
+     */
     private void compactInternalAsync(String broadcastStreamId) {
         log.info("[BroadcastDialogueCompactionService] compactInternalAsync() - START | streamId: {}", broadcastStreamId);
 
         try {
+            // 1. Redis에 있는 데이터를 이용해서 해당 데이터를 요약할 준비를 한다. (현재 대화 데이터 DB 저장, Redis에서 비활성화 처리)
             CompactionPreparedData preparedData = prepareCompaction(broadcastStreamId);
             if (preparedData == null) {
                 log.info("[BroadcastDialogueCompactionService] compactInternalAsync() - END | streamId: {}, action: empty_snapshot", broadcastStreamId);
@@ -110,18 +127,22 @@ public class BroadcastDialogueCompactionService {
                     .subscribeOn(Schedulers.boundedElastic())
                     .subscribe(
                             summaryText -> {
-                                BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.builder()
-                                        .cursorId(0L)
-                                        .subject(DialogueSubject.SYSTEM_SUMMARY)
-                                        .content(summaryText)
-                                        .createdAt(LocalDateTime.now())
-                                        .dataStatus(preparedData.summary().dataStatus())
-                                        .build();
+                                // 1) Redis 저장용 Summary Dto 생성
+                                BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.buildSummaryDto(summaryText, preparedData.summary().dataStatus());
+                                // 2) 원자적으로 요약 데이터 수정 및 Inactive 대화 기록 삭제
                                 broadcastRedisUtil.atomicReplaceSummaryAndDeleteInactive(broadcastStreamId, newSummary);
+                                // 3) 해당 BroadcastStreamId 요약 중이라는 태그 삭제.
                                 broadcastRedisUtil.clearSummaryInProgress(broadcastStreamId);
-                                if (broadcastRedisUtil.hasInactiveDialogues(broadcastStreamId)
-                                        || broadcastRedisUtil.countActiveDialogues(broadcastStreamId) >= redisBroadcastDialogueMaxNum) {
-                                    tryStartCompaction(broadcastStreamId);
+                                // 4) 현재 방송 데이터가 요약되었다면 Gemini Session Refresh를 시도한다.
+                                broadcastGeminiRefreshService.requestRefreshAfterCompaction(broadcastStreamId);
+                                // 5) Gemini Refresh 과정이 Compaction을 막고 있는 상황이 아니고, Inactive 대화가 Redis에 남아있거나 Active된 대화 데이터가 Redis 대화 List 최대 개수를 넘는다면, 한번 더 요약을 시도한다.
+                                if (!broadcastGeminiRefreshService.isRefreshBlockingCompaction(broadcastStreamId)
+                                        && (broadcastRedisUtil.hasInactiveDialogues(broadcastStreamId)
+                                        || broadcastRedisUtil.countActiveDialogues(broadcastStreamId) >= redisBroadcastDialogueMaxNum)) {
+                                    applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
+                                            .broadcastStreamId(broadcastStreamId)
+                                            .triggerType(BroadcastCompactionTriggerType.POST_COMPACTION_RECHECK)
+                                            .build());
                                 }
                                 log.info("[BroadcastDialogueCompactionService] compactInternalAsync() - Summary applied | streamId: {}, dialogueSize: {}",
                                         broadcastStreamId, preparedData.dialogues().size());

@@ -275,6 +275,7 @@ jobs:
             # ▲ 클라우드 프론트 도메인
             GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
             REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}}
+            REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}}
             FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}}
             FASTAPI_TTS_PATH=${{secrets.FASTAPI_TTS_PATH}}
             EOF

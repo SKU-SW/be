@@ -14,4 +14,13 @@ public record BroadcastInfoRedisDto(
         LocalDateTime createdAt,
         BroadcastDataStatus dataStatus
 ) {
+    public static BroadcastInfoRedisDto buildSummaryDto(String summaryContent, BroadcastDataStatus dataStatus) {
+        return BroadcastInfoRedisDto.builder()
+                .cursorId(0L)
+                .subject(DialogueSubject.SYSTEM_SUMMARY)
+                .content(summaryContent)
+                .createdAt(LocalDateTime.now())
+                .dataStatus(dataStatus)
+                .build();
+    }
 }

@@ -44,11 +44,12 @@ public class BroadcastGeminiRequestService {
                 broadcastStreamId, generation);
 
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+        if (bundle == null || !bundle.canSendToGemini()) {
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
         }
 
         try {
+            bundle.incrementRequestFlight();
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
             realtimeInputNode.put("text", clientMessage);
@@ -61,7 +62,49 @@ public class BroadcastGeminiRequestService {
                     generation,
                     character.getCharacterId());
         } catch (Exception e) {
+            bundle.decrementRequestFlight();
             log.error("[BroadcastGeminiService] processClientMessage() - Failed | streamId: {}, generation: {}, error: {}",
+                    broadcastStreamId, generation, e.getMessage());
+            throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
+        }
+    }
+
+    /**
+     * refresh 이후 replay할 클라이언트 메시지를 Gemini Live WebSocket 세션으로 전송한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param clientMessage : replay할 메시지
+     */
+    public void processReplayMessage(String broadcastStreamId, long generation, String clientMessage) {
+        log.info("[BroadcastGeminiService] processReplayMessage() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        /*
+            1. 현재 generation 번들과 Gemini 전송 가능 여부를 확인한다.
+            - replay도 일반 Gemini 전송과 동일한 세션 준비 상태를 요구한다.
+         */
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+        if (bundle == null || !bundle.canSendToGemini()) {
+            throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
+        }
+
+        /*
+            2. 일반 클라이언트 메시지와 동일한 방식으로 replay 메시지를 전송한다.
+            - refresh 이후 최신 trigger 1건만 전송하기 위한 공용 send 로직을 재사용한다.
+         */
+        try {
+            bundle.incrementRequestFlight();
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
+            realtimeInputNode.put("text", clientMessage);
+
+            WebSocketSession geminiSession = bundle.getGeminiSession();
+            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+            log.info("[BroadcastGeminiService] processReplayMessage() - END | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+        } catch (Exception e) {
+            bundle.decrementRequestFlight();
+            log.error("[BroadcastGeminiService] processReplayMessage() - Failed | streamId: {}, generation: {}, error: {}",
                     broadcastStreamId, generation, e.getMessage());
             throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
         }

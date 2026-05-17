@@ -1,6 +1,8 @@
 package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
@@ -10,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -33,6 +36,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiResponseService broadcastGeminiResponseService;
     private final BroadcastGeminiToolCallService broadcastGeminiToolCallService;
+    private final ApplicationEventPublisher applicationEventPublisher;
     private final String dialogueModel;
     private final String systemPrompt;
     private final CompletableFuture<Void> setupCompleteFuture = new CompletableFuture<>();
@@ -50,6 +54,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             BroadcastWebSocketSessionRegistry sessionRegistry,
             BroadcastGeminiResponseService broadcastGeminiResponseService,
             BroadcastGeminiToolCallService broadcastGeminiToolCallService,
+            ApplicationEventPublisher applicationEventPublisher,
             String dialogueModel,
             String systemPrompt
     ) {
@@ -57,6 +62,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         this.sessionRegistry = sessionRegistry;
         this.broadcastGeminiResponseService = broadcastGeminiResponseService;
         this.broadcastGeminiToolCallService = broadcastGeminiToolCallService;
+        this.applicationEventPublisher = applicationEventPublisher;
         this.dialogueModel = dialogueModel;
         this.systemPrompt = systemPrompt;
     }
@@ -186,7 +192,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
-        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+        if (bundle == null || !bundle.canProcessGeminiResponse()) {
             log.warn("[GeminiLiveWebSocketHandler] dispatchStreamingChunk() - Bundle not ready | streamId: {}, sessionId: {}, turnNumber: {}",
                     broadcastStreamId, geminiSession.getId(), turnNumber);
             return;
@@ -217,7 +223,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
-        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+        if (bundle == null || !bundle.canProcessGeminiResponse()) {
             log.warn("[GeminiLiveWebSocketHandler] dispatchCompletedTurn() - Bundle not ready | streamId: {}, sessionId: {}, turnNumber: {}",
                     broadcastStreamId, geminiSession.getId(), completedTurn.turnNumber());
             return;
@@ -234,7 +240,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 broadcastStreamId,
                 bundle.getGeneration(),
                 completedTurn.turnNumber(),
-                completedTurn.accumulatedText()
+                completedTurn.accumulatedText(),
+                bundle
         );
     }
 
@@ -316,7 +323,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
-        if (bundle == null || !bundle.isReady() || !bundle.isGeminiSessionOpen()) {
+        if (bundle == null || !bundle.canProcessGeminiResponse()) {
             log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Bundle not ready | streamId: {}, sessionId: {}",
                     broadcastStreamId, geminiSession.getId());
             return;
@@ -378,6 +385,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             setupCompleteFuture.completeExceptionally(exception);
         }
         clearAccumulator();
+        handleTerminatedGeminiTurn(session);
 
         log.error("[GeminiLiveWebSocketHandler] handleTransportError() - Transport error | sessionId: {}, diagnostics: {}",
                 session.getId(), getSetupFailureDiagnostics(), exception);
@@ -392,9 +400,56 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                     session.getId(), getSetupFailureDiagnostics());
         }
         clearAccumulator();
+        handleTerminatedGeminiTurn(session);
 
         log.info("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed | sessionId: {}, status: {}",
                 session.getId(), status);
+    }
+
+    private void handleTerminatedGeminiTurn(WebSocketSession session) {
+        String broadcastStreamId = resolveBroadcastStreamId(session);
+        if (broadcastStreamId == null) {
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || bundle.getGeminiSession() != session) {
+            return;
+        }
+
+        handleGeminiSessionTerminated(broadcastStreamId, bundle.getGeneration(), bundle);
+    }
+
+    /**
+     * Gemini 세션 종료 시 남아있는 request-flight 요청을 정리한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param bundle : 현재 세션 번들
+     */
+    public void handleGeminiSessionTerminated(String broadcastStreamId, Long generation, BroadcastWebSocketSessionBundle bundle) {
+        log.info("[GeminiLiveWebSocketHandler] handleGeminiSessionTerminated() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        /*
+            1. 종료된 Gemini 세션의 request-flight 요청을 모두 정리한다.
+            - transport error 또는 close 시점에는 더 이상 응답이 오지 않으므로 in-flight를 0으로 초기화한다.
+         */
+        bundle.resetRequestFlight();
+
+        /*
+            2. refresh 요청 상태라면 refresh 재평가 이벤트를 발행한다.
+            - 기존 세션 종료로 request-flight가 0이 되었으므로 refresh 진행 조건을 다시 평가한다.
+          */
+        if (bundle.getGeminiSessionRefreshRequested()) {
+            applicationEventPublisher.publishEvent(BroadcastGeminiRefreshRequestedEvent.builder()
+                    .broadcastStreamId(broadcastStreamId)
+                    .generation(generation)
+                    .triggerType(BroadcastGeminiRefreshTriggerType.SESSION_TERMINATED)
+                    .build());
+        }
+
+        log.info("[GeminiLiveWebSocketHandler] handleGeminiSessionTerminated() - END | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
     }
 
     public CompletableFuture<Void> getSetupCompleteFuture() {

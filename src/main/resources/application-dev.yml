@@ -69,6 +69,7 @@ gemini:
 broadcast:
   dialogue:
     redis-max-num: ${REDIS_BROADCAST_DIALOGUE_MAX_NUM:50}
+    redis-max-refresh-retry-count: ${REDIS_MAX_REFRESH_RETRY_COUNT:1}
 
 fastapi:
   base-url: ${FASTAPI_BASE_URL:http://localhost:8000}

@@ -7,6 +7,7 @@ package com.example.sku_sw.domain.broadcast.enums;
 public enum WebSocketSessionBundleStatus {
     GEMINI_CONNECTING,
     READY,
+    REFRESHING,
     FAILED,
     CLOSING;
 
@@ -16,6 +17,6 @@ public enum WebSocketSessionBundleStatus {
      * @return : 잠금 상태 여부
      */
     public boolean isLocked() {
-        return this != READY;
+        return this == GEMINI_CONNECTING || this == FAILED || this == CLOSING;
     }
 }

@@ -6,6 +6,7 @@ import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRe
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,6 +21,7 @@ public class GeminiLiveWebSocketHandlerFactory {
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiResponseService broadcastGeminiResponseService;
     private final BroadcastGeminiToolCallService broadcastGeminiToolCallService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Value("${gemini.api.dialogue-model}")
     private String dialogueModel;
@@ -35,6 +37,7 @@ public class GeminiLiveWebSocketHandlerFactory {
                 sessionRegistry,
                 broadcastGeminiResponseService,
                 broadcastGeminiToolCallService,
+                applicationEventPublisher,
                 dialogueModel,
                 systemPrompt
         );
