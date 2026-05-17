@@ -20,9 +20,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -119,6 +122,22 @@ public class GeminiUtil {
                 )
                 .bodyToMono(GeminiGenerateContentResDto.class)
                 .map(this::extractText);
+    }
+
+    /**
+     * Gemini WebSocket 세션을 조용히 종료하는 함수
+     * @param geminiSession : 종료할 Gemini WebSocket 세션
+     */
+    public void closeGeminiSessionQuietly(WebSocketSession geminiSession) {
+        if (geminiSession == null || !geminiSession.isOpen()) {
+            return;
+        }
+
+        try {
+            geminiSession.close(CloseStatus.SERVER_ERROR.withReason("Gemini setup failed"));
+        } catch (IOException e) {
+            log.warn("[GeminiUtil] closeGeminiSessionQuietly() - Failed to close Gemini session | error: {}", e.getMessage());
+        }
     }
 
     /**

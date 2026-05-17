@@ -1,7 +1,9 @@
 package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -53,6 +56,9 @@ class GeminiLiveWebSocketHandlerTest {
     @Mock
     private BroadcastGeminiToolCallService broadcastGeminiToolCallService;
 
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
@@ -62,6 +68,7 @@ class GeminiLiveWebSocketHandlerTest {
                 sessionRegistry,
                 broadcastGeminiResponseService,
                 broadcastGeminiToolCallService,
+                applicationEventPublisher,
                 DIALOGUE_MODEL,
                 SYSTEM_PROMPT
         );
@@ -188,7 +195,8 @@ class GeminiLiveWebSocketHandlerTest {
                 eq("stream-1"),
                 eq(1L),
                 eq(1L),
-                eq("안녕하세요")
+                eq("안녕하세요"),
+                eq(bundle)
         );
     }
 
@@ -220,7 +228,7 @@ class GeminiLiveWebSocketHandlerTest {
         // then
         assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
         verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -292,7 +300,7 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(captor.getValue().get("functionCalls")).hasSize(1);
         assertThat(captor.getValue().get("functionCalls").get(0).get("name").asText()).isEqualTo("set_talking_state");
         verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -328,7 +336,59 @@ class GeminiLiveWebSocketHandlerTest {
         // then
         verify(broadcastGeminiToolCallService, never()).handleToolCall(any(), any(), any());
         verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Gemini 세션 종료 처리 성공 - refresh 요청 상태면 refresh 이벤트를 발행한다")
+    void Gemini_세션_종료_처리_성공_refresh_event_publish() {
+        // given
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        bundle.markRefreshRequested();
+        bundle.incrementRequestFlight();
+
+        // when
+        geminiLiveWebSocketHandler.handleGeminiSessionTerminated(broadcastStreamId, generation, bundle);
+
+        // then
+        assertThat(bundle.getRequestFlightCountValue()).isZero();
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                        return false;
+                    }
+                    return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
+                            && generation == refreshEvent.generation()
+                            && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.SESSION_TERMINATED;
+                }));
+    }
+
+    @Test
+    @DisplayName("Gemini 세션 종료 처리 성공 - refresh 요청 상태가 아니면 refresh 이벤트를 발행하지 않는다")
+    void Gemini_세션_종료_처리_성공_no_event_without_refresh_request() {
+        // given
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.incrementRequestFlight();
+
+        // when
+        geminiLiveWebSocketHandler.handleGeminiSessionTerminated(broadcastStreamId, generation, bundle);
+
+        // then
+        assertThat(bundle.getRequestFlightCountValue()).isZero();
+        verify(applicationEventPublisher, never())
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
     }
 
     private ObjectNode buildTalkingStateFunctionDeclaration() {

@@ -1,10 +1,13 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
-import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionService;
+import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
@@ -15,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.util.HashMap;
@@ -45,10 +49,10 @@ class BroadcastGeminiResponseServiceTest {
     private BroadcastWebSocketVoiceSender broadcastWebSocketVoiceSender;
 
     @Mock
-    private BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private ApplicationEventPublisher applicationEventPublisher;
 
     @Test
-    @DisplayName("handleCompletedTurnAsync 성공 - 유효한 번들과 세션 일치 시 Redis 저장, Compaction, 완료 메타데이터 전송")
+    @DisplayName("handleCompletedTurnAsync 성공 - 유효한 번들과 세션 일치 시 Redis 저장, compaction 이벤트 발행, 완료 메타데이터 전송")
     void handleCompletedTurnAsync_성공() {
         // given
         WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
@@ -82,13 +86,19 @@ class BroadcastGeminiResponseServiceTest {
                 .willReturn(savedInfo);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
 
         // then
         verify(broadcastRedisUtil, times(1))
                 .pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText);
-        verify(broadcastDialogueCompactionService, times(1))
-                .tryStartCompaction(broadcastStreamId);
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
+                    if (!(event instanceof BroadcastCompactionCheckRequestedEvent compactionEvent)) {
+                        return false;
+                    }
+                    return broadcastStreamId.equals(compactionEvent.broadcastStreamId())
+                            && compactionEvent.triggerType() == BroadcastCompactionTriggerType.AI_DIALOGUE_STORED;
+                }));
         verify(broadcastWebSocketVoiceSender, times(1))
                 .sendTurnCompleteMetadata(
                         eq(broadcastStreamId),
@@ -108,13 +118,19 @@ class BroadcastGeminiResponseServiceTest {
         String broadcastStreamId = "stream-1";
         long generation = 1L;
         long turnNumber = 1L;
+        BroadcastWebSocketSessionBundle requestOwnerBundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        requestOwnerBundle.incrementRequestFlight();
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, null);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, null, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastDialogueCompactionService, never()).tryStartCompaction(anyString());
+        verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketVoiceSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
     }
@@ -128,13 +144,19 @@ class BroadcastGeminiResponseServiceTest {
         long generation = 1L;
         long turnNumber = 1L;
         String voiceText = "   ";
+        BroadcastWebSocketSessionBundle requestOwnerBundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        requestOwnerBundle.incrementRequestFlight();
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastDialogueCompactionService, never()).tryStartCompaction(anyString());
+        verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketVoiceSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
     }
@@ -148,17 +170,25 @@ class BroadcastGeminiResponseServiceTest {
         long generation = 1L;
         long turnNumber = 1L;
         String voiceText = "안녕하세요";
+        BroadcastWebSocketSessionBundle requestOwnerBundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        requestOwnerBundle.markRefreshRequested();
+        requestOwnerBundle.incrementRequestFlight();
 
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(null);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastDialogueCompactionService, never()).tryStartCompaction(anyString());
         verify(broadcastWebSocketVoiceSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
     }
 
     @Test
@@ -181,11 +211,11 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastDialogueCompactionService, never()).tryStartCompaction(anyString());
+        verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketVoiceSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
     }
@@ -213,11 +243,11 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastDialogueCompactionService, never()).tryStartCompaction(anyString());
+        verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketVoiceSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
     }
@@ -359,5 +389,106 @@ class BroadcastGeminiResponseServiceTest {
         // then
         verify(broadcastWebSocketVoiceSender, never())
                 .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("handleGeminiTurnFinished 성공 - refresh 요청 상태이며 in-flight가 0이면 refresh 이벤트를 발행한다")
+    void handleGeminiTurnFinished_성공_refresh_event_publish() {
+        // given
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        bundle.markRefreshRequested();
+        bundle.incrementRequestFlight();
+
+        // when
+        service.handleGeminiTurnFinished(broadcastStreamId, generation, bundle);
+
+        // then
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                        return false;
+                    }
+                    return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
+                            && generation == refreshEvent.generation()
+                            && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.TURN_FINISHED;
+                }));
+    }
+
+    @Test
+    @DisplayName("handleGeminiTurnFinished 성공 - in-flight가 남아 있으면 refresh 이벤트를 발행하지 않는다")
+    void handleGeminiTurnFinished_성공_no_event_when_inflight_remaining() {
+        // given
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(generation)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        bundle.markRefreshRequested();
+        bundle.incrementRequestFlight();
+        bundle.incrementRequestFlight();
+
+        // when
+        service.handleGeminiTurnFinished(broadcastStreamId, generation, bundle);
+
+        // then
+        verify(applicationEventPublisher, never())
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
+    }
+
+    @Test
+    @DisplayName("handleCompletedTurnAsync 성공 - stale completion이어도 request-flight를 감소시키고 refresh 이벤트를 발행한다")
+    void handleCompletedTurnAsync_성공_stale_completion_cleanup() {
+        // given
+        WebSocketSession requestOwnerGeminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        given(requestOwnerGeminiSession.isOpen()).willReturn(true);
+
+        WebSocketSession staleGeminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        BroadcastWebSocketSessionBundle requestOwnerBundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        requestOwnerBundle.registerGeminiSession(requestOwnerGeminiSession);
+        requestOwnerBundle.markRefreshRequested();
+        requestOwnerBundle.incrementRequestFlight();
+
+        BroadcastWebSocketSessionBundle currentBundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(org.mockito.Mockito.mock(WebSocketSession.class))
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.REFRESHING)
+                .build();
+        currentBundle.registerGeminiSession(requestOwnerGeminiSession);
+
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        long turnNumber = 1L;
+        String voiceText = "안녕하세요";
+
+        given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(currentBundle);
+
+        // when
+        service.handleCompletedTurnAsync(staleGeminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
+
+        // then
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastWebSocketVoiceSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                        return false;
+                    }
+                    return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
+                            && generation == refreshEvent.generation()
+                            && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.TURN_FINISHED;
+                }));
     }
 }

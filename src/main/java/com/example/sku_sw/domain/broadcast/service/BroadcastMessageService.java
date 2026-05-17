@@ -2,8 +2,10 @@ package com.example.sku_sw.domain.broadcast.service;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
@@ -11,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRe
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.Locale;
@@ -29,7 +32,7 @@ public class BroadcastMessageService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * 클라이언트 텍스트 메시지를 처리한다.
@@ -44,30 +47,53 @@ public class BroadcastMessageService {
     public void handleClientMessage(String broadcastStreamId, Long generation, String message) {
         log.info("[BroadcastMessageService] handleClientMessage() - START | streamId: {}, generation: {}, message: {}",
                 broadcastStreamId, generation, message);
-
+        /*
+            1. Session Registry에서 broadcastStreamId와 generation 값으로 WebSocket Session Bundle값이 있는지 확인한다.
+            - Bundle이 없다면 예외를 발생시킨다.
+         */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (bundle == null || !bundle.isReady()) {
+        if (bundle == null || !bundle.canAcceptClientMessage()) {
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
         }
 
+        /*
+            2. Session Registry에 해당 방송의 Bundle이 존재한다면, 아래 작업을 수행한다.
+                1) Redis에 저장되어있는 현재 방송을 진행 중인 AI 캐릭터의 정보를 가져온다.
+                2) 클라이언트로부터 받은 텍스트 데이터를 Redis의 현재 방송 진행 정보 List에 저장한다.
+                3) Redis에 있는 현재 방송 진행 정보의 Compact(요약)을 시도한다.
+         */
         BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
         BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, message);
         log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
                 broadcastStreamId, savedUserInfo.cursorId(), message);
-        broadcastDialogueCompactionService.tryStartCompaction(broadcastStreamId);
+        applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
+                .broadcastStreamId(broadcastStreamId)
+                .triggerType(BroadcastCompactionTriggerType.CLIENT_MESSAGE_STORED)
+                .build());
 
+        /*
+            3. 클라이언트 메시지를 정규화한 뒤, 메시지에 AI 캐릭터의 트리거 메시지가 있는지 확인한다.
+            - 메시지에 트리거 메시지가 없는 경우, 아무런 동작 하지 않고 종료
+            - 메시지에 트리거 메시지가 있는 경우, 해당 캐릭터가 말하고 있다고 설정값 변경. 이후 Gemini WebSocket을 통해 요청을 보낸다.
+         */
         String normalizedMessage = normalize(message);
         boolean hasTriggerWord = false;
         if (character.getCharacterTriggerWords() != null) {
             hasTriggerWord = character.getCharacterTriggerWords().stream()
                     .anyMatch(trigger -> normalizedMessage.contains(normalize(trigger)));
         }
-
         Boolean isTalking = character.getIsTalking();
 
         if (!hasTriggerWord && (isTalking == null || !isTalking)) {
             log.info("[BroadcastMessageService] handleClientMessage() - No trigger word and not talking, skipping | streamId: {}", broadcastStreamId);
             log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: skip", broadcastStreamId);
+            return;
+        }
+
+        if (!bundle.canSendToGemini()) {
+            log.info("[BroadcastMessageService] handleClientMessage() - Gemini send blocked during refresh | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
             return;
         }
 
