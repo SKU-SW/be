@@ -5,6 +5,7 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerTy
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -93,6 +94,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         ObjectNode toolNode = toolsNode.addObject();
         ArrayNode functionDeclarationsNode = toolNode.putArray("functionDeclarations");
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
+        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration());
 
         setupNode.putObject("outputAudioTranscription");
 
@@ -123,14 +125,20 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 frameType, session.getId(), payload);
         lastReceivedPayload = payload;
 
+        // 0. Json Tree 생성
         JsonNode rootNode = objectMapper.readTree(payload);
 
+        /*
+            1. Gemini WebSocket Session SetUp 요청이 완료된 경우
+            - 별도의 작업을 수행하지 않고, setup 완료 여부를 결정하는 CompleteFuture 객체를 종료시킨다.
+         */
         if (rootNode.has("setupComplete")) {
             setupCompleteFuture.complete(null);
             log.info("[GeminiLiveWebSocketHandler] handleTextMessage() - Setup complete | sessionId: {}", session.getId());
             return;
         }
 
+        // 2. 에러가 반환되었을 경우 처리
         if (rootNode.has("error")) {
             lastGeminiErrorPayload = payload;
             if (!setupCompleteFuture.isDone()) {
@@ -141,12 +149,24 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
+        /*
+            3. Gemini Response에 Tool Call 결과가 온 경우 처리 (동기적 실행)
+            - true가 반환되는 경우 - set_talking_state 함수가 실행되어 대화 종료
+            - false가 반한되는 경우 - set_response_emotion 함수가 실행되어, 사용자에게 Emotion 메타 데이터 전송
+              (이후 serverContent 또한 정상적으로 클라이언트에게 보낸다.)
+         */
         JsonNode toolCallNode = rootNode.get("toolCall");
         if (toolCallNode != null) {
-            handleToolCall(session, toolCallNode);
-            return;
+            if (handleToolCall(session, toolCallNode)) {
+                return;
+            }
         }
 
+        /*
+            4. Gemini가 생성한 주요 응답 데이터 처리
+            - textChunk, audioChunk를 추출하여 바로 클라이언트에게 보낸다.
+            - 이때, textChunk값은 accumulator에 저장해둔다.
+         */
         JsonNode serverContentNode = rootNode.get("serverContent");
         if (serverContentNode == null) {
             log.debug("[GeminiLiveWebSocketHandler] handleTextMessage() - Non-serverContent message | sessionId: {}, payload: {}",
@@ -165,14 +185,20 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         logServerContentSummary(session, serverContentNode, accumulator.getTurnNumber(), textChunk, audioChunk);
 
         if ((textChunk != null && !textChunk.isBlank()) || audioChunk.length > 0) {
-            dispatchStreamingChunk(session, accumulator.getTurnNumber(), textChunk, audioChunk);
+            dispatchStreamingChunk(session, accumulator.getTurnNumber(), textChunk, audioChunk, accumulator.getEmotion());
         }
 
+        /*
+            5. Gemini가 이번 turn 응답을 종료했다고 신호한 경우 처리
+            - accumulator에 저장해둔 데이터를 모아 CompletedGeminiTurn 객체 생성
+            - 비동기적으로 클라이언트에게 해당 응답 turn의 메타데이터를 보낸다.
+         */
         JsonNode turnCompleteNode = serverContentNode.get("turnComplete");
         if (turnCompleteNode != null && turnCompleteNode.asBoolean(false)) {
             CompletedGeminiTurn completedTurn = new CompletedGeminiTurn(
                     accumulator.getTurnNumber(),
-                    accumulator.getAccumulatedText()
+                    accumulator.getAccumulatedText(),
+                    accumulator.getEmotion()
             );
             clearAccumulator();
 
@@ -183,7 +209,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
-    private void dispatchStreamingChunk(WebSocketSession geminiSession, Long turnNumber, String textChunk, byte[] audioChunk) {
+    private void dispatchStreamingChunk(WebSocketSession geminiSession, Long turnNumber, String textChunk, byte[] audioChunk, Emotion emotion) {
         String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
         if (broadcastStreamId == null) {
             log.warn("[GeminiLiveWebSocketHandler] dispatchStreamingChunk() - Broadcast stream not found | sessionId: {}, turnNumber: {}",
@@ -210,10 +236,17 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 bundle.getGeneration(),
                 turnNumber,
                 textChunk,
-                audioChunk
+                audioChunk,
+                emotion
         );
     }
 
+    /**
+     * Gemini 응답 turn이 완료되었을 때 실행하는 함수
+     * 비동기적으로 클라이언트에게 해당 응답 turn의 메타데이터를 보낸다.
+     * @param geminiSession
+     * @param completedTurn
+     */
     private void dispatchCompletedTurn(WebSocketSession geminiSession, CompletedGeminiTurn completedTurn) {
         String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
         if (broadcastStreamId == null) {
@@ -241,7 +274,45 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 bundle.getGeneration(),
                 completedTurn.turnNumber(),
                 completedTurn.accumulatedText(),
+                completedTurn.emotion(),
                 bundle
+        );
+    }
+
+    /**
+     * Gemini Response에 Emotion이 왔을 때 수행할 작업
+     * - 해당 gemini Session에 해당하는 bundle을 조회하고 클라이언트에게 감정 데이터를 보낸다.
+     * @param geminiSession
+     * @param turnNumber
+     * @param emotion
+     */
+    private void dispatchEmotionUpdate(WebSocketSession geminiSession, Long turnNumber, Emotion emotion) {
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
+        if (broadcastStreamId == null) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchEmotionUpdate() - Broadcast stream not found | sessionId: {}, turnNumber: {}",
+                    geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || !bundle.canProcessGeminiResponse()) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchEmotionUpdate() - Bundle not ready | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        if (bundle.getGeminiSession() != geminiSession) {
+            log.warn("[GeminiLiveWebSocketHandler] dispatchEmotionUpdate() - Gemini session mismatch | streamId: {}, sessionId: {}, turnNumber: {}",
+                    broadcastStreamId, geminiSession.getId(), turnNumber);
+            return;
+        }
+
+        broadcastGeminiResponseService.forwardEmotionUpdate(
+                geminiSession,
+                broadcastStreamId,
+                bundle.getGeneration(),
+                turnNumber,
+                emotion
         );
     }
 
@@ -314,28 +385,47 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return mergedAudioChunk;
     }
 
-    private void handleToolCall(WebSocketSession geminiSession, JsonNode toolCallNode) {
+    private boolean handleToolCall(WebSocketSession geminiSession, JsonNode toolCallNode) {
         String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
         if (broadcastStreamId == null) {
             log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Broadcast stream not found | sessionId: {}",
                     geminiSession.getId());
-            return;
+            return true;
         }
 
+        // 1. Session Bundle 객체 가져오기 & 검증
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
         if (bundle == null || !bundle.canProcessGeminiResponse()) {
             log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Bundle not ready | streamId: {}, sessionId: {}",
                     broadcastStreamId, geminiSession.getId());
-            return;
+            return true;
         }
-
         if (bundle.getGeminiSession() != geminiSession) {
             log.warn("[GeminiLiveWebSocketHandler] handleToolCall() - Gemini session mismatch | streamId: {}, sessionId: {}",
                     broadcastStreamId, geminiSession.getId());
-            return;
+            return true;
         }
 
-        broadcastGeminiToolCallService.handleToolCall(geminiSession, broadcastStreamId, toolCallNode);
+        // 2. Tool Call을 처리한 결과를 담은 DTO 객체를 가져온다. 해당 Tool Call 처리는 동기적으로 수행된다.
+        BroadcastGeminiToolCallService.ToolCallHandleResult result = broadcastGeminiToolCallService.handleToolCall(
+                geminiSession,
+                broadcastStreamId,
+                toolCallNode
+        );
+        /*
+            3. Tool Call 처리 결과에 Emotion 처리 결과가 있는 경우
+            - accumulator에 emotion 결과를 설정 (결과에 emotion이 없는 경우 DEFAULT로 fallback 설정
+            - 해당 Gemini 응답에 Emotion이 왔을 때 수행할 작업을 수행한다.(해당 gemini Session에 해당하는 bundle을 조회하고 클라이언트에게 감정 데이터를 보낸다)
+         */
+        if (result.responseEmotionHandled()) {
+            GeminiTurnAccumulator accumulator = getOrCreateTurnAccumulator();
+            Emotion resolvedEmotion = result.emotion() == null ? Emotion.DEFAULT : result.emotion();
+            accumulator.updateEmotion(resolvedEmotion);
+            dispatchEmotionUpdate(geminiSession, accumulator.getTurnNumber(), resolvedEmotion);
+            return false;
+        }
+
+        return result.talkingStateHandled();
     }
 
     private void logServerContentSummary(
@@ -491,13 +581,15 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
 
     public record CompletedGeminiTurn(
             Long turnNumber,
-            String accumulatedText
+            String accumulatedText,
+            Emotion emotion
     ) {
     }
 
     public static class GeminiTurnAccumulator {
         private final Long turnNumber;
         private final StringBuilder accumulatedText = new StringBuilder();
+        private Emotion emotion = Emotion.TALKING;
 
         public GeminiTurnAccumulator(Long turnNumber) {
             this.turnNumber = turnNumber;
@@ -507,12 +599,20 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             accumulatedText.append(text);
         }
 
+        public void updateEmotion(Emotion emotion) {
+            this.emotion = emotion == null ? Emotion.DEFAULT : emotion;
+        }
+
         public Long getTurnNumber() {
             return turnNumber;
         }
 
         public String getAccumulatedText() {
             return accumulatedText.toString();
+        }
+
+        public Emotion getEmotion() {
+            return emotion;
         }
     }
 }

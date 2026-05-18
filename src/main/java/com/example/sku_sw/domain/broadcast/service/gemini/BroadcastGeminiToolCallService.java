@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -10,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+
+import java.util.Arrays;
 
 /**
  * Gemini Live Tool Call 처리 서비스
@@ -26,7 +29,9 @@ public class BroadcastGeminiToolCallService {
     private static final String TOOL_RESPONSE = "toolResponse";
 
     private static final String FUNCTION_SET_TALKING_STATE = "set_talking_state";
+    private static final String FUNCTION_SET_RESPONSE_EMOTION = "set_response_emotion";
     private static final String ARG_IS_TALKING = "isTalking";
+    private static final String ARG_EMOTION = "emotion";
 
     private static final String FIELD_ID = "id";
     private static final String FIELD_NAME = "name";
@@ -77,6 +82,48 @@ public class BroadcastGeminiToolCallService {
     }
 
     /**
+     * Gemini setup payload에 포함할 response emotion function declaration을 생성한다.
+     * @return : response emotion function declaration JSON
+     */
+    public ObjectNode buildResponseEmotionFunctionDeclaration() {
+        log.info("[BroadcastGeminiToolCallService] buildResponseEmotionFunctionDeclaration() - START");
+
+        /*
+            1. Function declaration 기본 정보 생성
+            - Gemini Live setup payload에 포함할 함수명과 설명을 정의한다.
+         */
+        ObjectNode functionDeclarationNode = objectMapper.createObjectNode();
+        functionDeclarationNode.put(FIELD_NAME, FUNCTION_SET_RESPONSE_EMOTION);
+        functionDeclarationNode.put(
+                "description",
+                "Set the current response emotion before generating the spoken answer."
+        );
+
+        /*
+            2. Function parameter schema 생성
+            - emotion string 파라미터와 enum, required 조건을 추가한다.
+         */
+        ObjectNode parametersNode = functionDeclarationNode.putObject("parameters");
+        parametersNode.put("type", "object");
+
+        ObjectNode propertiesNode = parametersNode.putObject("properties");
+        ObjectNode emotionNode = propertiesNode.putObject(ARG_EMOTION);
+        emotionNode.put("type", "string");
+        emotionNode.put("description", "Emotion enum for the current spoken answer.");
+        ArrayNode emotionEnumNode = emotionNode.putArray("enum");
+        Arrays.stream(Emotion.values())
+                .map(Enum::name)
+                .forEach(emotionEnumNode::add);
+
+        ArrayNode requiredNode = parametersNode.putArray("required");
+        requiredNode.add(ARG_EMOTION);
+
+        log.info("[BroadcastGeminiToolCallService] buildResponseEmotionFunctionDeclaration() - END | functionName: {}",
+                FUNCTION_SET_RESPONSE_EMOTION);
+        return functionDeclarationNode;
+    }
+
+    /**
      * Gemini Live에서 반환한 toolCall을 처리한다.
      * - functionCalls 배열을 순회하면서 지원하는 함수만 처리한다.
      * - 처리 결과는 Gemini Live로 toolResponse 형태로 반환한다.
@@ -84,7 +131,7 @@ public class BroadcastGeminiToolCallService {
      * @param broadcastStreamId : 방송 스트림 ID
      * @param toolCallNode : Gemini toolCall payload
      */
-    public void handleToolCall(WebSocketSession geminiSession, String broadcastStreamId, JsonNode toolCallNode) {
+    public ToolCallHandleResult handleToolCall(WebSocketSession geminiSession, String broadcastStreamId, JsonNode toolCallNode) {
         log.info("[BroadcastGeminiToolCallService] handleToolCall() - START | streamId: {}", broadcastStreamId);
 
         /*
@@ -94,7 +141,7 @@ public class BroadcastGeminiToolCallService {
         JsonNode functionCallsNode = toolCallNode.get(FUNCTION_CALLS);
         if (functionCallsNode == null || !functionCallsNode.isArray() || functionCallsNode.isEmpty()) {
             log.warn("[BroadcastGeminiToolCallService] handleToolCall() - Empty functionCalls | streamId: {}", broadcastStreamId);
-            return;
+            return ToolCallHandleResult.none();
         }
 
         /*
@@ -102,12 +149,23 @@ public class BroadcastGeminiToolCallService {
             - set_talking_state는 전용 메서드로 위임하고, 그 외 함수는 실패 응답을 반환한다.
          */
         int processedCount = 0;
+        boolean talkingStateHandled = false;
+        boolean responseEmotionHandled = false;
+        Emotion resolvedEmotion = null;
         for (JsonNode functionCallNode : functionCallsNode) {
             String functionCallId = extractTextField(functionCallNode, FIELD_ID);
             String functionName = extractTextField(functionCallNode, FIELD_NAME);
 
             if (FUNCTION_SET_TALKING_STATE.equals(functionName)) {
                 handleSetTalkingStateFunctionCall(geminiSession, broadcastStreamId, functionCallNode);
+                talkingStateHandled = true;
+                processedCount += 1;
+                continue;
+            }
+
+            if (FUNCTION_SET_RESPONSE_EMOTION.equals(functionName)) {
+                resolvedEmotion = handleSetResponseEmotionFunctionCall(geminiSession, broadcastStreamId, functionCallNode);
+                responseEmotionHandled = true;
                 processedCount += 1;
                 continue;
             }
@@ -125,6 +183,7 @@ public class BroadcastGeminiToolCallService {
 
         log.info("[BroadcastGeminiToolCallService] handleToolCall() - END | streamId: {}, processedCount: {}",
                 broadcastStreamId, processedCount);
+        return new ToolCallHandleResult(talkingStateHandled, responseEmotionHandled, resolvedEmotion);
     }
 
     /**
@@ -202,6 +261,54 @@ public class BroadcastGeminiToolCallService {
     }
 
     /**
+     * set_response_emotion function call을 처리한다.
+     * - args.emotion 값을 파싱한다.
+     * - 유효하지 않은 값이면 DEFAULT로 fallback한다.
+     * - 처리 결과는 Gemini Live로 toolResponse를 전송한다.
+     * @param geminiSession : Gemini WebSocket Session
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param functionCallNode : 단건 function call payload
+     * @return : 검증 완료된 emotion 값
+     */
+    private Emotion handleSetResponseEmotionFunctionCall(
+            WebSocketSession geminiSession,
+            String broadcastStreamId,
+            JsonNode functionCallNode
+    ) {
+        String functionCallId = extractTextField(functionCallNode, FIELD_ID);
+        log.info("[BroadcastGeminiToolCallService] handleSetResponseEmotionFunctionCall() - START | streamId: {}, functionCallId: {}",
+                broadcastStreamId, functionCallId);
+
+        /*
+            1. Function args 파싱 및 검증
+            - args.emotion 문자열을 읽고 Emotion enum으로 변환한다.
+            - 유효하지 않은 값이면 DEFAULT로 fallback한다.
+         */
+        JsonNode argsNode = functionCallNode.get(FIELD_ARGS);
+        String emotionRaw = extractTextField(argsNode, ARG_EMOTION);
+        Emotion resolvedEmotion = resolveEmotion(emotionRaw);
+        if (emotionRaw == null) {
+            log.warn("[BroadcastGeminiToolCallService] handleSetResponseEmotionFunctionCall() - Missing emotion arg, fallback DEFAULT | streamId: {}, functionCallId: {}",
+                    broadcastStreamId, functionCallId);
+        }
+
+        /*
+            2. Tool response 성공 응답 전송
+            - fallback 여부와 상관없이 최종 반영값을 기준으로 성공 응답을 반환한다.
+         */
+        sendToolResponse(
+                geminiSession,
+                functionCallId,
+                FUNCTION_SET_RESPONSE_EMOTION,
+                buildEmotionSuccessResponse(resolvedEmotion)
+        );
+
+        log.info("[BroadcastGeminiToolCallService] handleSetResponseEmotionFunctionCall() - END | streamId: {}, functionCallId: {}, emotion: {}",
+                broadcastStreamId, functionCallId, resolvedEmotion);
+        return resolvedEmotion;
+    }
+
+    /**
      * Gemini Live로 toolResponse payload를 전송한다.
      * @param geminiSession : Gemini WebSocket Session
      * @param functionCallId : Gemini function call ID
@@ -245,6 +352,18 @@ public class BroadcastGeminiToolCallService {
         ObjectNode responseBody = objectMapper.createObjectNode();
         responseBody.put(FIELD_SUCCESS, true);
         responseBody.put(ARG_IS_TALKING, isTalking);
+        return responseBody;
+    }
+
+    /**
+     * emotion tool response 성공 body를 생성한다.
+     * @param emotion : 반영된 감정값
+     * @return : 성공 response body
+     */
+    private ObjectNode buildEmotionSuccessResponse(Emotion emotion) {
+        ObjectNode responseBody = objectMapper.createObjectNode();
+        responseBody.put(FIELD_SUCCESS, true);
+        responseBody.put(ARG_EMOTION, emotion.name());
         return responseBody;
     }
 
@@ -297,5 +416,34 @@ public class BroadcastGeminiToolCallService {
 
         String value = fieldNode.asText();
         return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
+     * 문자열 emotion 값을 Emotion enum으로 변환한다.
+     * @param emotionRaw : Gemini가 전달한 emotion 문자열
+     * @return : 검증된 emotion 값, 유효하지 않으면 DEFAULT
+     */
+    private Emotion resolveEmotion(String emotionRaw) {
+        if (emotionRaw == null || emotionRaw.isBlank()) {
+            return Emotion.DEFAULT;
+        }
+
+        try {
+            return Emotion.valueOf(emotionRaw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("[BroadcastGeminiToolCallService] resolveEmotion() - Invalid emotion, fallback DEFAULT | emotionRaw: {}",
+                    emotionRaw);
+            return Emotion.DEFAULT;
+        }
+    }
+
+    public record ToolCallHandleResult(
+            boolean talkingStateHandled,
+            boolean responseEmotionHandled,
+            Emotion emotion
+    ) {
+        public static ToolCallHandleResult none() {
+            return new ToolCallHandleResult(false, false, null);
+        }
     }
 }

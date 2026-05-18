@@ -13,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstr
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -72,6 +74,9 @@ class BroadcastWebSocketStartIntegrationTest {
     private BroadcastGeminiLiveService broadcastGeminiLiveService;
 
     @Mock
+    private GeminiUtil geminiUtil;
+
+    @Mock
     private BroadcastPromptBuilder broadcastPromptBuilder;
 
     private ObjectMapper objectMapper;
@@ -90,9 +95,11 @@ class BroadcastWebSocketStartIntegrationTest {
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiLiveService,
+                geminiUtil,
                 broadcastRedisUtil,
                 broadcastPromptBuilder
         );
+        ReflectionTestUtils.setField(broadcastGeminiBootstrapService, "redisBroadcastDialogueMaxNum", 50);
         broadcastWebSocketHandler = new BroadcastWebSocketHandler(
                 objectMapper,
                 broadcastRedisUtil,
@@ -214,7 +221,7 @@ class BroadcastWebSocketStartIntegrationTest {
 
         // then
         verify(firstClientSession, atLeastOnce()).close(any(CloseStatus.class));
-        verify(broadcastGeminiLiveService, times(1)).closeGeminiSessionQuietly(firstGeminiSession);
+        verify(geminiUtil, times(1)).closeGeminiSessionQuietly(firstGeminiSession);
 
         // 최신 generation만 유지되고, 현재 bundle은 두 번째 Gemini 세션으로 READY 상태여야 한다.
         BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID);

@@ -8,6 +8,7 @@ import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRespons
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -63,6 +64,7 @@ class GeminiLiveWebSocketHandlerTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         lenient().when(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration()).thenReturn(buildTalkingStateFunctionDeclaration());
+        lenient().when(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration()).thenReturn(buildResponseEmotionFunctionDeclaration());
         geminiLiveWebSocketHandler = new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
@@ -96,12 +98,13 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("generationConfig").get("responseModalities").get(0).asText()).isEqualTo("AUDIO");
         assertThat(setupNode.get("systemInstruction").get("parts").get(0).get("text").asText()).isEqualTo(SYSTEM_PROMPT);
         assertThat(setupNode.get("tools")).hasSize(1);
-        assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(1);
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(2);
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0).get("name").asText()).isEqualTo("set_talking_state");
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
                 .get("parameters").get("properties").get("isTalking").get("type").asText()).isEqualTo("boolean");
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
                 .get("parameters").get("properties").get("isTalking").get("enum")).isNull();
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(1).get("name").asText()).isEqualTo("set_response_emotion");
         assertThat(setupNode.has("outputAudioTranscription")).isTrue();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
         assertThat(geminiLiveWebSocketHandler.getSetupFailureDiagnostics()).contains("lastSentSetupPayload=");
@@ -177,7 +180,8 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(1L),
                 eq(1L),
                 eq("안녕"),
-                aryEq(new byte[0])
+                aryEq(new byte[0]),
+                eq(Emotion.TALKING)
         );
 
         verify(broadcastGeminiResponseService, times(1)).forwardStreamingChunk(
@@ -186,7 +190,8 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(1L),
                 eq(1L),
                 eq("하세요"),
-                aryEq("audio".getBytes(StandardCharsets.UTF_8))
+                aryEq("audio".getBytes(StandardCharsets.UTF_8)),
+                eq(Emotion.TALKING)
         );
 
         assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
@@ -196,6 +201,7 @@ class GeminiLiveWebSocketHandlerTest {
                 eq(1L),
                 eq(1L),
                 eq("안녕하세요"),
+                eq(Emotion.TALKING),
                 eq(bundle)
         );
     }
@@ -227,8 +233,8 @@ class GeminiLiveWebSocketHandlerTest {
 
         // then
         assertThat(geminiLiveWebSocketHandler.getTurnAccumulator()).isNull();
-        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -288,6 +294,9 @@ class GeminiLiveWebSocketHandlerTest {
                 }
                 """;
 
+        given(broadcastGeminiToolCallService.handleToolCall(eq(geminiSession), eq("stream-1"), any()))
+                .willReturn(new BroadcastGeminiToolCallService.ToolCallHandleResult(true, false, null));
+
         // when
         geminiLiveWebSocketHandler.handleTextMessage(
                 geminiSession,
@@ -299,8 +308,8 @@ class GeminiLiveWebSocketHandlerTest {
         verify(broadcastGeminiToolCallService, times(1)).handleToolCall(eq(geminiSession), eq("stream-1"), captor.capture());
         assertThat(captor.getValue().get("functionCalls")).hasSize(1);
         assertThat(captor.getValue().get("functionCalls").get(0).get("name").asText()).isEqualTo("set_talking_state");
-        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -328,15 +337,72 @@ class GeminiLiveWebSocketHandlerTest {
                 """;
 
         // when
-        geminiLiveWebSocketHandler.handleTextMessage(
-                geminiSession,
-                new TextMessage(payload)
-        );
+        geminiLiveWebSocketHandler.handleTextMessage(geminiSession, new TextMessage(payload));
 
         // then
         verify(broadcastGeminiToolCallService, never()).handleToolCall(any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any());
-        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Gemini emotion toolCall 수신 성공 - 감정 업데이트를 전달하고 이후 스트리밍은 계속 처리한다")
+    void Gemini_emotion_toolCall_수신_성공() throws Exception {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.isOpen()).willReturn(true);
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+
+        String emotionPayload = """
+                {
+                  "toolCall": {
+                    "functionCalls": [
+                      {
+                        "id": "fc-456",
+                        "name": "set_response_emotion",
+                        "args": {
+                          "emotion": "HAPPY"
+                        }
+                      }
+                    ]
+                  }
+                }
+                """;
+        String contentPayload = """
+                {
+                  "serverContent": {
+                    "outputTranscription": {
+                      "text": "안녕"
+                    }
+                  }
+                }
+                """;
+
+        given(broadcastGeminiToolCallService.handleToolCall(eq(geminiSession), eq("stream-1"), any()))
+                .willReturn(new BroadcastGeminiToolCallService.ToolCallHandleResult(false, true, Emotion.HAPPY));
+
+        // when
+        geminiLiveWebSocketHandler.handleTextMessage(geminiSession, new TextMessage(emotionPayload));
+        geminiLiveWebSocketHandler.handleTextMessage(geminiSession, new TextMessage(contentPayload));
+
+        // then
+        verify(broadcastGeminiResponseService, times(1))
+                .forwardEmotionUpdate(geminiSession, "stream-1", 1L, 1L, Emotion.HAPPY);
+        verify(broadcastGeminiResponseService, times(1))
+                .forwardStreamingChunk(geminiSession, "stream-1", 1L, 1L, "안녕", new byte[0], Emotion.HAPPY);
     }
 
     @Test
@@ -359,10 +425,11 @@ class GeminiLiveWebSocketHandlerTest {
         // then
         assertThat(bundle.getRequestFlightCountValue()).isZero();
         verify(applicationEventPublisher, times(1))
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
-                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent)) {
                         return false;
                     }
+                    BroadcastGeminiRefreshRequestedEvent refreshEvent = (BroadcastGeminiRefreshRequestedEvent) event;
                     return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
                             && generation == refreshEvent.generation()
                             && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.SESSION_TERMINATED;
@@ -388,7 +455,7 @@ class GeminiLiveWebSocketHandlerTest {
         // then
         assertThat(bundle.getRequestFlightCountValue()).isZero();
         verify(applicationEventPublisher, never())
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> event instanceof BroadcastGeminiRefreshRequestedEvent));
     }
 
     private ObjectNode buildTalkingStateFunctionDeclaration() {
@@ -405,6 +472,23 @@ class GeminiLiveWebSocketHandlerTest {
         isTalkingNode.put("description", "Whether the AI character should remain in talking mode.");
 
         parametersNode.putArray("required").add("isTalking");
+        return functionDeclarationNode;
+    }
+
+    private ObjectNode buildResponseEmotionFunctionDeclaration() {
+        ObjectNode functionDeclarationNode = objectMapper.createObjectNode();
+        functionDeclarationNode.put("name", "set_response_emotion");
+        functionDeclarationNode.put("description", "Set the current response emotion before generating the spoken answer.");
+
+        ObjectNode parametersNode = functionDeclarationNode.putObject("parameters");
+        parametersNode.put("type", "object");
+
+        ObjectNode propertiesNode = parametersNode.putObject("properties");
+        ObjectNode emotionNode = propertiesNode.putObject("emotion");
+        emotionNode.put("type", "string");
+        emotionNode.putArray("enum").add("DEFAULT").add("TALKING").add("HAPPY").add("ANGRY").add("TIRED").add("SAD").add("FEAR");
+
+        parametersNode.putArray("required").add("emotion");
         return functionDeclarationNode;
     }
 }

@@ -42,12 +42,12 @@ public class BroadcastGeminiRefreshService {
     private final BroadcastPromptBuilder broadcastPromptBuilder;
     private final GeminiUtil geminiUtil;
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
-    @Lazy
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
 
     /**
      * compaction 완료 이후 Gemini refresh를 요청한다.
-     * - refresh 상태로 전환하고, in-flight가 없으면 즉시 refresh를 시작한다.
+     * - refresh 상태로 전환하고, request-flight값이 0이면 즉시 refresh를 시작한다.
+     * - 만약
      * @param broadcastStreamId : 방송 스트림 ID
      */
     public void requestRefreshAfterCompaction(String broadcastStreamId) {
@@ -67,9 +67,10 @@ public class BroadcastGeminiRefreshService {
         bundle.updateStatus(WebSocketSessionBundleStatus.REFRESHING);
 
         /*
-            2. 현재 in-flight 요청 수를 확인한다.
+            2. 현재 request-flight 요청 수를 확인한다.
             - Gemini 응답 처리 중이 아니면 즉시 refresh를 시작한다.
             - 응답 처리 중이면 마지막 turn 종료 시점에 refresh가 시작된다.
+              (각 Gemini 응답 종료 시점에 재검사가 실행된다. - BroadcastGeminiResponseService.handleCompletedTurnAsync())
          */
         if (bundle.getRequestFlightCountValue() == 0) {
             tryStartRefresh(broadcastStreamId, bundle.getGeneration());
@@ -90,7 +91,7 @@ public class BroadcastGeminiRefreshService {
     }
 
     /**
-     * Gemini in-flight 요청이 모두 종료되었을 때 refresh 시작을 시도한다.
+     * Gemini request-flight 요청이 모두 종료되었을 때 refresh 시작을 시도한다.
      * @param broadcastStreamId : 방송 스트림 ID
      * @param generation : 현재 세션 generation
      */
@@ -116,25 +117,27 @@ public class BroadcastGeminiRefreshService {
             return;
         }
 
-        /*
-            2. refresh snapshot을 확보하고 신규 Gemini bootstrap을 시작한다.
-            - snapshotCursor를 저장하여 refresh 이후 삭제 범위를 고정한다.
-            - snapshot 기반 prompt를 생성한 뒤 신규 Gemini 연결을 시도한다.
-         */
         try {
+            /*
+                2. refresh snapshot을 확보하고 신규 Gemini Session bootstrap(초기화)을 시작한다.
+                - 해당 순간의 Redis snapshotCursor를 저장하여 refresh 이후 삭제 범위를 고정한다.
+            */
             BroadcastDialogueRefreshSnapshotDto snapshot = broadcastRedisUtil.getRefreshSnapshot(
                     broadcastStreamId,
                     redisBroadcastDialogueMaxNum
             );
             bundle.updateRefreshSnapshotCursorId(snapshot.snapshotCursorId());
 
+            /*
+                3. snapshot 데이터를 기반으로 prompt를 생성해 신규 Gemini Session 연결을 시도한다.
+                - setup이 완료된 Gemini Session을 반환받으면, 해당 Session 객체를 사용해 Refresh 성공 시의 후처리 작업을 수행한다.
+             */
             BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
             String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(
                     character,
                     snapshot.summary(),
                     snapshot.dialogues()
             );
-
             WebSocketSession oldGeminiSession = bundle.getGeminiSession();
             broadcastGeminiBootstrapService.bootstrapGeminiForRefreshAsync(broadcastStreamId, generation, systemPrompt)
                     .thenAccept(newGeminiSession -> handleRefreshSuccess(
