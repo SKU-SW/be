@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.websocket;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastVoiceMetadataResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastVoiceEventType;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,7 @@ import java.nio.ByteBuffer;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class BroadcastWebSocketVoiceSender {
+public class BroadcastWebSocketSender {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
@@ -35,6 +36,7 @@ public class BroadcastWebSocketVoiceSender {
      * @param characterId : 캐릭터 ID
      * @param turnNumber : Gemini 응답 turn 번호
      * @param voiceText : 음성 텍스트 청크
+     * @param emotion : 응답 감정값
      */
     public void sendVoiceChunkWithMetadata(
             String broadcastStreamId,
@@ -42,13 +44,15 @@ public class BroadcastWebSocketVoiceSender {
             byte[] voiceData,
             Long characterId,
             Long turnNumber,
-            String voiceText
+            String voiceText,
+            Emotion emotion
     ) {
         BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.builder()
                 .eventType(BroadcastVoiceEventType.VOICE_CHUNK)
                 .turnNumber(turnNumber)
                 .characterId(characterId)
                 .voiceText(voiceText)
+                .emotion(emotion)
                 .broadcastDialogueCursorId(null)
                 .build();
 
@@ -64,6 +68,7 @@ public class BroadcastWebSocketVoiceSender {
      * @param characterId : 캐릭터 ID
      * @param turnNumber : Gemini 응답 turn 번호
      * @param voiceText : 누적된 텍스트 데이터
+     * @param emotion : 응답 감정값
      * @param broadcastDialogueCursorId : BroadcastInfo Cursor ID
      */
     public void sendTurnCompleteMetadata(
@@ -72,6 +77,7 @@ public class BroadcastWebSocketVoiceSender {
             Long characterId,
             Long turnNumber,
             String voiceText,
+            Emotion emotion,
             Long broadcastDialogueCursorId
     ) {
         BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.builder()
@@ -79,10 +85,32 @@ public class BroadcastWebSocketVoiceSender {
                 .turnNumber(turnNumber)
                 .characterId(characterId)
                 .voiceText(voiceText)
+                .emotion(emotion)
                 .broadcastDialogueCursorId(broadcastDialogueCursorId)
                 .build();
 
         sendPayload(broadcastStreamId, generation, null, metadata, "sendTurnCompleteMetadata");
+    }
+
+    /**
+     * 현재 turn의 감정 정보만 클라이언트에게 전송한다.
+     *
+     * @param broadcastStreamId : 대상 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param characterId : 캐릭터 ID
+     * @param turnNumber : Gemini 응답 turn 번호
+     * @param emotion : 응답 감정값
+     */
+    public void sendEmotionMetadata(
+            String broadcastStreamId,
+            Long generation,
+            Long characterId,
+            Long turnNumber,
+            Emotion emotion
+    ) {
+        // voiceText, CursorId 값 없이 감정 정보만 담긴 Dto를 생성하고 클라이언트에게 전송한다.
+        BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.buildEmotionMetadataResDto(turnNumber, characterId, emotion);
+        sendPayload(broadcastStreamId, generation, null, metadata, "sendEmotionMetadata");
     }
 
     private void sendPayload(
@@ -107,18 +135,19 @@ public class BroadcastWebSocketVoiceSender {
                 clientSession.sendMessage(new TextMessage(metadataJson));
             }
 
-            log.info("[BroadcastWebSocketVoiceSender] {}() - Sent | streamId: {}, generation: {}, eventType: {}, turnNumber: {}, cursorId: {}, binarySent: {}, voiceDataLength: {}",
+            log.info("[BroadcastWebSocketSender] {}() - Sent | streamId: {}, generation: {}, eventType: {}, turnNumber: {}, cursorId: {}, emotion: {}, binarySent: {}, voiceDataLength: {}",
                     methodName,
                     broadcastStreamId,
                     generation,
                     metadata.eventType(),
                     metadata.turnNumber(),
                     metadata.broadcastDialogueCursorId(),
+                    metadata.emotion(),
                     binarySent,
                     voiceDataLength);
 
             if (metadata.eventType() == BroadcastVoiceEventType.VOICE_CHUNK && !binarySent) {
-                log.warn("[BroadcastWebSocketVoiceSender] {}() - VOICE_CHUNK metadata sent without audio binary | streamId: {}, generation: {}, turnNumber: {}, textLength: {}",
+                log.warn("[BroadcastWebSocketSender] {}() - VOICE_CHUNK metadata sent without audio binary | streamId: {}, generation: {}, turnNumber: {}, textLength: {}",
                         methodName,
                         broadcastStreamId,
                         generation,
@@ -126,7 +155,7 @@ public class BroadcastWebSocketVoiceSender {
                         metadata.voiceText() == null ? 0 : metadata.voiceText().length());
             }
         } catch (IOException e) {
-            log.error("[BroadcastWebSocketVoiceSender] {}() - Failed to send | streamId: {}, error: {}",
+            log.error("[BroadcastWebSocketSender] {}() - Failed to send | streamId: {}, error: {}",
                     methodName, broadcastStreamId, e.getMessage());
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
         }
@@ -135,14 +164,14 @@ public class BroadcastWebSocketVoiceSender {
     private BroadcastWebSocketSessionBundle getReadyBundle(String broadcastStreamId, Long generation, String methodName) {
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
         if (bundle == null || !bundle.isReady()) {
-            log.warn("[BroadcastWebSocketVoiceSender] {}() - Bundle not ready | streamId: {}, generation: {}",
+            log.warn("[BroadcastWebSocketSender] {}() - Bundle not ready | streamId: {}, generation: {}",
                     methodName, broadcastStreamId, generation);
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
         }
 
         WebSocketSession clientSession = bundle.getClientSession();
         if (clientSession == null || !clientSession.isOpen()) {
-            log.warn("[BroadcastWebSocketVoiceSender] {}() - Session not found or closed | streamId: {}",
+            log.warn("[BroadcastWebSocketSender] {}() - Session not found or closed | streamId: {}",
                     methodName, broadcastStreamId);
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_CONNECTION_NOT_FOUND);
         }

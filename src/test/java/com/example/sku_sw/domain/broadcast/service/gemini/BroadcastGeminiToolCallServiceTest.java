@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -57,6 +58,21 @@ class BroadcastGeminiToolCallServiceTest {
     }
 
     @Test
+    @DisplayName("response emotion function declaration 생성 성공")
+    void response_emotion_function_declaration_생성_성공() {
+        // given
+
+        // when
+        ObjectNode result = broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration();
+
+        // then
+        assertThat(result.get("name").asText()).isEqualTo("set_response_emotion");
+        assertThat(result.get("parameters").get("properties").get("emotion").get("type").asText()).isEqualTo("string");
+        assertThat(result.get("parameters").get("properties").get("emotion").get("enum")).hasSize(Emotion.values().length);
+        assertThat(result.get("parameters").get("required").get(0).asText()).isEqualTo("emotion");
+    }
+
+    @Test
     @DisplayName("set_talking_state false 처리 성공")
     void set_talking_state_false_처리_성공() throws Exception {
         // given
@@ -89,6 +105,73 @@ class BroadcastGeminiToolCallServiceTest {
         assertThat(functionResponseNode.get("name").asText()).isEqualTo("set_talking_state");
         assertThat(functionResponseNode.get("response").get("success").asBoolean()).isTrue();
         assertThat(functionResponseNode.get("response").get("isTalking").asBoolean()).isFalse();
+    }
+
+    @Test
+    @DisplayName("set_response_emotion 처리 성공")
+    void set_response_emotion_처리_성공() throws Exception {
+        // given
+        JsonNode toolCallNode = objectMapper.readTree("""
+                {
+                  "functionCalls": [
+                    {
+                      "id": "fc-456",
+                      "name": "set_response_emotion",
+                      "args": {
+                        "emotion": "HAPPY"
+                      }
+                    }
+                  ]
+                }
+                """);
+
+        // when
+        BroadcastGeminiToolCallService.ToolCallHandleResult result = broadcastGeminiToolCallService.handleToolCall(geminiSession, "stream-1", toolCallNode);
+
+        // then
+        assertThat(result.responseEmotionHandled()).isTrue();
+        assertThat(result.emotion()).isEqualTo(Emotion.HAPPY);
+        verify(broadcastRedisUtil, never()).updateBroadcastCharacterIsTalking(eq("stream-1"), eq(false));
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(geminiSession, times(1)).sendMessage(captor.capture());
+        JsonNode responseNode = objectMapper.readTree(captor.getValue().getPayload());
+        JsonNode functionResponseNode = responseNode.get("toolResponse").get("functionResponses").get(0);
+        assertThat(functionResponseNode.get("name").asText()).isEqualTo("set_response_emotion");
+        assertThat(functionResponseNode.get("response").get("success").asBoolean()).isTrue();
+        assertThat(functionResponseNode.get("response").get("emotion").asText()).isEqualTo("HAPPY");
+    }
+
+    @Test
+    @DisplayName("set_response_emotion 처리 성공 - invalid emotion이면 DEFAULT로 fallback")
+    void set_response_emotion_처리_성공_invalid_emotion_default_fallback() throws Exception {
+        // given
+        JsonNode toolCallNode = objectMapper.readTree("""
+                {
+                  "functionCalls": [
+                    {
+                      "id": "fc-789",
+                      "name": "set_response_emotion",
+                      "args": {
+                        "emotion": "JOYFUL"
+                      }
+                    }
+                  ]
+                }
+                """);
+
+        // when
+        BroadcastGeminiToolCallService.ToolCallHandleResult result = broadcastGeminiToolCallService.handleToolCall(geminiSession, "stream-1", toolCallNode);
+
+        // then
+        assertThat(result.responseEmotionHandled()).isTrue();
+        assertThat(result.emotion()).isEqualTo(Emotion.DEFAULT);
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(geminiSession, times(1)).sendMessage(captor.capture());
+        JsonNode responseNode = objectMapper.readTree(captor.getValue().getPayload());
+        JsonNode functionResponseNode = responseNode.get("toolResponse").get("functionResponses").get(0);
+        assertThat(functionResponseNode.get("response").get("emotion").asText()).isEqualTo("DEFAULT");
     }
 
     @Test

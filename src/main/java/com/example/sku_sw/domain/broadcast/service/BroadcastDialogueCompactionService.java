@@ -175,13 +175,7 @@ public class BroadcastDialogueCompactionService {
 
             // block() 함수로 Mono 객체에 데이터가 올때까지 동기적으로 대기하도록 한다.
             String summaryText = broadcastDialogueSummaryService.summarize(preparedData.summary(), preparedData.dialogues()).block();
-            BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.builder()
-                    .cursorId(0L)
-                    .subject(DialogueSubject.SYSTEM_SUMMARY)
-                    .content(summaryText)
-                    .createdAt(LocalDateTime.now())
-                    .dataStatus(preparedData.summary().dataStatus())
-                    .build();
+            BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.buildSummaryDto(summaryText, preparedData.summary().dataStatus());
 
             broadcastRedisUtil.atomicReplaceSummaryAndDeleteInactive(broadcastStreamId, newSummary);
             broadcastRedisUtil.clearSummaryInProgress(broadcastStreamId);

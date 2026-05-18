@@ -8,6 +8,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -166,6 +167,20 @@ public class BroadcastRedisUtil {
      * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
      */
     public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content) {
+        return pushBroadcastInfo(broadcastStreamId, subject, content, null);
+    }
+
+    /**
+     * 방송 대화 내역을 Redis List에 추가하는 함수
+     * - Key: BroadcastInfo:{broadcastStreamId}
+     * - Value: cursorId와 dataStatus, emotion이 포함된 BroadcastInfoRedisDto JSON (Right Push)
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param subject : 대화 주체
+     * @param content : 대화 내용
+     * @param emotion : 응답 감정값
+     * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
+     */
+    public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content, Emotion emotion) {
         String key = getBroadcastInfoKey(broadcastStreamId);
         ensureSummarySlotExists(broadcastStreamId);
         try {
@@ -174,6 +189,7 @@ public class BroadcastRedisUtil {
                     .cursorId(nextCursorId)
                     .subject(subject)
                     .content(content)
+                    .emotion(emotion)
                     .createdAt(LocalDateTime.now())
                     .dataStatus(BroadcastDataStatus.ACTIVE)
                     .build();
@@ -434,6 +450,7 @@ public class BroadcastRedisUtil {
                     .cursorId(info.cursorId())
                     .subject(info.subject())
                     .content(info.content())
+                    .emotion(info.emotion())
                     .createdAt(info.createdAt())
                     .dataStatus(BroadcastDataStatus.INACTIVE)
                     .build();
@@ -533,6 +550,7 @@ public class BroadcastRedisUtil {
                 .cursorId(SUMMARY_CURSOR_ID)
                 .subject(DialogueSubject.SYSTEM_SUMMARY)
                 .content(summaryContent)
+                .emotion(null)
                 .createdAt(LocalDateTime.now())
                 .dataStatus(BroadcastDataStatus.ACTIVE)
                 .build();

@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum BroadcastVoiceEventType {
     VOICE_CHUNK("VOICE_CHUNK"),
+    VOICE_EMOTION("VOICE_EMOTION"),
     VOICE_TURN_COMPLETE("VOICE_TURN_COMPLETE");
 
     private final String value;

@@ -11,7 +11,8 @@ import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequested
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
-import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketVoiceSender;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSender;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,7 +47,7 @@ class BroadcastGeminiResponseServiceTest {
     private BroadcastWebSocketSessionRegistry sessionRegistry;
 
     @Mock
-    private BroadcastWebSocketVoiceSender broadcastWebSocketVoiceSender;
+    private BroadcastWebSocketSender broadcastWebSocketSender;
 
     @Mock
     private ApplicationEventPublisher applicationEventPublisher;
@@ -74,6 +75,7 @@ class BroadcastGeminiResponseServiceTest {
         long generation = 1L;
         long turnNumber = 1L;
         String voiceText = "안녕하세요";
+        Emotion emotion = Emotion.HAPPY;
 
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
@@ -81,31 +83,34 @@ class BroadcastGeminiResponseServiceTest {
                 .cursorId(100L)
                 .subject(DialogueSubject.AI_CHARACTER)
                 .content(voiceText)
+                .emotion(emotion)
                 .build();
-        given(broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText))
+        given(broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion))
                 .willReturn(savedInfo);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, emotion, bundle);
 
         // then
         verify(broadcastRedisUtil, times(1))
-                .pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText);
+                .pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion);
         verify(applicationEventPublisher, times(1))
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
-                    if (!(event instanceof BroadcastCompactionCheckRequestedEvent compactionEvent)) {
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> {
+                    if (!(event instanceof BroadcastCompactionCheckRequestedEvent)) {
                         return false;
                     }
+                    BroadcastCompactionCheckRequestedEvent compactionEvent = (BroadcastCompactionCheckRequestedEvent) event;
                     return broadcastStreamId.equals(compactionEvent.broadcastStreamId())
                             && compactionEvent.triggerType() == BroadcastCompactionTriggerType.AI_DIALOGUE_STORED;
                 }));
-        verify(broadcastWebSocketVoiceSender, times(1))
+        verify(broadcastWebSocketSender, times(1))
                 .sendTurnCompleteMetadata(
                         eq(broadcastStreamId),
                         eq(generation),
                         eq(42L),
                         eq(turnNumber),
                         eq(voiceText),
+                        eq(emotion),
                         eq(100L)
                 );
     }
@@ -126,13 +131,13 @@ class BroadcastGeminiResponseServiceTest {
         requestOwnerBundle.incrementRequestFlight();
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, null, requestOwnerBundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, null, Emotion.TALKING, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
         verify(applicationEventPublisher, never()).publishEvent(any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
     }
 
     @Test
@@ -152,13 +157,13 @@ class BroadcastGeminiResponseServiceTest {
         requestOwnerBundle.incrementRequestFlight();
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
         verify(applicationEventPublisher, never()).publishEvent(any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
     }
 
     @Test
@@ -181,14 +186,14 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(null);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any(), any());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
         verify(applicationEventPublisher, times(1))
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> event instanceof BroadcastGeminiRefreshRequestedEvent));
     }
 
     @Test
@@ -211,13 +216,13 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, bundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
         verify(applicationEventPublisher, never()).publishEvent(any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
     }
 
     @Test
@@ -243,13 +248,13 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, bundle);
+        service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, bundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
         verify(applicationEventPublisher, never()).publishEvent(any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
     }
 
     @Test
@@ -280,17 +285,18 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk);
+        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk, Emotion.TALKING);
 
         // then
-        verify(broadcastWebSocketVoiceSender, times(1))
+        verify(broadcastWebSocketSender, times(1))
                 .sendVoiceChunkWithMetadata(
                         eq(broadcastStreamId),
                         eq(generation),
                         eq(voiceDataChunk),
                         eq(7L),
                         eq(turnNumber),
-                        eq(voiceTextChunk)
+                        eq(voiceTextChunk),
+                        eq(Emotion.TALKING)
                 );
     }
 
@@ -304,11 +310,11 @@ class BroadcastGeminiResponseServiceTest {
         long turnNumber = 1L;
 
         // when
-        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, null, null);
+        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, null, null, Emotion.TALKING);
 
         // then
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString());
+        verify(broadcastWebSocketSender, never())
+                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -325,11 +331,11 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(null);
 
         // when
-        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk);
+        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk, Emotion.TALKING);
 
         // then
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString());
+        verify(broadcastWebSocketSender, never())
+                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -353,11 +359,11 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk);
+        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk, Emotion.TALKING);
 
         // then
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString());
+        verify(broadcastWebSocketSender, never())
+                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -384,11 +390,41 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
 
         // when
-        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk);
+        service.forwardStreamingChunk(geminiSession, broadcastStreamId, generation, turnNumber, voiceTextChunk, voiceDataChunk, Emotion.TALKING);
 
         // then
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString());
+        verify(broadcastWebSocketSender, never())
+                .sendVoiceChunkWithMetadata(anyString(), anyLong(), any(), any(), anyLong(), anyString(), any());
+
+    }
+
+    @Test
+    @DisplayName("forwardEmotionUpdate 성공 - 유효한 번들과 세션 일치 시 감정 메타데이터를 전송한다")
+    void forwardEmotionUpdate_성공() {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        given(geminiSession.isOpen()).willReturn(true);
+
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        Map<String, Object> clientAttributes = new HashMap<>();
+        clientAttributes.put(WebSocketAttributes.CHARACTER_ID.getValue(), 9L);
+        given(clientSession.getAttributes()).willReturn(clientAttributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+
+        given(sessionRegistry.getSessionBundleIfCurrent("stream-1", 1L)).willReturn(bundle);
+
+        // when
+        service.forwardEmotionUpdate(geminiSession, "stream-1", 1L, 3L, Emotion.HAPPY);
+
+        // then
+        verify(broadcastWebSocketSender, times(1))
+                .sendEmotionMetadata("stream-1", 1L, 9L, 3L, Emotion.HAPPY);
     }
 
     @Test
@@ -410,10 +446,11 @@ class BroadcastGeminiResponseServiceTest {
 
         // then
         verify(applicationEventPublisher, times(1))
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
-                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent)) {
                         return false;
                     }
+                    BroadcastGeminiRefreshRequestedEvent refreshEvent = (BroadcastGeminiRefreshRequestedEvent) event;
                     return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
                             && generation == refreshEvent.generation()
                             && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.TURN_FINISHED;
@@ -440,7 +477,7 @@ class BroadcastGeminiResponseServiceTest {
 
         // then
         verify(applicationEventPublisher, never())
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> event instanceof BroadcastGeminiRefreshRequestedEvent));
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> event instanceof BroadcastGeminiRefreshRequestedEvent));
     }
 
     @Test
@@ -475,17 +512,18 @@ class BroadcastGeminiResponseServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(currentBundle);
 
         // when
-        service.handleCompletedTurnAsync(staleGeminiSession, broadcastStreamId, generation, turnNumber, voiceText, requestOwnerBundle);
+        service.handleCompletedTurnAsync(staleGeminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
         verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
-        verify(broadcastWebSocketVoiceSender, never())
-                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), anyLong());
+        verify(broadcastWebSocketSender, never())
+                .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
         verify(applicationEventPublisher, times(1))
-                .publishEvent(org.mockito.ArgumentMatchers.argThat(event -> {
-                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent refreshEvent)) {
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> {
+                    if (!(event instanceof BroadcastGeminiRefreshRequestedEvent)) {
                         return false;
                     }
+                    BroadcastGeminiRefreshRequestedEvent refreshEvent = (BroadcastGeminiRefreshRequestedEvent) event;
                     return broadcastStreamId.equals(refreshEvent.broadcastStreamId())
                             && generation == refreshEvent.generation()
                             && refreshEvent.triggerType() == BroadcastGeminiRefreshTriggerType.TURN_FINISHED;

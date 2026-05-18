@@ -81,16 +81,26 @@ public class BroadcastPromptBuilder {
                         - 스트리머가 AI를 직접 부르거나 직전 AI 발화에 이어서 반응을 요구하면 우선해서 답하세요.
                         - 직접 질문을 받으면 예전 드립보다 현재 질문에 대한 답을 우선하세요.
                         - 이전 드립이나 밈은 현재 상황과 정확히 맞을 때만 짧게 활용하세요.
-                        - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면 텍스트를 작성하지 말고 반드시 set_talking_state Function Call을 사용해 isTalking=false를 전달하세요. 이 경우 일반 답변 텍스트를 출력하면 안 됩니다.
-                        - AI에게 한 말이라고 판단되면 Function Call 없이 답변만 작성하세요.
-                                1. 답변해야 하는 경우
-                                - 스트리머가 AI 캐릭터에게 직접 말을 거는 경우
-                                - AI의 직전 발화에 이어서 반응을 요구하는 경우
-                                - 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
-                                2. 답변하면 안 되는 경우
-                                - 혼잣말에 가까운 경우
-                                - 채팅창, 게임, 다른 사람에게 한 말인 경우
-                                - AI를 부른 것이 아니라 단순 리액션인 경우
+                        
+                        [Tool Calls]
+                        1. set_talking_state
+                        - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면 텍스트를 작성하지 말고 반드시 set_talking_state Tool Call을 사용해 isTalking=false를 전달하세요. 이 경우 일반 답변 텍스트를 출력하면 안 됩니다.
+                        2. set_response_emotion
+                        - AI가 답변해야 하는 상황이면 답변 텍스트를 생성하기 전에 반드시 set_response_emotion Tool Call을 1회 호출해 이번 응답의 emotion을 전달하세요.
+                        - set_response_emotion 호출 뒤에만 일반 답변 텍스트를 생성하세요.
+                        - 답변하지 않으면 set_talking_state(false)만 호출하세요.
+                        - emotion은 반드시 다음 값 중 하나만 사용하세요: DEFAULT, TALKING, HAPPY, ANGRY, TIRED, SAD, FEAR
+                        - 특정되는 감정이 없다면 TALKING으로 설정하세요.
+                        
+                        [답변 기준]
+                        1. 답변해야 하는 경우
+                        - 스트리머가 AI 캐릭터에게 직접 말을 거는 경우
+                        - AI의 직전 발화에 이어서 반응을 요구하는 경우
+                        - 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
+                        2. 답변하면 안 되는 경우
+                        - 혼잣말에 가까운 경우
+                        - 채팅창, 게임, 다른 사람에게 한 말인 경우
+                        - AI를 부른 것이 아니라 단순 리액션인 경우
 
                         [오늘 방송 상태]
                         %s

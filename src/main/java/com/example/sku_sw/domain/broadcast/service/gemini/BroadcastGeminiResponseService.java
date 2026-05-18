@@ -10,7 +10,8 @@ import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequested
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
-import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketVoiceSender;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSender;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,11 +32,12 @@ public class BroadcastGeminiResponseService {
 
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastWebSocketVoiceSender broadcastWebSocketVoiceSender;
+    private final BroadcastWebSocketSender broadcastWebSocketSender;
     private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * Gemini 응답 청크를 현재 클라이언트에게 즉시 전달한다.
+     * - Emotion 데이터가 있을 시 같이 전달한다.
      *
      * @param geminiSession : 응답을 전달한 Gemini WebSocket 세션
      * @param broadcastStreamId : 방송 스트림 ID
@@ -43,6 +45,7 @@ public class BroadcastGeminiResponseService {
      * @param turnNumber : Gemini 응답 turn 번호
      * @param voiceTextChunk : 이번 payload에서 수신한 텍스트 청크
      * @param voiceDataChunk : 이번 payload에서 수신한 오디오 청크
+     * @param emotion : 현재 응답 감정값
      */
     public void forwardStreamingChunk(
             WebSocketSession geminiSession,
@@ -50,7 +53,8 @@ public class BroadcastGeminiResponseService {
             Long generation,
             Long turnNumber,
             String voiceTextChunk,
-            byte[] voiceDataChunk
+            byte[] voiceDataChunk,
+            Emotion emotion
     ) {
         log.debug("[BroadcastGeminiResponseService] forwardStreamingChunk() - START | streamId: {}, generation: {}, turnNumber: {}",
                 broadcastStreamId, generation, turnNumber);
@@ -69,18 +73,61 @@ public class BroadcastGeminiResponseService {
         Long characterId = resolveCharacterId(bundle);
 
         try {
-            broadcastWebSocketVoiceSender.sendVoiceChunkWithMetadata(
+            broadcastWebSocketSender.sendVoiceChunkWithMetadata(
                     broadcastStreamId,
                     generation,
                     voiceDataChunk,
                     characterId,
                     turnNumber,
-                    voiceTextChunk
+                    voiceTextChunk,
+                    emotion
             );
             log.debug("[BroadcastGeminiResponseService] forwardStreamingChunk() - END | streamId: {}, generation: {}, turnNumber: {}",
                     broadcastStreamId, generation, turnNumber);
         } catch (CustomException e) {
             log.warn("[BroadcastGeminiResponseService] forwardStreamingChunk() - Chunk send failed | streamId: {}, generation: {}, turnNumber: {}, error: {}",
+                    broadcastStreamId, generation, turnNumber, e.getMessage());
+        }
+    }
+
+    /**
+     * Gemini 응답에 emotion 데이터가 왔을 때 emotion 데이터를 클라이언트에게 전송한다.
+     *
+     * @param geminiSession : Emotion 응답을 전달한 Gemini WebSocket 세션
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param turnNumber : Gemini 응답 turn 번호
+     * @param emotion : 현재 응답 감정값
+     */
+    public void forwardEmotionUpdate(
+            WebSocketSession geminiSession,
+            String broadcastStreamId,
+            Long generation,
+            Long turnNumber,
+            Emotion emotion
+    ) {
+        log.info("[BroadcastGeminiResponseService] forwardEmotionUpdate() - START | streamId: {}, generation: {}, turnNumber: {}, emotion: {}",
+                broadcastStreamId, generation, turnNumber, emotion);
+
+        BroadcastWebSocketSessionBundle bundle = getValidatedBundle(geminiSession, broadcastStreamId, generation, "forwardEmotionUpdate");
+        if (bundle == null) {
+            return;
+        }
+
+        Long characterId = resolveCharacterId(bundle);
+
+        try {
+            broadcastWebSocketSender.sendEmotionMetadata(
+                    broadcastStreamId,
+                    generation,
+                    characterId,
+                    turnNumber,
+                    emotion
+            );
+            log.info("[BroadcastGeminiResponseService] forwardEmotionUpdate() - END | streamId: {}, generation: {}, turnNumber: {}, emotion: {}",
+                    broadcastStreamId, generation, turnNumber, emotion);
+        } catch (CustomException e) {
+            log.warn("[BroadcastGeminiResponseService] forwardEmotionUpdate() - Emotion metadata send failed | streamId: {}, generation: {}, turnNumber: {}, error: {}",
                     broadcastStreamId, generation, turnNumber, e.getMessage());
         }
     }
@@ -95,6 +142,7 @@ public class BroadcastGeminiResponseService {
      * @param generation : 현재 세션 generation
      * @param turnNumber : Gemini 응답 turn 번호
      * @param voiceText : Gemini 응답 누적 텍스트
+     * @param emotion : 현재 응답 감정값
      * @param requestOwnerBundle : 요청을 발사했던 세션 번들
      */
     @Async("geminiTurnCompletionExecutor")
@@ -104,6 +152,7 @@ public class BroadcastGeminiResponseService {
             Long generation,
             Long turnNumber,
             String voiceText,
+            Emotion emotion,
             BroadcastWebSocketSessionBundle requestOwnerBundle
     ) {
         log.info("[BroadcastGeminiResponseService] handleCompletedTurnAsync() - START | streamId: {}, generation: {}, turnNumber: {}",
@@ -126,7 +175,8 @@ public class BroadcastGeminiResponseService {
             BroadcastInfoRedisDto savedAiInfo = broadcastRedisUtil.pushBroadcastInfo(
                     broadcastStreamId,
                     DialogueSubject.AI_CHARACTER,
-                    voiceText
+                    voiceText,
+                    emotion
             );
             savedCursorId = savedAiInfo.cursorId();
             applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
@@ -137,12 +187,13 @@ public class BroadcastGeminiResponseService {
             // 2. 응답 데이터를 메타데이터와 함께 Client Session으로 전송한다.
             Long characterId = resolveCharacterId(bundle);
             try {
-                broadcastWebSocketVoiceSender.sendTurnCompleteMetadata(
+                broadcastWebSocketSender.sendTurnCompleteMetadata(
                         broadcastStreamId,
                         generation,
                         characterId,
                         turnNumber,
                         voiceText,
+                        emotion,
                         savedAiInfo.cursorId()
                 );
             } catch (CustomException e) {
