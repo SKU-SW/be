@@ -105,7 +105,7 @@ public class BroadcastDialogueCompactionService {
     }
 
     /**
-     * 비동기적으로 방송 장보를 요약하는 함수
+     * 비동기적으로 방송 정보를 요약하는 함수
      * @param broadcastStreamId 방송 고유 ID
      */
     private void compactInternalAsync(String broadcastStreamId) {
@@ -122,6 +122,7 @@ public class BroadcastDialogueCompactionService {
             /*
                 2. Summary AI 호출 후 summary 반영 + INACTIVE 삭제
                 - summary 응답이 도착하면 Redis 0번 summary를 갱신하고 INACTIVE를 제거한다.
+                - 
              */
             broadcastDialogueSummaryService.summarize(preparedData.summary(), preparedData.dialogues())
                     .subscribeOn(Schedulers.boundedElastic())

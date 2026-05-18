@@ -86,7 +86,7 @@ public class BroadcastGeminiResponseService {
     }
 
     /**
-     * Gemini turn 완료 응답을 비동기로 처리한다.
+     * Gemini 응답에 turnComplete 필드가 돴을 때, 클라이언트에게 메타데이터를 보내는 완료 응답을 비동기로 처리한다.
      * - 현재 Gemini 세션과 일치하는 세션 번들을 검증한 뒤 Redis 저장과 완료 메타데이터 전송을 수행한다.
      * - 누적 텍스트가 비어 있으면 응답을 무시한다.
      *
