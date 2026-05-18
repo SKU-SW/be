@@ -6,7 +6,6 @@ import com.example.sku_sw.global.util.dto.gemini.common.GeminiRequestContentDto;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiRequestPartDto;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiResponseCandidateDto;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiResponsePartDto;
-import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallDto;
 import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallingCandidateDto;
 import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallingConfigDto;
 import com.example.sku_sw.global.util.dto.gemini.functioncall.GeminiFunctionCallingPartDto;
@@ -34,22 +33,25 @@ import java.util.Map;
 public class GeminiUtil {
     private static final String EMPTY_BROADCAST_SUMMARY = "(오늘 방송 요약 없음)";
 
-    private final WebClient webClient;
+    private final WebClient dialogueWebClient;
+    private final WebClient summaryWebClient;
     private final String apiKey;
     private final String dialogueModel;
-    private final String broadcastSummaryModel;
+    private final String summaryModel;
 
     public GeminiUtil(
             @Value("${gemini.api.key}") String apiKey,
             @Value("${gemini.api.dialogue-model}") String dialogueModel,
-            @Value("${gemini.api.broadcast-summary-model}") String broadcastSummaryModel,
-            @Value("${gemini.api.base-url}") String baseUrl,
+            @Value("${gemini.api.summary-model}") String summaryModel,
+            @Value("${gemini.api.dialogue-model-base-url}") String dialogueModelBaseUrl,
+            @Value("${gemini.api.summary-model-base-url}") String summaryModelBaseUrl,
             WebClient.Builder webClientBuilder
     ) {
         this.apiKey = apiKey;
         this.dialogueModel = dialogueModel;
-        this.broadcastSummaryModel = broadcastSummaryModel;
-        this.webClient = webClientBuilder.baseUrl(baseUrl).build();
+        this.summaryModel = summaryModel;
+        this.dialogueWebClient = webClientBuilder.baseUrl(dialogueModelBaseUrl).build();
+        this.summaryWebClient = webClientBuilder.baseUrl(summaryModelBaseUrl).build();
     }
     /**
      * Gemini Function Calling API를 호출하는 함수
@@ -78,7 +80,7 @@ public class GeminiUtil {
                 new GeminiToolConfigDto(new GeminiFunctionCallingConfigDto("AUTO"))
         );
 
-        return webClient.post()
+        return dialogueWebClient.post()
                 .uri("/models/{model}:generateContent?key={key}", dialogueModel, apiKey) // 1. URI 설정
                 .header("Content-Type", "application/json")// 2. 헤더 설정
                 .bodyValue(request) // 3. 요청 본문 설정
@@ -106,8 +108,8 @@ public class GeminiUtil {
                 List.of(new GeminiRequestContentDto(List.of(new GeminiRequestPartDto(prompt))))
         );
 
-        return webClient.post()
-                .uri("/models/{model}:generateContent?key={key}", broadcastSummaryModel, apiKey)
+        return summaryWebClient.post()
+                .uri("/models/{model}:generateContent?key={key}", summaryModel, apiKey)
                 .header("Content-Type", "application/json")
                 .bodyValue(request)
                 .retrieve()
