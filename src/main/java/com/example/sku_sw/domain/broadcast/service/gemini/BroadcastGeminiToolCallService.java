@@ -335,6 +335,7 @@ public class BroadcastGeminiToolCallService {
             functionResponseNode.put(FIELD_ID, functionCallId);
             functionResponseNode.put(FIELD_NAME, functionName);
             functionResponseNode.set(FIELD_RESPONSE, responseBody);
+//            functionResponseNode.put("scheduling", "SILENT");
 
             geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(rootNode)));
         } catch (Exception e) {

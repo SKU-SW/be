@@ -25,8 +25,7 @@ public class GlobalExceptionHandler {
         BaseErrorCode baseErrorCode = e.getErrorCode();
 
         // 2. Custom 오류가 발생했다는 로그와 해당 예외로 설정해둔 Error Code를 로깅한다.
-        log.error("Custom 오류 발생: {}", e.getErrorCode());
-
+        log.error("[GlobalExceptionHandler] handleCustomException - message: {}", e.getErrorCode());
 
         // 3. ResponseEntity 객체에 baseErrorCode의 status를 설정해주고, body에는 GlobalResponse 클래스의 "error()" 함수로 error 내용을 담은 객체를 넣어준다.
         return ResponseEntity
@@ -37,6 +36,7 @@ public class GlobalExceptionHandler {
     // 비즈니스 로직 예외 처리
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<GlobalResponse<?>> handleIllegalArgumentException(IllegalArgumentException e){
+        log.error("[GlobalExceptionHandler] handleIllegalArgumentException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(GlobalResponse.error(400, e.getMessage()));
@@ -45,6 +45,7 @@ public class GlobalExceptionHandler {
     // MethodArgumentNotValidException: 함수 인자의 @Valid를 할 때, 맞지 않는 형식이 있을 때 발생하는 에러
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<GlobalResponse<?>> handleMethodArgumentNotValidException(MethodArgumentNotValidException e){
+        log.error("[GlobalExceptionHandler] handleMethodArgumentNotValidException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(GlobalResponse.error(400, e.getMessage()));
@@ -54,6 +55,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<GlobalResponse<?>> handleMissingServletRequestParameterException(
             MissingServletRequestParameterException e) {
+        log.error("[GlobalExceptionHandler] handleMissingServletRequestParameterException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(GlobalResponse.error(400, e.getMessage()));
@@ -63,7 +65,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<GlobalResponse<?>> handleMethodArgumentTypeMismatchException(
             MethodArgumentTypeMismatchException e) {
-        log.warn("파라미터 타입 불일치: {}", e.getMessage());
+        log.error("[GlobalExceptionHandler] handleMethodArgumentTypeMismatchException - message: {}", e.getMessage());
         String message = String.format("'%s' 파라미터의 값 '%s'이(가) 올바르지 않습니다.", e.getName(), e.getValue());
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
@@ -74,7 +76,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<GlobalResponse<?>> handleHttpRequestMethodNotSupportedException(
             HttpRequestMethodNotSupportedException e) {
-        log.warn("지원하지 않는 HTTP 메서드: {}", e.getMessage());
+        log.error("[GlobalExceptionHandler] handleHttpRequestMethodNotSupportedException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(GlobalResponse.error(405, "지원하지 않는 HTTP 메서드입니다: " + e.getMethod()));
@@ -84,7 +86,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<GlobalResponse<?>> handleHttpMediaTypeNotSupportedException(
             HttpMediaTypeNotSupportedException e) {
-        log.warn("지원하지 않는 Content-Type: {}", e.getMessage());
+        log.error("[GlobalExceptionHandler] handleHttpMediaTypeNotSupportedException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(GlobalResponse.error(415, "지원하지 않는 Content-Type입니다: " + e.getContentType()));
@@ -93,7 +95,7 @@ public class GlobalExceptionHandler {
     // 존재하지 않는 URL
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<GlobalResponse<?>> handleNoResourceFoundException(NoResourceFoundException e) {
-        log.warn("존재하지 않는 URL: {}", e.getMessage());
+        log.error("[GlobalExceptionHandler] handleNoResourceFoundException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
                 .body(GlobalResponse.error(404, "요청한 리소스를 찾을 수 없습니다."));
@@ -102,6 +104,7 @@ public class GlobalExceptionHandler {
     // Exception 최후의 보루 예외 처리
     @ExceptionHandler(Exception.class)
     public ResponseEntity<GlobalResponse<?>> handleException(Exception e){
+        log.error("[GlobalExceptionHandler] handleException - message: {}", e.getMessage());
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(GlobalResponse.error(500, e.getMessage()));

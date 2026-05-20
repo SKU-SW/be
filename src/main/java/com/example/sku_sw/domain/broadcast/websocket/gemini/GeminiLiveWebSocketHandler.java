@@ -93,7 +93,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         ArrayNode toolsNode = setupNode.putArray("tools");
         ObjectNode toolNode = toolsNode.addObject();
         ArrayNode functionDeclarationsNode = toolNode.putArray("functionDeclarations");
-        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
+//        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration());
 
         setupNode.putObject("outputAudioTranscription");
@@ -150,7 +150,16 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         /*
-            3. Gemini Response에 Tool Call 결과가 온 경우 처리 (동기적 실행)
+            3. Gemini가 발신한 sessionResumptionUpdate는 무시 처리한다.
+            - setup payload에 sessionResumption 필드를 포함하지 않았음에도 native-audio 모델은 주기적으로 발신한다.
+            - 서버에서 handle을 저장/재사용하지 않으므로 동작상 무해하지만, 로그 노이즈를 줄이기 위해 조기 종료한다.
+         */
+        if (rootNode.has("sessionResumptionUpdate")) {
+            return;
+        }
+
+        /*
+            4. Gemini Response에 Tool Call 결과가 온 경우 처리 (동기적 실행)
             - true가 반환되는 경우 - set_talking_state 함수가 실행되어 대화 종료
             - false가 반한되는 경우 - set_response_emotion 함수가 실행되어, 사용자에게 Emotion 메타 데이터 전송
               (이후 serverContent 또한 정상적으로 클라이언트에게 보낸다.)
