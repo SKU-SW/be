@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import lombok.Builder;
 import lombok.Getter;
 import org.springframework.web.socket.WebSocketSession;
@@ -30,6 +31,7 @@ public class BroadcastWebSocketSessionBundle {
     @Builder.Default
     private final AtomicInteger geminiSessionRefreshRetryCount = new AtomicInteger(0); // 제미나이 세션 Refresh 재시도 횟수
     private volatile Long geminiSessionRefreshSnapshotRedisCursorId; // 제미나이 세션 refresh 시 snapshot의 마지막 요소 redis cursor ID
+    private volatile GeminiLiveWebSocketHandler geminiHandler; // Gemini Live WebSocket 핸들러 (인터럽트 등 접근용)
 
     /**
      * 클라이언트 세션 존재 여부를 확인한다.
@@ -250,8 +252,19 @@ public class BroadcastWebSocketSessionBundle {
      * @return : 기존 Gemini 세션
      */
     public WebSocketSession registerGeminiSession(WebSocketSession geminiSession) {
+        return registerGeminiSession(geminiSession, null);
+    }
+
+    /**
+     * Gemini 세션과 핸들러를 함께 등록한다.
+     * @param geminiSession : 등록할 Gemini 세션
+     * @param geminiHandler : Gemini Live WebSocket 핸들러 인스턴스
+     * @return : 기존 Gemini 세션
+     */
+    public WebSocketSession registerGeminiSession(WebSocketSession geminiSession, GeminiLiveWebSocketHandler geminiHandler) {
         WebSocketSession oldGeminiSession = this.geminiSession;
         this.geminiSession = geminiSession;
+        this.geminiHandler = geminiHandler;
         return oldGeminiSession;
     }
 

@@ -29,7 +29,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isBroadcastVoiceMetadata = (value: unknown): value is BroadcastVoiceMetadata =>
   isRecord(value) &&
-  (value.eventType === 'VOICE_CHUNK' || value.eventType === 'VOICE_TURN_COMPLETE') &&
+  (value.eventType === 'VOICE_CHUNK' ||
+    value.eventType === 'VOICE_EMOTION' ||
+    value.eventType === 'VOICE_TURN_COMPLETE' ||
+    value.eventType === 'VOICE_INTERRUPTED') &&
   typeof value.turnNumber === 'number';
 
 const isBroadcastWebSocketStatusMessage = (value: unknown): value is BroadcastWebSocketStatusMessage =>
@@ -45,6 +48,11 @@ export default function ChatPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextPlaybackTimeRef = useRef(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const currentIncomingTurnRef = useRef<number | null>(null);
+  const ignoredTurnNumbersRef = useRef<Set<number>>(new Set());
+  const interruptPendingTurnRef = useRef<number | null>(null);
+  const pendingStreamerMessageRef = useRef('');
+  const autoSendPendingMessageRef = useRef(true);
 
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const broadcastStreamId = params.get('broadcastStreamId') || '';
@@ -54,6 +62,24 @@ export default function ChatPage() {
   const [status, setStatus] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [textMessages, setTextMessages] = useState<TextMessageLog[]>([]);
+  const [currentTurnNumber, setCurrentTurnNumber] = useState<number | null>(null);
+  const [ignoredTurnNumbers, setIgnoredTurnNumbers] = useState<number[]>([]);
+  const [interruptPendingTurn, setInterruptPendingTurn] = useState<number | null>(null);
+  const [lastInterruptedMetadata, setLastInterruptedMetadata] = useState<BroadcastVoiceMetadata | null>(null);
+  const [pendingStreamerMessage, setPendingStreamerMessage] = useState('');
+  const [autoSendPendingMessage, setAutoSendPendingMessage] = useState(true);
+
+  useEffect(() => {
+    interruptPendingTurnRef.current = interruptPendingTurn;
+  }, [interruptPendingTurn]);
+
+  useEffect(() => {
+    pendingStreamerMessageRef.current = pendingStreamerMessage;
+  }, [pendingStreamerMessage]);
+
+  useEffect(() => {
+    autoSendPendingMessageRef.current = autoSendPendingMessage;
+  }, [autoSendPendingMessage]);
 
   const wsUrl = useMemo(() => {
     if (!broadcastStreamId || !accessToken) return '';
@@ -112,6 +138,29 @@ export default function ChatPage() {
       await audioContextRef.current.close();
       audioContextRef.current = null;
     }
+  };
+
+  const addIgnoredTurnNumber = (turnNumber: number) => {
+    ignoredTurnNumbersRef.current.add(turnNumber);
+    setIgnoredTurnNumbers(Array.from(ignoredTurnNumbersRef.current).sort((a, b) => a - b));
+  };
+
+  const sendStreamerMessage = (message: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setStatus('WebSocket OPEN 상태에서만 스트리머 발화를 송신할 수 있습니다.');
+      return false;
+    }
+
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+      setStatus('송신할 스트리머 발화가 없습니다.');
+      return false;
+    }
+
+    ws.send(JSON.stringify({ message: trimmedMessage }));
+    setStatus('대기 중인 스트리머 발화 송신 완료');
+    return true;
   };
 
   const playPcmAudioChunk = async (binaryData: Blob | ArrayBuffer) => {
@@ -178,6 +227,12 @@ export default function ChatPage() {
 
     ws.onmessage = async (event) => {
       if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+        const estimatedTurnNumber = currentIncomingTurnRef.current;
+        if (estimatedTurnNumber !== null && ignoredTurnNumbersRef.current.has(estimatedTurnNumber)) {
+          setStatus(`턴 ${estimatedTurnNumber} 오디오 청크 무시 (interrupt 요청됨)`);
+          return;
+        }
+
         try {
           await playPcmAudioChunk(event.data);
           setStatus('PCM 오디오 청크 수신 및 재생 예약 완료');
@@ -205,11 +260,37 @@ export default function ChatPage() {
       ]);
 
       if (isBroadcastVoiceMetadata(parsed)) {
-        setStatus(
-          parsed.eventType === 'VOICE_TURN_COMPLETE'
-            ? `턴 ${parsed.turnNumber} 완료 메타데이터 수신`
-            : `턴 ${parsed.turnNumber} 음성 청크 메타데이터 수신`,
-        );
+        currentIncomingTurnRef.current = parsed.turnNumber;
+        setCurrentTurnNumber(parsed.turnNumber);
+
+        if (ignoredTurnNumbersRef.current.has(parsed.turnNumber) && parsed.eventType !== 'VOICE_INTERRUPTED') {
+          setStatus(`턴 ${parsed.turnNumber} ${parsed.eventType} 메타데이터 무시`);
+          return;
+        }
+
+        if (parsed.eventType === 'VOICE_INTERRUPTED') {
+          setLastInterruptedMetadata(parsed);
+          if (interruptPendingTurnRef.current === parsed.turnNumber) {
+            setInterruptPendingTurn(null);
+          }
+
+          if (autoSendPendingMessageRef.current && pendingStreamerMessageRef.current.trim()) {
+            if (sendStreamerMessage(pendingStreamerMessageRef.current)) {
+              setPendingStreamerMessage('');
+            }
+          }
+
+          setStatus(`턴 ${parsed.turnNumber} 응답 중단 완료 이벤트 수신`);
+          return;
+        }
+
+        const eventLabel: Record<BroadcastVoiceMetadata['eventType'], string> = {
+          VOICE_CHUNK: '음성 청크',
+          VOICE_EMOTION: '감정',
+          VOICE_TURN_COMPLETE: '완료',
+          VOICE_INTERRUPTED: '중단 완료',
+        };
+        setStatus(`턴 ${parsed.turnNumber} ${eventLabel[parsed.eventType]} 메타데이터 수신`);
         return;
       }
 
@@ -248,12 +329,45 @@ export default function ChatPage() {
     }
     ws.send(
       JSON.stringify({
-        type: 'CHAT',
         message: chatInput,
       }),
     );
     setChatInput('');
     setStatus('채팅 송신 완료');
+  };
+
+  const onRequestInterrupt = async () => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setStatus('WebSocket OPEN 상태에서만 interrupt 요청을 보낼 수 있습니다.');
+      return;
+    }
+
+    const targetTurnNumber = currentIncomingTurnRef.current ?? currentTurnNumber;
+    if (targetTurnNumber === null) {
+      setStatus('중단할 turnNumber가 없습니다. 먼저 AI 응답 메타데이터를 수신해야 합니다.');
+      return;
+    }
+
+    await resetAudioPlayback();
+    addIgnoredTurnNumber(targetTurnNumber);
+    setInterruptPendingTurn(targetTurnNumber);
+
+    ws.send(
+      JSON.stringify({
+        message: `__AI_RESPONSE_INTERRUPT_REQUEST__:${JSON.stringify({
+          turnNumber: targetTurnNumber,
+          reason: 'STREAMER_SPEECH_START',
+        })}`,
+      }),
+    );
+    setStatus(`턴 ${targetTurnNumber} AI 응답 중단 요청 송신 완료`);
+  };
+
+  const onSendPendingStreamerMessage = () => {
+    if (sendStreamerMessage(pendingStreamerMessage)) {
+      setPendingStreamerMessage('');
+    }
   };
 
   const onTerminateBroadcast = async () => {
@@ -295,6 +409,72 @@ export default function ChatPage() {
           />
           <button type="submit">송신</button>
         </form>
+      </section>
+
+      <section className="card interrupt-card">
+        <h3>AI 응답 Interrupt 테스트</h3>
+        <p className="hint">
+          스트리머 발화 시작 상황을 시뮬레이션합니다. 현재 구현은 binary audio에 turnNumber가 없어,
+          최근 수신한 메타데이터의 turnNumber를 기준으로 이후 binary 청크를 무시합니다.
+        </p>
+        <div className="inline-buttons">
+          <button
+            type="button"
+            onClick={() => void onRequestInterrupt()}
+            disabled={connectionState !== 'OPEN' || currentTurnNumber === null || interruptPendingTurn !== null}
+          >
+            스트리머 발화 시작 / AI 응답 중단 요청
+          </button>
+          <button type="button" onClick={() => void resetAudioPlayback()}>
+            로컬 오디오 즉시 중단
+          </button>
+        </div>
+
+        <div className="debug-grid">
+          <div>
+            <strong>현재/마지막 turnNumber</strong>
+            <p>{currentTurnNumber ?? '(없음)'}</p>
+          </div>
+          <div>
+            <strong>interrupt pending</strong>
+            <p>{interruptPendingTurn === null ? '없음' : `턴 ${interruptPendingTurn}`}</p>
+          </div>
+          <div>
+            <strong>무시 중인 turnNumbers</strong>
+            <p>{ignoredTurnNumbers.length ? ignoredTurnNumbers.join(', ') : '(없음)'}</p>
+          </div>
+        </div>
+
+        <label>
+          interrupt 완료 전 대기시킬 스트리머 발화
+          <textarea
+            rows={3}
+            placeholder="interrupt 완료 후 송신할 발화를 입력하세요"
+            value={pendingStreamerMessage}
+            onChange={(e) => setPendingStreamerMessage(e.target.value)}
+          />
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={autoSendPendingMessage}
+            onChange={(e) => setAutoSendPendingMessage(e.target.checked)}
+          />
+          VOICE_INTERRUPTED 수신 시 대기 발화 자동 송신
+        </label>
+        <div className="inline-buttons">
+          <button type="button" onClick={() => setStatus('대기 발화 저장 완료')}>
+            대기 발화 저장
+          </button>
+          <button type="button" onClick={onSendPendingStreamerMessage} disabled={!pendingStreamerMessage.trim()}>
+            대기 발화 즉시 송신
+          </button>
+        </div>
+
+        <h4>마지막 VOICE_INTERRUPTED</h4>
+        <pre className="pre">
+          {lastInterruptedMetadata ? JSON.stringify(lastInterruptedMetadata, null, 2) : '아직 수신되지 않음'}
+        </pre>
       </section>
 
       <section className="card">

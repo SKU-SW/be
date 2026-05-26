@@ -93,6 +93,39 @@ public class BroadcastWebSocketSender {
     }
 
     /**
+     * 인터럽트 완료 메타데이터(VOICE_INTERRUPTED)를 클라이언트에게 전송한다.
+     * - 기존 BroadcastVoiceMetadataResDto 양식을 그대로 사용하며 eventType만 VOICE_INTERRUPTED로 설정한다.
+     *
+     * @param broadcastStreamId : 대상 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param characterId : 캐릭터 ID
+     * @param turnNumber : Gemini 응답 turn 번호
+     * @param voiceText : 인터럽트되어 저장된 텍스트 ("[응답 중단됨]" 포함)
+     * @param emotion : 응답 감정값
+     * @param broadcastDialogueCursorId : BroadcastInfo Cursor ID
+     */
+    public void sendInterruptedMetadata(
+            String broadcastStreamId,
+            Long generation,
+            Long characterId,
+            Long turnNumber,
+            String voiceText,
+            Emotion emotion,
+            Long broadcastDialogueCursorId
+    ) {
+        BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.builder()
+                .eventType(BroadcastVoiceEventType.VOICE_INTERRUPTED)
+                .turnNumber(turnNumber)
+                .characterId(characterId)
+                .voiceText(voiceText)
+                .emotion(emotion)
+                .broadcastDialogueCursorId(broadcastDialogueCursorId)
+                .build();
+
+        sendPayload(broadcastStreamId, generation, null, metadata, "sendInterruptedMetadata");
+    }
+
+    /**
      * 현재 turn의 감정 정보만 클라이언트에게 전송한다.
      *
      * @param broadcastStreamId : 대상 방송 스트림 ID

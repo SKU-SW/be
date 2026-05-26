@@ -62,11 +62,17 @@ label {
 }
 
 input,
+textarea,
 button {
   border: 1px solid #c9d3e1;
   border-radius: 8px;
   padding: 9px 10px;
   font-size: 14px;
+}
+
+textarea {
+  resize: vertical;
+  font-family: inherit;
 }
 
 button {
@@ -123,4 +129,39 @@ button:disabled {
   border: 1px solid #cde3ff;
   border-radius: 8px;
   padding: 10px;
+}
+
+.interrupt-card {
+  border-color: #ffd8a8;
+  background: #fffaf3;
+}
+
+.hint {
+  color: #5f6b7a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.debug-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 12px 0;
+}
+
+.debug-grid > div {
+  border: 1px solid #f1dfc4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.debug-grid p {
+  margin: 6px 0 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

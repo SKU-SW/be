@@ -1,22 +1,30 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastMessageReqDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
+import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.global.exception.CustomException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -44,6 +52,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
     private static final long PONG_TIMEOUT_MS = 90_000;
 
+    /** AI 응답 인터럽트 요청 prefix — 프론트→서버 JSON message 필드에서 이 prefix로 시작하면 인터럽트 요청으로 간주한다. */
+    private static final String AI_RESPONSE_INTERRUPT_PREFIX = "__AI_RESPONSE_INTERRUPT_REQUEST__:";
+
     private final ObjectMapper objectMapper;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
@@ -53,6 +64,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
     private final BroadcastRepository broadcastRepository;
     private final TransactionTemplate transactionTemplate;
+    private final BroadcastGeminiRequestService broadcastGeminiRequestService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession clientSession) {
@@ -127,6 +140,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
+        // AI 응답 인터럽트 요청 prefix 감지 — 일반 메시지 흐름으로 처리하지 않고 즉시 분기한다.
+        if (reqDto.message().startsWith(AI_RESPONSE_INTERRUPT_PREFIX)) {
+            handleInterruptRequest(session, broadcastStreamId, userId, generation, reqDto.message());
+            return;
+        }
+
         try {
             broadcastMessageService.handleClientMessage(broadcastStreamId, generation, reqDto.message());
         } catch (CustomException e) {
@@ -147,6 +166,140 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             sendErrorAndClose(session, "Internal server error");
             sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
         }
+    }
+
+    /**
+     * AI 응답 인터럽트 요청을 처리한다.
+     * - 요청 prefix: __AI_RESPONSE_INTERRUPT_REQUEST__:{JSON}
+     * - JSON payload: {"turnNumber": 12, "reason": "STREAMER_SPEECH_START"}
+     *
+     * 처리 순서:
+     * 1. turnNumber 검증 및 중복/상태 검사
+     * 2. accumulator.markInterrupting()
+     * 3. 인터럽트 텍스트 결정 → Redis 저장 (BroadcastRedisUtil.pushBroadcastInfo)
+     * 4. compaction check 이벤트 발행
+     * 5. accumulator에 cursorId와 interruptedText 저장
+     * 6. accumulator.markInterrupted()
+     * 7. Gemini로 인터럽트 요청 전송
+     * 8. return (일반 메시지 흐름으로 가지 않음)
+     */
+    private void handleInterruptRequest(
+            WebSocketSession clientSession,
+            String broadcastStreamId,
+            Long userId,
+            Long generation,
+            String message
+    ) {
+        log.info("[BroadcastWebSocketHandler] handleInterruptRequest() - START | streamId: {}, userId: {}", broadcastStreamId, userId);
+
+        // 1. Interrupt payload 파싱
+        String jsonPayload = message.substring(AI_RESPONSE_INTERRUPT_PREFIX.length());
+        JsonNode interruptNode;
+        long requestedTurnNumber;
+        String requestedInterruptReason;
+        try {
+            interruptNode = objectMapper.readTree(jsonPayload);
+            requestedTurnNumber = interruptNode.get("turnNumber").asLong();
+            requestedInterruptReason = interruptNode.get("reason").asText();
+        } catch (Exception e) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Failed to parse interrupt payload | streamId: {}, payload: {}",
+                    broadcastStreamId, jsonPayload);
+            return;
+        }
+
+        // 2. Session Bundle 검증
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation != null ? generation : -1L);
+        if (bundle == null || !bundle.matchesClientSession(clientSession) || !bundle.canAcceptClientMessage()) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Bundle not ready | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+            return;
+        }
+
+        // 3. Gemini Handler 조회 (BroadcastWebSocketSessionBundle에 직접 저장된 handler 사용)
+        WebSocketSession geminiSession = bundle.getGeminiSession();
+        if (geminiSession == null || !geminiSession.isOpen()) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Gemini session not available | streamId: {}", broadcastStreamId);
+            return;
+        }
+        GeminiLiveWebSocketHandler geminiHandler = bundle.getGeminiHandler();
+        if (geminiHandler == null) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Gemini handler not found | streamId: {}", broadcastStreamId);
+            return;
+        }
+
+        // 4. Accumulator 조회
+        GeminiLiveWebSocketHandler.GeminiTurnAccumulator accumulator = geminiHandler.getTurnAccumulator();
+        if (accumulator == null) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - No active turn accumulator | streamId: {}, requestedTurn: {}",
+                    broadcastStreamId, requestedTurnNumber);
+            return;
+        }
+
+        // 5. turnNumber 검증
+        if (!accumulator.getTurnNumber().equals(requestedTurnNumber)) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Turn number mismatch | streamId: {}, requested: {}, current: {}",
+                    broadcastStreamId, requestedTurnNumber, accumulator.getTurnNumber());
+            return;
+        }
+
+        // 6. 중복/완료 상태 검증
+        if (accumulator.isInterruptingOrInterrupted()) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Already interrupting/interrupted | streamId: {}, turn: {}, status: {}",
+                    broadcastStreamId, requestedTurnNumber, accumulator.getStatus());
+            return;
+        }
+        if (accumulator.getStatus() == GeminiLiveWebSocketHandler.GeminiTurnAccumulator.GeminiTurnStatus.COMPLETED) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Turn already completed | streamId: {}, turn: {}",
+                    broadcastStreamId, requestedTurnNumber);
+            return;
+        }
+
+        // 7. 인터럽트 처리 수행
+        accumulator.markInterrupting();
+
+        String interruptedText;
+        if (accumulator.getAccumulatedText() == null || accumulator.getAccumulatedText().isBlank()) {
+            interruptedText = "[응답 중단됨]";
+        } else {
+            interruptedText = accumulator.getAccumulatedText() + " [응답 중단됨]";
+        }
+
+        // 8. Redis 저장
+        BroadcastInfoRedisDto savedInfo;
+        try {
+            savedInfo = broadcastRedisUtil.pushBroadcastInfo(
+                    broadcastStreamId,
+                    DialogueSubject.AI_CHARACTER,
+                    interruptedText,
+                    accumulator.getEmotion()
+            );
+        } catch (Exception e) {
+            log.error("[BroadcastWebSocketHandler] handleInterruptRequest() - Redis save failed | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage());
+            return;
+        }
+
+        // 9. Accumulator에 인터럽트 정보 저장 (Gemini가 interrupted:true 응답 시 사용)
+        accumulator.setInterruptedCursorId(savedInfo.cursorId());
+        accumulator.setInterruptedText(interruptedText);
+
+        // 10. 상태를 INTERRUPTED로 전환
+        accumulator.markInterrupted();
+
+        // 11. Gemini로 인터럽트 요청 전송
+        try {
+            broadcastGeminiRequestService.sendInterruptRequest(
+                    geminiSession,
+                    broadcastStreamId,
+                    generation != null ? generation : -1L
+            );
+        } catch (Exception e) {
+            log.warn("[BroadcastWebSocketHandler] handleInterruptRequest() - Gemini interrupt send failed | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage());
+        }
+
+        log.info("[BroadcastWebSocketHandler] handleInterruptRequest() - END | streamId: {}, turn: {}, cursorId: {}",
+                broadcastStreamId, requestedTurnNumber, savedInfo.cursorId());
     }
 
     private void abnormalTerminateBroadcast(String broadcastStreamId) {

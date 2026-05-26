@@ -18,6 +18,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -40,6 +41,13 @@ public class BroadcastGeminiLiveService {
 
     @Value("${gemini.api.live-setup-timeout-ms:5000}")
     private long liveSetupTimeoutMs;
+
+    /**
+     * Gemini 세션과 핸들러를 연결하기 위한 임시 맵.
+     * - connectGeminiApiWebSocketAsync()에서 세션 생성 시 핸들러를 저장하고,
+     *   handleBootstrapSuccess()에서 consumePendingHandler()로 꺼내 bundle에 등록한다.
+     */
+    final ConcurrentHashMap<String, GeminiLiveWebSocketHandler> pendingGeminiHandlers = new ConcurrentHashMap<>();
 
     /**
      * Gemini Live API WebSocket 비동기 연결을 생성한다.
@@ -72,6 +80,8 @@ public class BroadcastGeminiLiveService {
          */
         CompletableFuture<WebSocketSession> readyFuture = executeFuture.thenCompose(geminiSession -> {
             geminiSession.getAttributes().put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), broadcastStreamId);
+            // GeminiLiveWebSocketHandler 인스턴스를 임시 맵에 저장 (bundle 등록 시 consumePendingHandler로 사용)
+            pendingGeminiHandlers.put(geminiSession.getId(), liveWebSocketHandler);
             CompletableFuture<Void> setupCompleteFuture = liveWebSocketHandler.getSetupCompleteFuture();
 
             return setupCompleteFuture.orTimeout(liveSetupTimeoutMs, TimeUnit.MILLISECONDS)
@@ -79,6 +89,7 @@ public class BroadcastGeminiLiveService {
                     .exceptionally(throwable -> {
                         log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Setup failed | streamId: {}, diagnostics: {}",
                                 broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
+                        pendingGeminiHandlers.remove(geminiSession.getId());
                         geminiUtil.closeGeminiSessionQuietly(geminiSession);
                         throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
                     });
@@ -111,5 +122,16 @@ public class BroadcastGeminiLiveService {
     private URI createGeminiLiveWebSocketUri() {
         String encodedApiKey = URLEncoder.encode(geminiApiKey, StandardCharsets.UTF_8);
         return URI.create(geminiLiveWebSocketUrl + "?key=" + encodedApiKey);
+    }
+
+    /**
+     * pendingGeminiHandlers 맵에서 Gemini Session ID에 해당하는 핸들러를 꺼내 반환한다.
+     * - handleBootstrapSuccess()에서 bundle 등록 시 호출되며, 사용 후 맵에서 제거된다.
+     *
+     * @param sessionId : Gemini WebSocket 세션 ID
+     * @return : GeminiLiveWebSocketHandler 인스턴스 (없으면 null)
+     */
+    public GeminiLiveWebSocketHandler consumePendingHandler(String sessionId) {
+        return pendingGeminiHandlers.remove(sessionId);
     }
 }

@@ -10,6 +10,7 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.global.exception.CustomException;
 import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -154,6 +155,7 @@ public class BroadcastGeminiBootstrapService {
             - 만약 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는다면, 새롭게 생성된 Gemini WebSocket Session을 종료시킨다.
             - 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는 경우는, Gemini WebSocket Session이 생성되는 도중에 클라이언트가 새로운 WebSocket 연결을 시도한 것이기 때문에 Gemini Session만 종료시킨다.
          */
+        GeminiLiveWebSocketHandler handler = broadcastGeminiLiveService.consumePendingHandler(geminiSession.getId());
         if (!sessionRegistry.isCurrentClientSession(broadcastStreamId, generation, clientSession)) {
             geminiUtil.closeGeminiSessionQuietly(geminiSession);
             log.warn("[BroadcastGeminiBootstrapService] handleBootstrapSuccess() - Stale client session detected | streamId: {}, generation: {}",
@@ -162,10 +164,11 @@ public class BroadcastGeminiBootstrapService {
         }
 
         /*
-            2. Gemini Session을 Session Bundle에 등록한다.
+             2. Gemini Session과 GeminiLiveWebSocketHandler를 Session Bundle에 등록한다.
+            - handler는 BroadcastGeminiLiveService의 pendingGeminiHandlers 맵에서 꺼내 전달한다.
             - 만약 정상적으로 Session이 등록되지 않았다면 전체 방송 세션 번들을 삭제한다.
          */
-        boolean registered = sessionRegistry.registerGeminiSessionIfCurrent(broadcastStreamId, generation, geminiSession);
+        boolean registered = sessionRegistry.registerGeminiSessionIfCurrent(broadcastStreamId, generation, geminiSession, handler);
         if (!registered) {
             terminateFailedBundle(broadcastStreamId, generation, clientSession, geminiSession, CloseStatus.SERVER_ERROR, BroadcastErrorCode.GEMINI_RESPONSE_FAILED.getMessage());
             log.warn("[BroadcastGeminiBootstrapService] handleBootstrapSuccess() - Gemini session registration failed | streamId: {}, generation: {}",

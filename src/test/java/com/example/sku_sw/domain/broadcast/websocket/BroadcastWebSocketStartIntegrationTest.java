@@ -11,6 +11,7 @@ import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionSe
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.global.util.GeminiUtil;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.CloseStatus;
@@ -77,6 +79,12 @@ class BroadcastWebSocketStartIntegrationTest {
     private GeminiUtil geminiUtil;
 
     @Mock
+    private BroadcastGeminiRequestService broadcastGeminiRequestService;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
+    @Mock
     private BroadcastPromptBuilder broadcastPromptBuilder;
 
     private ObjectMapper objectMapper;
@@ -109,7 +117,9 @@ class BroadcastWebSocketStartIntegrationTest {
                 broadcastGeminiBootstrapService,
                 broadcastDialogueCompactionService,
                 broadcastRepository,
-                transactionTemplate
+                transactionTemplate,
+                broadcastGeminiRequestService,
+                applicationEventPublisher
         );
     }
 

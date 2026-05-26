@@ -50,6 +50,7 @@ public class BroadcastMessageService {
         /*
             1. Session Registry에서 broadcastStreamId와 generation 값으로 WebSocket Session Bundle값이 있는지 확인한다.
             - Bundle이 없다면 예외를 발생시킨다.
+            - Bundle이 클라이언트 메시지를 받을 수 있는 상황인지 확인(status가 Ready이거나 Refreshing인 경우)
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
         if (bundle == null || !bundle.canAcceptClientMessage()) {

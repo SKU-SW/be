@@ -6,6 +6,7 @@ import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBu
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -107,6 +108,51 @@ public class BroadcastGeminiRequestService {
             log.error("[BroadcastGeminiService] processReplayMessage() - Failed | streamId: {}, generation: {}, error: {}",
                     broadcastStreamId, generation, e.getMessage());
             throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
+        }
+    }
+
+    /**
+     * 현재 Gemini WebSocket 세션으로 인터럽트 요청을 전송한다.
+     * - Gemini Live API의 clientContent turnComplete 메시지를 전송하여 현재 응답 생성을 중단하도록 요청한다.
+     * - request-flight는 인터럽트 요청 시 증가시키지 않는다. (Gemini가 interrupted:true 응답 시 감소)
+     *
+     * @param geminiSession    : 인터럽트를 요청할 Gemini WebSocket 세션
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation        : 현재 세션 generation
+     */
+    public void sendInterruptRequest(WebSocketSession geminiSession, String broadcastStreamId, long generation) {
+        log.info("[BroadcastGeminiService] sendInterruptRequest() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        try {
+            /*
+                1. clientContent 메시지를 생성하여 Gemini에게 현재 응답 생성을 중단하도록 요청한다.
+                - turnComplete: true를 포함하여 현재 turn의 완료를 Gemini에게 알린다.
+             */
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode clientContentNode = requestNode.putObject("clientContent");
+            ArrayNode turnsNode = clientContentNode.putArray("turns");
+            ObjectNode turnNode = turnsNode.addObject();
+            turnNode.put("role", "user");
+            ArrayNode partsNode = turnNode.putArray("parts");
+            ObjectNode partNode = partsNode.addObject();
+            partNode.put("text", """
+                    [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE]
+                    This is a backend control signal, not a streamer utterance.
+                    Do not answer this message.
+                    Do not call any tools for this message.
+                    Stop the current response only and wait for the next real streamer utterance.
+                    """);
+            clientContentNode.put("turnComplete", true);
+
+            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+
+            log.info("[BroadcastGeminiService] sendInterruptRequest() - END | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+        } catch (Exception e) {
+            log.error("[BroadcastGeminiService] sendInterruptRequest() - Failed | streamId: {}, generation: {}, error: {}",
+                    broadcastStreamId, generation, e.getMessage());
+            // 인터럽트 요청 실패는 세션을 종료하지 않고 로깅만 수행한다.
         }
     }
 }
