@@ -10,11 +10,11 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.global.util.GeminiUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
@@ -43,6 +43,7 @@ public class BroadcastGeminiRefreshService {
     private final GeminiUtil geminiUtil;
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
+    private final BroadcastGeminiLiveService broadcastGeminiLiveService;
 
     /**
      * compaction 완료 이후 Gemini refresh를 요청한다.
@@ -176,6 +177,7 @@ public class BroadcastGeminiRefreshService {
     ) {
         log.info("[BroadcastGeminiRefreshService] handleRefreshSuccess() - START | streamId: {}, generation: {}, snapshotCursorId: {}",
                 broadcastStreamId, generation, snapshotCursorId);
+        GeminiLiveWebSocketHandler newHandler = broadcastGeminiLiveService.consumePendingHandler(newGeminiSession.getId());
 
         /*
             1. 현재 generation 번들을 재검증한다.
@@ -198,10 +200,10 @@ public class BroadcastGeminiRefreshService {
         List<BroadcastInfoRedisDto> replayCandidates = broadcastRedisUtil.getActiveDialoguesAfterCursor(broadcastStreamId, snapshotCursorId);
 
         /*
-            3. 신규 Gemini 세션을 bundle에 등록하고 READY 상태로 전환한다.
+             3. 신규 Gemini 세션과 핸들러를 bundle에 등록하고 READY 상태로 전환한다.
             - 이후 backlog를 순서대로 replay하고, 마지막에 이전 Gemini 세션을 종료한다.
          */
-        registerNewGeminiSessionToSessionBundleAndClearRefreshingStatus(bundle, newGeminiSession);
+        registerNewGeminiSessionToSessionBundleAndClearRefreshingStatus(bundle, newGeminiSession, newHandler);
         replayDialogues(broadcastStreamId, generation, replayCandidates, "handleRefreshSuccess");
 
         if (oldGeminiSession != null && oldGeminiSession != newGeminiSession) {
@@ -330,9 +332,10 @@ public class BroadcastGeminiRefreshService {
      */
     private void registerNewGeminiSessionToSessionBundleAndClearRefreshingStatus(
             BroadcastWebSocketSessionBundle bundle,
-            WebSocketSession newGeminiSession
+            WebSocketSession newGeminiSession,
+            GeminiLiveWebSocketHandler newHandler
     ) {
-        bundle.registerGeminiSession(newGeminiSession);
+        bundle.registerGeminiSession(newGeminiSession, newHandler);
         clearRefreshingStatus(bundle);
     }
 

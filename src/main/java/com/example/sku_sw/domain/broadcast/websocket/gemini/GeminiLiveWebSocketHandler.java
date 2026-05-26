@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
  * Gemini Live API WebSocket Handler
  * - setup 메시지를 전송하고 setupComplete 응답을 추적한다.
  * - Gemini 응답의 텍스트를 turn 단위로 누적하고, 오디오는 청크 단위로 즉시 전달한다.
+ * - AI 응답 인터럽트를 지원하여 클라이언트 요청으로 Gemini 응답을 중단할 수 있다.
  */
 @Slf4j
 public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
@@ -93,7 +94,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         ArrayNode toolsNode = setupNode.putArray("tools");
         ObjectNode toolNode = toolsNode.addObject();
         ArrayNode functionDeclarationsNode = toolNode.putArray("functionDeclarations");
-//        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
+        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration());
 
         setupNode.putObject("outputAudioTranscription");
@@ -172,9 +173,10 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         /*
-            4. Gemini가 생성한 주요 응답 데이터 처리
+             ５. Gemini가 생성한 주요 응답 데이터 처리
             - textChunk, audioChunk를 추출하여 바로 클라이언트에게 보낸다.
             - 이때, textChunk값은 accumulator에 저장해둔다.
+            - 인터럽트 중이면 text append와 client chunk 송신을 금지한다.
          */
         JsonNode serverContentNode = rootNode.get("serverContent");
         if (serverContentNode == null) {
@@ -183,27 +185,52 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
+        /*
+            ５-1. Gemini가 인터럽트를 승인(interrupted:true)한 경우 처리
+            - VOICE_INTERRUPTED 메타데이터 전송, accumulator clear, request-flight 감소를 수행한다.
+         */
+        JsonNode interruptedNode = serverContentNode.get("interrupted");
+        if (interruptedNode != null && interruptedNode.asBoolean(false)) {
+            handleInterruptedAcknowledged(session);
+            return;
+        }
+
         GeminiTurnAccumulator accumulator = getOrCreateTurnAccumulator();
 
+        // ５-2. 인터럽트 중이 아닐 때만 현재 accumulator에 text를 append한다.
         String textChunk = extractOutputTranscription(serverContentNode);
         if (textChunk != null && !textChunk.isBlank()) {
-            accumulator.appendText(textChunk);
+            if (accumulator.canAppend()) {
+                accumulator.appendText(textChunk);
+            } else {
+                log.debug("[GeminiLiveWebSocketHandler] handleIncomingPayload() - Text append blocked (interrupt in progress) | sessionId: {}, turnNumber: {}",
+                        session.getId(), accumulator.getTurnNumber());
+            }
         }
 
         byte[] audioChunk = extractAudioChunk(serverContentNode);
         logServerContentSummary(session, serverContentNode, accumulator.getTurnNumber(), textChunk, audioChunk);
 
-        if ((textChunk != null && !textChunk.isBlank()) || audioChunk.length > 0) {
+        // ５-3. 인터럽트 중이 아닐 때만 client chunk를 송신한다.
+        if (!accumulator.isInterruptingOrInterrupted()
+                && ((textChunk != null && !textChunk.isBlank()) || audioChunk.length > 0)) {
             dispatchStreamingChunk(session, accumulator.getTurnNumber(), textChunk, audioChunk, accumulator.getEmotion());
         }
 
         /*
-            5. Gemini가 이번 turn 응답을 종료했다고 신호한 경우 처리
-            - accumulator에 저장해둔 데이터를 모아 CompletedGeminiTurn 객체 생성
-            - 비동기적으로 클라이언트에게 해당 응답 turn의 메타데이터를 보낸다.
+             6. Gemini가 이번 turn 응답을 종료했다고 신호한 경우 처리
+            - 인터럽트 중이면 turnComplete를 무시하고 처리하지 않는다.
+            - 정상 흐름일 때만 accumulator 데이터로 CompletedGeminiTurn 객체 생성 후 처리한다.
          */
         JsonNode turnCompleteNode = serverContentNode.get("turnComplete");
         if (turnCompleteNode != null && turnCompleteNode.asBoolean(false)) {
+            if (accumulator.isInterruptingOrInterrupted()) {
+                log.debug("[GeminiLiveWebSocketHandler] handleIncomingPayload() - turnComplete ignored (interrupt in progress) | sessionId: {}, turnNumber: {}",
+                        session.getId(), accumulator.getTurnNumber());
+                return;
+            }
+
+            accumulator.markCompleted();
             CompletedGeminiTurn completedTurn = new CompletedGeminiTurn(
                     accumulator.getTurnNumber(),
                     accumulator.getAccumulatedText(),
@@ -248,6 +275,65 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 audioChunk,
                 emotion
         );
+    }
+
+    /**
+     * Gemini가 serverContent.interrupted == true로 최종 인터럽트를 승인했을 때(Gemini가 더이상 응답을 생성하지 않을 때) 호출하는 함수
+     * - VOICE_INTERRUPTED 메타데이터 전송
+     * - accumulator clear
+     * - request-flight 감소
+     * @param geminiSession Gemini WebSocket 세션
+     */
+    private void handleInterruptedAcknowledged(WebSocketSession geminiSession) {
+        /*
+            1. 현재 GeminiLiveWebSocketHandler가 갖고 있는 turnAccumulator 검증
+            - turnAccumulator가 null인지, interrupt중인지 interrupt가 종료된 상태인지
+         */
+        if (turnAccumulator == null) {
+            log.warn("[GeminiLiveWebSocketHandler] handleInterruptedAcknowledged() - No active accumulator | sessionId: {}",
+                    geminiSession.getId());
+            return;
+        }
+        if (!turnAccumulator.isInterruptingOrInterrupted()) {
+            log.warn("[GeminiLiveWebSocketHandler] handleInterruptedAcknowledged() - Interrupt ack ignored because turn is not interrupted | sessionId: {}, turnNumber: {}, status: {}",
+                    geminiSession.getId(), turnAccumulator.getTurnNumber(), turnAccumulator.getStatus());
+            return;
+        }
+
+        /*
+            2. Interrupt 시킬 현재 Turn Number와 Session Bundle을 가져온다. 
+         */
+        Long currentTurnNumber = turnAccumulator.getTurnNumber();
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
+        if (broadcastStreamId == null) {
+            log.warn("[GeminiLiveWebSocketHandler] handleInterruptedAcknowledged() - Broadcast stream not found | sessionId: {}",
+                    geminiSession.getId());
+            return;
+        }
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || bundle.getGeminiSession() != geminiSession) {
+            log.warn("[GeminiLiveWebSocketHandler] handleInterruptedAcknowledged() - Bundle mismatch | sessionId: {}, streamId: {}",
+                    geminiSession.getId(), broadcastStreamId);
+            return;
+        }
+
+        /*
+            3. 클라이언트에게 VOICE_INTERRUPTED 메타데이터를 전송하고, Session Bundle의 request-flight 값을 감소시킨다.
+            - Redis에 인터럽트된 텍스트 데이터 저장은 BroadcastWebSocketHandler에서 이미 수행되었기 때문에, 클라이언트로의 메타데이터 전송과 flight 감소만 수행한다.
+         */
+        broadcastGeminiResponseService.handleInterruptedTurn(
+                geminiSession,
+                broadcastStreamId,
+                bundle.getGeneration(),
+                turnAccumulator,
+                bundle
+        );
+
+        // 4. 쓸모가 다한 기존 Interrupted Accumulator를 Clear 시킨다.
+        clearAccumulator();
+
+        log.info("[GeminiLiveWebSocketHandler] handleInterruptedAcknowledged() - Interrupt acknowledged | streamId: {}, turnNumber: {}",
+                broadcastStreamId, currentTurnNumber);
     }
 
     /**
@@ -422,15 +508,23 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 toolCallNode
         );
         /*
-            3. Tool Call 처리 결과에 Emotion 처리 결과가 있는 경우
+             3. Tool Call 처리 결과에 Emotion 처리 결과가 있는 경우
             - accumulator에 emotion 결과를 설정 (결과에 emotion이 없는 경우 DEFAULT로 fallback 설정
-            - 해당 Gemini 응답에 Emotion이 왔을 때 수행할 작업을 수행한다.(해당 gemini Session에 해당하는 bundle을 조회하고 클라이언트에게 감정 데이터를 보낸다)
+            - 인터럽트 중이 아니면 해당 Gemini 응답에 Emotion이 왔을 때 수행할 작업을 수행한다.
+              (인퍼럽트 중이어도 emotion 값은 업데이트하되, 클라이언트에게 전송하는 emotion metadata만 막는다.)
          */
         if (result.responseEmotionHandled()) {
             GeminiTurnAccumulator accumulator = getOrCreateTurnAccumulator();
             Emotion resolvedEmotion = result.emotion() == null ? Emotion.DEFAULT : result.emotion();
             accumulator.updateEmotion(resolvedEmotion);
-            dispatchEmotionUpdate(geminiSession, accumulator.getTurnNumber(), resolvedEmotion);
+
+            // 인터럽트 중이 아닐 때만 emotion metadata를 클라이언트에 전송한다.
+            if (!accumulator.isInterruptingOrInterrupted()) {
+                dispatchEmotionUpdate(geminiSession, accumulator.getTurnNumber(), resolvedEmotion);
+            } else {
+                log.debug("[GeminiLiveWebSocketHandler] handleToolCall() - Emotion dispatch skipped (interrupt in progress) | sessionId: {}, turnNumber: {}",
+                        geminiSession.getId(), accumulator.getTurnNumber());
+            }
             return false;
         }
 
@@ -595,10 +689,27 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     ) {
     }
 
+    /**
+     * Gemini 응답 turn 단위 데이터 누적기
+     * - 텍스트와 감정을 누적하고, turn의 상태를 추적한다.
+     * - 인터럽트 상태 전환을 지원한다 (STREAMING → INTERRUPTING → INTERRUPTED → clear).
+     */
     public static class GeminiTurnAccumulator {
+
+        /** Gemini 응답 turn의 현재 상태 */
+        public enum GeminiTurnStatus {
+            STREAMING,      // 정상 스트리밍 중
+            INTERRUPTING,   // 인터럽트 요청 접수 (처리 중)
+            INTERRUPTED,    // 인터럽트 완료 (Gemini 전송까지 완료)
+            COMPLETED       // 정상 turn 완료
+        }
+
         private final Long turnNumber;
         private final StringBuilder accumulatedText = new StringBuilder();
         private Emotion emotion = Emotion.TALKING;
+        private volatile GeminiTurnStatus status = GeminiTurnStatus.STREAMING;
+        private volatile Long interruptedCursorId;
+        private volatile String interruptedText;
 
         public GeminiTurnAccumulator(Long turnNumber) {
             this.turnNumber = turnNumber;
@@ -622,6 +733,79 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
 
         public Emotion getEmotion() {
             return emotion;
+        }
+
+        // ---- 인터럽트 관련 상태 메서드 ----
+
+        /**
+         * 현재 인터럽트가 진행 중이거나 완료된 상태인지 확인한다.
+         * @return INTERRUPTING 또는 INTERRUPTED 상태이면 true
+         */
+        public boolean isInterruptingOrInterrupted() {
+            return status == GeminiTurnStatus.INTERRUPTING || status == GeminiTurnStatus.INTERRUPTED;
+        }
+
+        /**
+         * text append가 가능한 상태인지 확인한다.
+         * @return STREAMING 상태이면 true (정상 스트리밍 중에만 append 허용)
+         */
+        public boolean canAppend() {
+            return status == GeminiTurnStatus.STREAMING;
+        }
+
+        /** 상태를 INTERRUPTING으로 전환한다. */
+        public void markInterrupting() {
+            this.status = GeminiTurnStatus.INTERRUPTING;
+        }
+
+        /** 상태를 INTERRUPTED로 전환한다. */
+        public void markInterrupted() {
+            this.status = GeminiTurnStatus.INTERRUPTED;
+        }
+
+        /** 상태를 COMPLETED로 전환한다. */
+        public void markCompleted() {
+            this.status = GeminiTurnStatus.COMPLETED;
+        }
+
+        /**
+         * 현재 상태를 반환한다.
+         * @return GeminiTurnStatus 값
+         */
+        public GeminiTurnStatus getStatus() {
+            return status;
+        }
+
+        /**
+         * 인터럽트로 Redis에 저장된 대화 cursorId를 설정한다.
+         * @param cursorId BroadcastInfo cursorId
+         */
+        public void setInterruptedCursorId(Long cursorId) {
+            this.interruptedCursorId = cursorId;
+        }
+
+        /**
+         * 인터럽트로 Redis에 저장된 대화 cursorId를 반환한다.
+         * @return BroadcastInfo cursorId
+         */
+        public Long getInterruptedCursorId() {
+            return interruptedCursorId;
+        }
+
+        /**
+         * 인터럽트로 저장된 최종 텍스트("[응답 중단됨]" 포함)를 설정한다.
+         * @param text 저장된 인터럽트 텍스트
+         */
+        public void setInterruptedText(String text) {
+            this.interruptedText = text;
+        }
+
+        /**
+         * 인터럽트로 저장된 최종 텍스트를 반환한다.
+         * @return 인터럽트 텍스트 (null 가능)
+         */
+        public String getInterruptedText() {
+            return interruptedText;
         }
     }
 }

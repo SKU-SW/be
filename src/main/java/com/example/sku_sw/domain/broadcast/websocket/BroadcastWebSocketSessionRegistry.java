@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -61,12 +62,30 @@ public class BroadcastWebSocketSessionRegistry {
      * @return : 등록 성공 여부
      */
     public boolean registerGeminiSessionIfCurrent(String broadcastStreamId, long expectedGeneration, WebSocketSession geminiSession) {
+        return registerGeminiSessionIfCurrent(broadcastStreamId, expectedGeneration, geminiSession, null);
+    }
+
+    /**
+     * expectedGeneration과 현재 generation이 일치하는 세션 번들에만 Gemini 세션과 핸들러를 함께 등록한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param expectedGeneration : 기대하는 generation
+     * @param geminiSession     : 등록할 Gemini 세션
+     * @param geminiHandler     : Gemini Live WebSocket 핸들러 인스턴스
+     * @return : 등록 성공 여부
+     */
+    public boolean registerGeminiSessionIfCurrent(
+            String broadcastStreamId,
+            long expectedGeneration,
+            WebSocketSession geminiSession,
+            GeminiLiveWebSocketHandler geminiHandler
+    ) {
         BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
         if (bundle == null || !bundle.matchesGeneration(expectedGeneration)) {
             return false;
         }
 
-        bundle.registerGeminiSession(geminiSession);
+        bundle.registerGeminiSession(geminiSession, geminiHandler);
         return true;
     }
 

@@ -11,7 +11,8 @@ import lombok.RequiredArgsConstructor;
 public enum BroadcastVoiceEventType {
     VOICE_CHUNK("VOICE_CHUNK"),
     VOICE_EMOTION("VOICE_EMOTION"),
-    VOICE_TURN_COMPLETE("VOICE_TURN_COMPLETE");
+    VOICE_TURN_COMPLETE("VOICE_TURN_COMPLETE"),
+    VOICE_INTERRUPTED("VOICE_INTERRUPTED");
 
     private final String value;
 }

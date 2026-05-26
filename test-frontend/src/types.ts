@@ -50,13 +50,18 @@ export interface BroadcastStartData {
   broadcastStartedAt: string;
 }
 
-export type BroadcastVoiceEventType = 'VOICE_CHUNK' | 'VOICE_TURN_COMPLETE';
+export type BroadcastVoiceEventType =
+  | 'VOICE_CHUNK'
+  | 'VOICE_EMOTION'
+  | 'VOICE_TURN_COMPLETE'
+  | 'VOICE_INTERRUPTED';
 
 export interface BroadcastVoiceMetadata {
   eventType: BroadcastVoiceEventType;
   turnNumber: number;
   characterId: number | null;
   voiceText: string | null;
+  emotion?: string | null;
   broadcastDialogueCursorId: number | null;
 }
 

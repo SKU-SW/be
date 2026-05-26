@@ -11,6 +11,7 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSender;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.RequiredArgsConstructor;
@@ -207,6 +208,64 @@ public class BroadcastGeminiResponseService {
 
         log.info("[BroadcastGeminiResponseService] handleCompletedTurnAsync() - END | streamId: {}, generation: {}, turnNumber: {}, cursorId: {}",
                 broadcastStreamId, generation, turnNumber, savedCursorId);
+    }
+
+    /**
+     * Gemini 인터럽트 승인(interrupted:true) 시 VOICE_INTERRUPTED 메타데이터 전송 및 request-flight 감소를 처리한다.
+     * - Redis 저장은 인터럽트 요청 시점에 이미 수행되었으므로 여기서는 메타데이터 전송과 flight 감소만 수행한다.
+     *
+     * @param geminiSession    : 인터럽트를 승인한 Gemini WebSocket 세션
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation        : 현재 세션 generation
+     * @param accumulator       : 현재 turn의 accumulator (interruptedText, interruptedCursorId 보유)
+     * @param bundle            : 현재 세션 번들
+     */
+    public void handleInterruptedTurn(
+            WebSocketSession geminiSession,
+            String broadcastStreamId,
+            Long generation,
+            GeminiLiveWebSocketHandler.GeminiTurnAccumulator accumulator,
+            BroadcastWebSocketSessionBundle bundle
+    ) {
+        log.info("[BroadcastGeminiResponseService] handleInterruptedTurn() - START | streamId: {}, generation: {}, turnNumber: {}",
+                broadcastStreamId, generation, accumulator.getTurnNumber());
+
+        try {
+            BroadcastWebSocketSessionBundle validatedBundle = getValidatedBundle(geminiSession, broadcastStreamId, generation, "handleInterruptedTurn");
+            if (validatedBundle == null) {
+                log.info("[BroadcastGeminiResponseService] handleInterruptedTurn() - Stale interrupt skipped | streamId: {}, generation: {}, turnNumber: {}",
+                        broadcastStreamId, generation, accumulator.getTurnNumber());
+                return;
+            }
+
+            // 1. VOICE_INTERRUPTED 메타데이터 전송
+            Long characterId = resolveCharacterId(validatedBundle);
+            String voiceText = accumulator.getInterruptedText();
+            if (voiceText == null) {
+                voiceText = (accumulator.getAccumulatedText() != null && !accumulator.getAccumulatedText().isBlank())
+                        ? accumulator.getAccumulatedText() + " [응답 중단됨]"
+                        : "[응답 중단됨]";
+            }
+
+            broadcastWebSocketSender.sendInterruptedMetadata(
+                    broadcastStreamId,
+                    generation,
+                    characterId,
+                    accumulator.getTurnNumber(),
+                    voiceText,
+                    accumulator.getEmotion(),
+                    accumulator.getInterruptedCursorId()
+            );
+        } catch (Exception e) {
+            log.warn("[BroadcastGeminiResponseService] handleInterruptedTurn() - Metadata send failed | streamId: {}, generation: {}, turnNumber: {}, error: {}",
+                    broadcastStreamId, generation, accumulator.getTurnNumber(), e.getMessage());
+        }
+
+        // 2. 클라이언트로의 Interrupted 메타데이터까지 전송 완료되었으므로 최종적으로 request-flight 감소
+        handleGeminiTurnFinished(broadcastStreamId, generation, bundle);
+
+        log.info("[BroadcastGeminiResponseService] handleInterruptedTurn() - END | streamId: {}, generation: {}, turnNumber: {}",
+                broadcastStreamId, generation, accumulator.getTurnNumber());
     }
 
     /**
