@@ -10,11 +10,6 @@ spring:
     show-sql: false       # dev 서버 로그 과부하 방지
     hibernate:
       ddl-auto: update
-  data:
-    redis:
-      host: ${DEV_REDIS_HOST}   # dev용 Redis 호스트
-      port: 6379
-      password: ${DEV_REDIS_PW}
   cloud:
     aws:
       credentials:
@@ -78,3 +73,14 @@ fastapi:
   connect-timeout-ms: 5000
   read-timeout-ms: 30000
   max-in-memory-size-bytes: ${FASTAPI_MAX_IN_MEMORY_SIZE_BYTES:2097152}
+
+app:
+  redis:
+    broadcast:
+      host: ${DEV_BROADCAST_REDIS_HOST}
+      port: ${DEV_BROADCAST_REDIS_PORT:6380}
+      password: ${DEV_BROADCAST_REDIS_PW}
+    chat:
+      host: ${DEV_CHAT_REDIS_HOST}
+      port: ${DEV_CHAT_REDIS_PORT:6381}
+      password: ${DEV_CHAT_REDIS_PW}

@@ -174,10 +174,55 @@ jobs:
 
 
   # =============================================
-  # JOB 3. Spring Boot EC2 배포 (Bastion Host 경유)
+  # JOB 3. Redis EC2 배포 (Bastion Host 경유)
+  # =============================================
+  deploy-redis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose to Redis EC2 via Bastion
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.REDIS_PRIVATE_EC2_HOST }}
+          username: ${{ secrets.REDIS_PRIVATE_EC2_SSH_USER }}
+          key: ${{ secrets.REDIS_PRIVATE_EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          source: "docker/redis/docker-compose.yml"
+          target: "/home/${{ secrets.REDIS_PRIVATE_EC2_SSH_USER }}/deploy/redis"
+          strip_components: 2
+
+      - name: Deploy to Redis EC2 via Bastion
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.REDIS_PRIVATE_EC2_HOST }}
+          username: ${{ secrets.REDIS_PRIVATE_EC2_SSH_USER }}
+          key: ${{ secrets.REDIS_PRIVATE_EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.BASTION_EC2_HOST }}
+          proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
+          proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.REDIS_PRIVATE_EC2_SSH_USER }}/deploy/redis
+
+            cat > .env << EOF
+            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }}
+            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }}
+            EOF
+
+            docker compose pull
+            docker compose up -d
+            docker image prune -f
+
+
+  # =============================================
+  # JOB 4. Spring Boot EC2 배포 (Bastion Host 경유)
   # =============================================
   deploy-backend:
-    needs: build-backend
+    needs: [build-backend, deploy-redis]
     # ▲ 의존성 선언: build-backend Job이 성공해야 이 Job 시작
     #   build-backend 실패 시 이 Job은 실행되지 않음
     #   선언 안 하면 병렬 실행됨
@@ -267,10 +312,12 @@ jobs:
             # ▲ DB 접속 비밀번호
             DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }}
             # ▲ JWT 토큰 서명에 사용할 시크릿 키
-            DEV_REDIS_HOST=${{ secrets.DEV_REDIS_HOST }}
-            # ▲ Redis 서버 호스트 주소 (캐시/세션용)
-            DEV_REDIS_PW=${{ secrets.DEV_REDIS_PW }}
-            # ▲ Redis 접속 비밀번호
+            DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }}
+            DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }}
+            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }}
+            DEV_CHAT_REDIS_HOST=${{ secrets.DEV_CHAT_REDIS_HOST }}
+            DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }}
+            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }}
             DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}}
             # ▲ 클라우드 프론트 도메인
             GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
@@ -298,7 +345,7 @@ jobs:
             
 
   # =============================================
-  # JOB 4. FastAPI EC2 배포 (Bastion Host 경유)
+  # JOB 5. FastAPI EC2 배포 (Bastion Host 경유)
   # =============================================
   deploy-fastapi:
     needs: build-fastapi
@@ -356,7 +403,7 @@ jobs:
 
 
   # =============================================
-  # JOB 5. Nginx EC2 배포 (Public Subnet)
+  # JOB 6. Nginx EC2 배포 (Public Subnet)
   # =============================================
   deploy-nginx:
     # ▲ needs 선언 없음 → build-backend, deploy-backend와 병렬 실행

@@ -163,11 +163,8 @@ public class BroadcastConnectionTimeoutService {
             });
 
             if (!sessionRegistry.hasSessionBundle(broadcastStreamId)) {
-                boolean compacted = broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
                 broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-                if (compacted) {
-                    broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
-                }
+                broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
                 log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Redis backup & delete completed | streamId: {}", broadcastStreamId);
             }
 
