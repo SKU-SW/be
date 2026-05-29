@@ -1,0 +1,24 @@
+services:
+  redis-broadcast:
+    image: redis:latest
+    container_name: redis-broadcast
+    restart: always
+    command: redis-server --requirepass ${DEV_BROADCAST_REDIS_PW}
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-broadcast-data:/data
+
+  redis-chat:
+    image: redis:latest
+    container_name: redis-chat
+    restart: always
+    command: redis-server --requirepass ${DEV_CHAT_REDIS_PW}
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis-chat-data:/data
+
+volumes:
+  redis-broadcast-data:
+  redis-chat-data:

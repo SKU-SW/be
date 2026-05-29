@@ -21,18 +21,7 @@ services:
     networks:
       - spring-network
 
-  # 2. Redis
-  redis:
-    image: redis:latest
-    container_name: redis-cache
-    restart: always
-    command: redis-server --requirepass ${DEV_REDIS_PW}
-    volumes:
-      - redis-dev:/data
-    networks:
-      - spring-network
-
-  # 3. Spring Boot
+  # 2. Spring Boot
   app:
     image: ${DEV_BACKEND_DOCKER_HUB_ID}/spring-api-server:latest
     container_name: spring-api-server
@@ -41,7 +30,6 @@ services:
     restart: always
     depends_on:
       - mysql
-      - redis
     environment:
       - SPRING_PROFILES_ACTIVE=dev
       - DEV_DB_HOST=${DEV_DB_HOST}
@@ -49,8 +37,12 @@ services:
       - DEV_DB_USER=${DEV_DB_USER}
       - DEV_DB_PW=${DEV_DB_PW}
       - DEV_JWT_SECRET_KEY=${DEV_JWT_SECRET_KEY}
-      - DEV_REDIS_HOST=${DEV_REDIS_HOST}
-      - DEV_REDIS_PW=${DEV_REDIS_PW}
+      - DEV_BROADCAST_REDIS_HOST=${DEV_BROADCAST_REDIS_HOST}
+      - DEV_BROADCAST_REDIS_PORT=${DEV_BROADCAST_REDIS_PORT}
+      - DEV_BROADCAST_REDIS_PW=${DEV_BROADCAST_REDIS_PW}
+      - DEV_CHAT_REDIS_HOST=${DEV_CHAT_REDIS_HOST}
+      - DEV_CHAT_REDIS_PORT=${DEV_CHAT_REDIS_PORT}
+      - DEV_CHAT_REDIS_PW=${DEV_CHAT_REDIS_PW}
       - DEV_CLOUDFRONT_DOMAIN=${DEV_CLOUDFRONT_DOMAIN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - REDIS_BROADCAST_DIALOGUE_MAX_NUM=${REDIS_BROADCAST_DIALOGUE_MAX_NUM}
@@ -66,4 +58,3 @@ networks:
 
 volumes:
   mysql-dev:
-  redis-dev:

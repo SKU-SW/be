@@ -5,8 +5,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.UnsupportedJwtException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -24,11 +24,20 @@ import java.util.HexFormat;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class RedisUtil {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final JwtUtil jwtUtil;
+
+    public RedisUtil(
+            @Qualifier("broadcastStringRedisTemplate") StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper,
+            JwtUtil jwtUtil
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
+        this.jwtUtil = jwtUtil;
+    }
 
     // ==========================================================
     // [ Refresh Token ]

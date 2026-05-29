@@ -12,8 +12,8 @@ import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -32,7 +32,6 @@ import java.util.Objects;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class BroadcastRedisUtil {
     private static final String BROADCAST_CHARACTER_KEY_PREFIX = "BroadcastCharacter:";
     private static final String BROADCAST_INFO_KEY_PREFIX = "BroadcastInfo:";
@@ -44,6 +43,14 @@ public class BroadcastRedisUtil {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+
+    public BroadcastRedisUtil(
+            @Qualifier("broadcastStringRedisTemplate") StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
+    }
 
     /**
      * 방송 캐릭터 정보를 Redis에 저장하는 함수
