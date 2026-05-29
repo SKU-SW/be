@@ -244,12 +244,12 @@ jobs:
         #   SSH 터널을 이용해 Bastion Host를 경유하여 전송
         with:
           # ── 최종 목적지: Private EC2 ──────────────────
-          host: ${{ secrets.PRIVATE_EC2_HOST }}
+          host: ${{ secrets.SPRING_PRIVATE_EC2_HOST }}
           # ▲ Private EC2의 프라이빗 IP (예: 10.0.2.100)
           #   인터넷에서 직접 접근 불가, Bastion 경유 필수
-          username: ${{ secrets.PRIVATE_EC2_SSH_USER }}
+          username: ${{ secrets.SPRING_PRIVATE_EC2_SSH_USER }}
           # ▲ Private EC2 SSH 접속 유저명 (예: ubuntu, ec2-user)
-          key: ${{ secrets.PRIVATE_EC2_SSH_KEY }}
+          key: ${{ secrets.SPRING_PRIVATE_EC2_SSH_KEY }}
           # ▲ Private EC2 접속용 SSH 프라이빗 키 (PEM 파일 내용)
 
           # ── 경유지: Bastion Host ──────────────────────
@@ -265,7 +265,7 @@ jobs:
           # ── 파일 전송 설정 ────────────────────────────
           source: "docker/backend/docker-compose.yml"
           # ▲ Runner에서 전송할 파일 경로 (저장소 기준)
-          target: "/home/${{ secrets.PRIVATE_EC2_SSH_USER }}/deploy/backend"
+          target: "/home/${{ secrets.SPRING_PRIVATE_EC2_SSH_USER }}/deploy/backend"
           # ▲ Private EC2에서 파일을 저장할 경로
           strip_components: 2
           # ▲ 원본 경로에서 앞 디렉토리 2단계 제거
@@ -281,9 +281,9 @@ jobs:
         # ▲ SSH로 원격 명령어를 실행하는 Action
         #   Bastion Host를 경유하는 프록시 SSH 지원
         with:
-          host: ${{ secrets.PRIVATE_EC2_HOST }}
-          username: ${{ secrets.PRIVATE_EC2_SSH_USER }}
-          key: ${{ secrets.PRIVATE_EC2_SSH_KEY }}
+          host: ${{ secrets.SPRING_PRIVATE_EC2_HOST }}
+          username: ${{ secrets.SPRING_PRIVATE_EC2_SSH_USER }}
+          key: ${{ secrets.SPRING_PRIVATE_EC2_SSH_KEY }}
           proxy_host: ${{ secrets.BASTION_EC2_HOST }}
           proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
           proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
@@ -292,7 +292,7 @@ jobs:
           script: |
             # ▲ Private EC2에서 실제로 실행될 쉘 스크립트
 
-            cd /home/${{ secrets.PRIVATE_EC2_SSH_USER }}/deploy/backend
+            cd /home/${{ secrets.SPRING_PRIVATE_EC2_SSH_USER }}/deploy/backend
             # ▲ SCP로 복사한 docker-compose.yml이 있는 디렉토리로 이동
 
             # .env 파일 생성
