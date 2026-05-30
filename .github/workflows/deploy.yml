@@ -304,17 +304,11 @@ jobs:
 
             # 환경변수 직접 주입 & 컨테이너 재시작
             DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }} \
-            # ▲ docker-compose.yml에서 이미지 경로 구성에 사용
             DEV_DB_HOST=${{ secrets.DEV_DB_HOST }} \
-            # ▲ RDS 등 데이터베이스 호스트 주소
             DEV_DB_NAME=${{ secrets.DEV_DB_NAME }} \
-            # ▲ 사용할 데이터베이스 이름
             DEV_DB_USER=${{ secrets.DEV_DB_USER }} \
-            # ▲ DB 접속 계정
             DEV_DB_PW=${{ secrets.DEV_DB_PW }} \
-            # ▲ DB 접속 비밀번호
             DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }} \
-            # ▲ JWT 토큰 서명에 사용할 시크릿 키
             DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }} \
             DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }} \
             DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }} \
@@ -322,7 +316,6 @@ jobs:
             DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }} \
             DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }} \
             DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}} \
-            # ▲ 클라우드 프론트 도메인
             GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}} \
             REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}} \
             REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}} \
