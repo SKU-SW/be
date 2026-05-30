@@ -40,6 +40,16 @@ public class User {
     @Column(name = "selected_character_id")
     private Long selectedCharacterId;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean chzzkApiAuthorized = false;
+
+    @Column(length = 2000)
+    private String chzzkAuthAccessToken;
+
+    @Column(length = 2000)
+    private String chzzkAuthRefreshToken;
+
     // =========================================
     // [ 비즈니스 함수 ]
     // =========================================
@@ -55,5 +65,24 @@ public class User {
     public void updateSelectedCharacterId(Long selectedCharacterId) {
         this.selectedCharacterId = selectedCharacterId;
     }
-    
+
+    public void updateChzzkAuthTokens(String chzzkAuthAccessToken, String chzzkAuthRefreshToken) {
+        this.chzzkApiAuthorized = true;
+        this.chzzkAuthAccessToken = chzzkAuthAccessToken;
+        this.chzzkAuthRefreshToken = chzzkAuthRefreshToken;
+    }
+
+    public void clearChzzkAuthTokens() {
+        this.chzzkAuthAccessToken = null;
+        this.chzzkAuthRefreshToken = null;
+    }
+
+    public boolean hasChzzkAuthTokens() {
+        return hasText(chzzkAuthAccessToken) && hasText(chzzkAuthRefreshToken);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
 }

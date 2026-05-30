@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 public enum AuthErrorCode implements BaseErrorCode {
     // 400 BAD_REQUEST
     PASSWORD_CONFIRM_MISMATCH(HttpStatus.BAD_REQUEST, "비밀번호와 비밀번호 확인이 일치하지 않습니다."),
+    CHZZK_AUTH_STATE_INVALID(HttpStatus.BAD_REQUEST, "유효하지 않은 치지직 인증 요청입니다."),
 
     // 401 UNAUTHORIZED
     INVALID_LOGIN_CREDENTIALS(HttpStatus.UNAUTHORIZED, "이메일 또는 비밀번호가 올바르지 않습니다."),

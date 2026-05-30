@@ -66,6 +66,7 @@ public class BroadcastService {
     /**
      * AI 캐릭터 방송 시작
      * - 사용자가 선택한 캐릭터로 방송을 시작한다.
+     * - 치지직 Auth Access Token / Refresh Token이 저장되어 있어야 한다.
      * - 선택되지 않은 캐릭터거나 이미 방송 중인 경우 예외를 발생시킨다.
      * - User row에 Write Lock을 걸어 동시 요청을 직렬화한다.
      * @param userId : 방송을 시작하는 사용자 ID
@@ -83,7 +84,15 @@ public class BroadcastService {
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.USER_NOT_FOUND));
 
         /*
-            2. 선택된 캐릭터 검증
+            2. 치지직 Auth 토큰 저장 여부 확인
+            - 치지직 Auth Access Token / Refresh Token이 모두 저장되어 있어야 방송을 시작할 수 있다.
+         */
+        if (!user.hasChzzkAuthTokens()) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_AUTH_REQUIRED);
+        }
+
+        /*
+            3. 선택된 캐릭터 검증
             - 선택된 캐릭터가 없거나, 요청한 캐릭터가 선택된 캐릭터가 아닌 경우 예외를 발생시킨다.
          */
         if (user.getSelectedCharacterId() == null || !user.getSelectedCharacterId().equals(characterId)) {
@@ -91,14 +100,14 @@ public class BroadcastService {
         }
 
         /*
-            3. 캐릭터 조회 및 소유권 검증
+            4. 캐릭터 조회 및 소유권 검증
             - characterId와 userId로 캐릭터를 조회하고, 존재하지 않으면 CHARACTER_NOT_FOUND 예외를 발생시킨다.
          */
         Character character = characterRepository.findBroadcastRedisCharacterByIdAndUserId(characterId, userId)
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_NOT_FOUND));
 
         /*
-            4. 해당 캐릭터 방송 중 여부 확인
+            5. 해당 캐릭터 방송 중 여부 확인
             - 이미 BROADCASTING 상태인 방송이 있으면 CHARACTER_ALREADY_BROADCASTING 예외를 발생시킨다.
          */
         if (broadcastRepository.existsByCharacterIdAndStatus(characterId, BroadcastStatus.BROADCASTING)) {
@@ -106,27 +115,27 @@ public class BroadcastService {
         }
 
         /*
-            5. 고유 streamId 생성
+            6. 고유 streamId 생성
             - 16자리 영숫자 랜덤 ID를 생성하고, 중복 시 재생성한다.
          */
         String streamId = streamIdGenerator.generate();
 
         /*
-            6. Broadcast 엔티티 생성 및 저장
+            7. Broadcast 엔티티 생성 및 저장
             - 생성한 streamId와 character로 Broadcast 객체를 생성하고 저장한다.
          */
         Broadcast broadcast = Broadcast.startBroadcast(streamId, character);
         Broadcast savedBroadcast = broadcastRepository.save(broadcast);
 
         /*
-            7. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
+            8. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
             - 방송 시작 DB 커밋이 확정된 이후 Redis에 방송 캐릭터 정보를 저장한다.
          */
         BroadcastCharacterRedisDto redisDto = buildBroadcastCharacterRedisDto(character);
         registerBroadcastRedisSaveAfterCommit(savedBroadcast.getStreamId(), redisDto);
 
         /*
-            8. ResponseDto 생성
+            9. ResponseDto 생성
             - 저장된 Broadcast의 streamId와 startedAt을 포맷하여 응답 DTO를 생성한다.
          */
         BroadcastStartResDto result = BroadcastStartResDto.builder()

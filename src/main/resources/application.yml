@@ -5,7 +5,6 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver # MySQL JDBC 드라이버 클래스 지정
   jpa:
     database: mysql # 사용할 데이터베이스 종류 설정 (MySQL)
-    database-platform: org.hibernate.dialect.MySQLDialect # Hibernate에서 사용할 MySQL 방언(dialect) 설정
     show-sql: false # 실행되는 SQL 쿼리를 콘솔에 출력할지 여부 설정
     properties:
       hibernate:
@@ -29,6 +28,10 @@ jwt:
   access-token-validity-in-ms: 86400000
   # 3달 (1000 * 60 * 60 * 24 * 90)
   refresh-token-validity-in-ms: 7776000000
+
+chzzk:
+  client-id: ${CHZZK_CLIENT_ID}
+  client-secret: ${CHZZK_CLIENT_SECRET}
 
 # ops 설정
 management:
