@@ -84,3 +84,8 @@ app:
       host: ${DEV_CHAT_REDIS_HOST}
       port: ${DEV_CHAT_REDIS_PORT:6381}
       password: ${DEV_CHAT_REDIS_PW}
+
+chzzk:
+  client-id: ${CHZZK_CLIENT_ID}
+  client-secret: ${CHZZK_CLIENT_SECRET}
+  redirect-uri: https://dev.sku-sw.cloud/api/v1/auth/chzzk/callback

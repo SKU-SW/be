@@ -9,6 +9,7 @@ import com.example.sku_sw.domain.auth.dto.AuthRefreshTokenResDto;
 import com.example.sku_sw.domain.auth.dto.AuthRegisterEmailReqDto;
 import com.example.sku_sw.domain.auth.service.AuthService;
 import com.example.sku_sw.global.response.GlobalResponse;
+import com.example.sku_sw.global.security.SecurityUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

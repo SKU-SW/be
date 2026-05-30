@@ -4,6 +4,6 @@ public record AuthChzzkTokenResDto(
         String accessToken,
         String refreshToken,
         String tokenType,
-        String expiresIn
+        Long expiresIn
 ) {
 }

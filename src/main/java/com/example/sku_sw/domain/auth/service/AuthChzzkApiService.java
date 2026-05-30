@@ -1,10 +1,12 @@
 package com.example.sku_sw.domain.auth.service;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkApiResDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenResDto;
 import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -35,7 +37,7 @@ public class AuthChzzkApiService {
         log.info("[AuthChzzkApiService] requestToken() - START | state: {}", request.state());
 
         try {
-            AuthChzzkTokenResDto result = webClient.post()
+            AuthChzzkApiResDto<AuthChzzkTokenResDto> response = webClient.post()
                     .uri(CHZZK_TOKEN_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
@@ -48,11 +50,18 @@ public class AuthChzzkApiService {
                                         return new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_REQUEST_FAILED);
                                     })
                     )
-                    .bodyToMono(AuthChzzkTokenResDto.class)
+                    .bodyToMono(new ParameterizedTypeReference<AuthChzzkApiResDto<AuthChzzkTokenResDto>>() {
+                    })
                     .block();
 
+            if (response == null || response.content() == null) {
+                log.error("[AuthChzzkApiService] requestToken() - invalid CHZZK token response | state: {}, response: {}",
+                        request.state(), response);
+                throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_RESPONSE_INVALID);
+            }
+
             log.info("[AuthChzzkApiService] requestToken() - END | state: {}", request.state());
-            return result;
+            return response.content();
         } catch (CustomException e) {
             throw e;
         } catch (Exception e) {

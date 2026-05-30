@@ -40,7 +40,6 @@ import java.util.UUID;
 public class AuthService {
 
     private static final String CHZZK_AUTH_BASE_URL = "https://chzzk.naver.com/account-interlock";
-    private static final String CHZZK_REDIRECT_URI = "https://dev.sku-sw.cloud/api/v1/auth/chzzk/callback";
     private static final long CHZZK_AUTH_STATE_TTL_MILLIS = 10 * 60 * 1000L;
     private static final long CHZZK_REFRESH_TOKEN_EXPIRES_DAYS = 30L;
     private static final String CHZZK_AUTHORIZATION_GRANT_TYPE = "authorization_code";
@@ -56,6 +55,9 @@ public class AuthService {
 
     @Value("${chzzk.client-secret}")
     private String chzzkClientSecret;
+
+    @Value("${chzzk.redirect-uri}")
+    private String chzzkRedirectUri;
 
     /**
      * 이메일 회원가입을 처리하는 함수
@@ -338,7 +340,7 @@ public class AuthService {
          */
         String authUrl = UriComponentsBuilder.fromHttpUrl(CHZZK_AUTH_BASE_URL)
                 .queryParam("clientId", chzzkClientId)
-                .queryParam("redirectUri", CHZZK_REDIRECT_URI)
+                .queryParam("redirectUri", chzzkRedirectUri)
                 .queryParam("state", state)
                 .build()
                 .toUriString();
@@ -414,7 +416,7 @@ public class AuthService {
             - Access Token은 expiresIn 기준, Refresh Token은 30일 기준으로 만료 시각을 계산한다.
          */
         LocalDateTime currentDateTime = LocalDateTime.now();
-        LocalDateTime accessTokenExpiresAt = currentDateTime.plusSeconds(Long.parseLong(tokenResponse.expiresIn()));
+        LocalDateTime accessTokenExpiresAt = currentDateTime.plusSeconds(tokenResponse.expiresIn());
         LocalDateTime refreshTokenExpiresAt = currentDateTime.plus(CHZZK_REFRESH_TOKEN_EXPIRES_DAYS, ChronoUnit.DAYS);
 
         /*
@@ -485,13 +487,8 @@ public class AuthService {
                 || isBlank(tokenResponse.accessToken())
                 || isBlank(tokenResponse.refreshToken())
                 || isBlank(tokenResponse.tokenType())
-                || isBlank(tokenResponse.expiresIn())) {
-            throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_RESPONSE_INVALID);
-        }
-
-        try {
-            Long.parseLong(tokenResponse.expiresIn());
-        } catch (NumberFormatException e) {
+                || tokenResponse.expiresIn() == null
+                || tokenResponse.expiresIn() <= 0) {
             throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_RESPONSE_INVALID);
         }
     }
