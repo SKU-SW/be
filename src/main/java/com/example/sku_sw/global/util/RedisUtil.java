@@ -217,14 +217,15 @@ public class RedisUtil {
     /**
      * 치지직 Auth state를 Redis에 저장하는 함수
      * - Key: CHZZK:STATE:{state}
-     * - Value: VALID
+     * - Value: userId
      * - TTL: callback 검증 가능 시간
      * @param state : 저장할 state 값
+     * @param userId : 저장할 사용자 ID
      * @param durationInMillis : TTL(ms)
      */
-    public void setChzzkAuthState(String state, long durationInMillis) {
+    public void setChzzkAuthState(String state, Long userId, long durationInMillis) {
         String key = "CHZZK:STATE:" + state;
-        redisTemplate.opsForValue().set(key, "VALID", Duration.ofMillis(durationInMillis));
+        redisTemplate.opsForValue().set(key, String.valueOf(userId), Duration.ofMillis(durationInMillis));
     }
 
     /**
@@ -234,5 +235,24 @@ public class RedisUtil {
      */
     public boolean hasChzzkAuthState(String state) {
         return Boolean.TRUE.equals(redisTemplate.hasKey("CHZZK:STATE:" + state));
+    }
+
+    /**
+     * 치지직 Auth state에 매핑된 userId를 조회하는 함수
+     * @param state : 조회할 state 값
+     * @return : userId, 없거나 파싱 불가 시 null
+     */
+    public Long getChzzkAuthStateUserId(String state) {
+        String value = redisTemplate.opsForValue().get("CHZZK:STATE:" + state);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        try {
+            return Long.valueOf(value);
+        } catch (NumberFormatException e) {
+            log.error("[Redis] CHZZK state userId 파싱 오류 - state: {}, value: {}", state, value);
+            return null;
+        }
     }
 }

@@ -8,6 +8,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Builder
 @Getter
@@ -50,6 +52,10 @@ public class User {
     @Column(length = 2000)
     private String chzzkAuthRefreshToken;
 
+    private LocalDateTime chzzkAuthAccessTokenExpiresAt;
+
+    private LocalDateTime chzzkAuthRefreshTokenExpiresAt;
+
     // =========================================
     // [ 비즈니스 함수 ]
     // =========================================
@@ -66,15 +72,24 @@ public class User {
         this.selectedCharacterId = selectedCharacterId;
     }
 
-    public void updateChzzkAuthTokens(String chzzkAuthAccessToken, String chzzkAuthRefreshToken) {
+    public void updateChzzkAuthTokens(
+            String chzzkAuthAccessToken,
+            String chzzkAuthRefreshToken,
+            LocalDateTime chzzkAuthAccessTokenExpiresAt,
+            LocalDateTime chzzkAuthRefreshTokenExpiresAt
+    ) {
         this.chzzkApiAuthorized = true;
         this.chzzkAuthAccessToken = chzzkAuthAccessToken;
         this.chzzkAuthRefreshToken = chzzkAuthRefreshToken;
+        this.chzzkAuthAccessTokenExpiresAt = chzzkAuthAccessTokenExpiresAt;
+        this.chzzkAuthRefreshTokenExpiresAt = chzzkAuthRefreshTokenExpiresAt;
     }
 
     public void clearChzzkAuthTokens() {
         this.chzzkAuthAccessToken = null;
         this.chzzkAuthRefreshToken = null;
+        this.chzzkAuthAccessTokenExpiresAt = null;
+        this.chzzkAuthRefreshTokenExpiresAt = null;
     }
 
     public boolean hasChzzkAuthTokens() {

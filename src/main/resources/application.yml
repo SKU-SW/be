@@ -29,10 +29,6 @@ jwt:
   # 3달 (1000 * 60 * 60 * 24 * 90)
   refresh-token-validity-in-ms: 7776000000
 
-chzzk:
-  client-id: ${CHZZK_CLIENT_ID}
-  client-secret: ${CHZZK_CLIENT_SECRET}
-
 # ops 설정
 management:
   endpoints:
