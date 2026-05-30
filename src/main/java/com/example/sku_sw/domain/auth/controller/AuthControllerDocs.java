@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.auth.controller;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLogoutReqDto;
@@ -8,6 +9,7 @@ import com.example.sku_sw.domain.auth.dto.AuthRefreshTokenResDto;
 import com.example.sku_sw.domain.auth.dto.AuthRegisterEmailReqDto;
 import com.example.sku_sw.global.response.GlobalResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -15,9 +17,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @Tag(name = "Auth", description = "인증 관련 API")
 @RequestMapping("/api/v1/auth")
@@ -105,5 +109,48 @@ public interface AuthControllerDocs {
     @PostMapping("/refresh")
     ResponseEntity<GlobalResponse<AuthRefreshTokenResDto>> refreshToken(
             @RequestBody AuthRefreshTokenReqDto authRefreshTokenReqDto
+    );
+
+    @Operation(
+            summary = "치지직 인증 URL 조회",
+            description = """
+                    프론트가 치지직 인증 페이지로 이동할 수 있도록 인증 URL을 반환합니다.
+
+                    [Response Data]
+                    - authUrl: 치지직 계정 연동 인증 URL
+                    """
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "치지직 인증 URL 조회 성공",
+                    content = @Content(schema = @Schema(implementation = AuthChzzkAuthUrlResDto.class))
+            )
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/chzzk")
+    ResponseEntity<GlobalResponse<AuthChzzkAuthUrlResDto>> getChzzkAuthUrl();
+
+    @Operation(
+            summary = "치지직 인증 Callback 수신",
+            description = """
+                    치지직 인증 완료 후 redirect 되는 callback 요청을 수신합니다.
+
+                    [Query Parameter]
+                    - code: 치지직 인증 완료 후 전달되는 authorization code
+                    - state: 인증 URL 발급 시 서버가 생성하고 Redis에 저장한 CSRF 방지용 state 값
+                    """
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "치지직 인증 callback 수신 성공", content = @Content),
+            @ApiResponse(responseCode = "400", description = "유효하지 않은 치지직 인증 요청입니다.", content = @Content)
+    })
+    @GetMapping("/chzzk/callback")
+    ResponseEntity<GlobalResponse<Void>> handleChzzkCallback(
+            @Parameter(description = "치지직 인증 authorization code", required = true)
+            @RequestParam("code") String code,
+
+            @Parameter(description = "CSRF 방지용 state 값", required = true)
+            @RequestParam("state") String state
     );
 }

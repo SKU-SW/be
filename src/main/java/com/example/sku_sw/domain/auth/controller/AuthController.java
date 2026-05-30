@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.auth.controller;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLogoutReqDto;
@@ -49,5 +50,17 @@ public class AuthController implements AuthControllerDocs {
     ) {
         AuthRefreshTokenResDto response = authService.refreshToken(authRefreshTokenReqDto);
         return ResponseEntity.ok(GlobalResponse.success("Access Token & Refresh Token 재발급 완료", response));
+    }
+
+    @Override
+    public ResponseEntity<GlobalResponse<AuthChzzkAuthUrlResDto>> getChzzkAuthUrl() {
+        AuthChzzkAuthUrlResDto response = authService.getChzzkAuthUrl();
+        return ResponseEntity.ok(GlobalResponse.success("치지직 인증 URL 조회 성공", response));
+    }
+
+    @Override
+    public ResponseEntity<GlobalResponse<Void>> handleChzzkCallback(String code, String state) {
+        authService.handleChzzkCallback(code, state);
+        return ResponseEntity.ok(GlobalResponse.success("치지직 인증 callback 수신 성공", null));
     }
 }

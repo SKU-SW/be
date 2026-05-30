@@ -29,6 +29,7 @@ public class SecurityConfig {
             "/api/v1/auth/register/email",
             "/api/v1/auth/login/email",
             "/api/v1/auth/refresh",
+            "/api/v1/auth/chzzk/callback",
             "/v3/api-docs/**",  // Swagger JSON 데이터
             "/swagger-ui/**",   // Swagger UI CSS, JS, 이미지
             "/swagger-ui-custom.html",  // Swagger UI 메인 페이지

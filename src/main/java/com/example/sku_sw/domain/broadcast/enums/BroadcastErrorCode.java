@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum BroadcastErrorCode implements BaseErrorCode {
     TOKEN_AUTHORIZATION_FAILED(HttpStatus.BAD_REQUEST, "토큰 인증에 실패했습니다."),
+    CHZZK_AUTH_REQUIRED(HttpStatus.BAD_REQUEST, "치지직 Auth가 필요합니다."),
     BROADCAST_CHARACTER_NOT_SELECTED(HttpStatus.BAD_REQUEST, "선택되지 않은 캐릭터가 방송 시작을 시도했습니다."),
     CHARACTER_ALREADY_BROADCASTING(HttpStatus.BAD_REQUEST, "이미 해당 캐릭터가 방송을 진행 중입니다."),
     NEED_BROADCAST_STREAM_ID(HttpStatus.BAD_REQUEST, "방송 고유 ID가 필요합니다"),

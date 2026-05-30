@@ -209,4 +209,30 @@ public class RedisUtil {
     public Boolean hasTokenInBlacklist(String token) {
         return redisTemplate.hasKey("BL:" + jwtUtil.getJtiFromToken(token));
     }
+
+    // ==========================================================
+    // [ CHZZK Auth State ]
+    // ==========================================================
+
+    /**
+     * 치지직 Auth state를 Redis에 저장하는 함수
+     * - Key: CHZZK:STATE:{state}
+     * - Value: VALID
+     * - TTL: callback 검증 가능 시간
+     * @param state : 저장할 state 값
+     * @param durationInMillis : TTL(ms)
+     */
+    public void setChzzkAuthState(String state, long durationInMillis) {
+        String key = "CHZZK:STATE:" + state;
+        redisTemplate.opsForValue().set(key, "VALID", Duration.ofMillis(durationInMillis));
+    }
+
+    /**
+     * 치지직 Auth state 존재 여부를 확인하는 함수
+     * @param state : 조회할 state 값
+     * @return : 존재 여부
+     */
+    public boolean hasChzzkAuthState(String state) {
+        return Boolean.TRUE.equals(redisTemplate.hasKey("CHZZK:STATE:" + state));
+    }
 }

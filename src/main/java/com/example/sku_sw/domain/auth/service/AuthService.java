@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.auth.service;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLogoutReqDto;
@@ -20,19 +21,33 @@ import com.example.sku_sw.global.util.module.RedisValue;
 import com.example.sku_sw.global.util.module.TokenInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final String CHZZK_AUTH_BASE_URL = "https://chzzk.naver.com/account-interlock";
+    private static final String CHZZK_REDIRECT_URI = "https://dev.sku-sw.cloud/api/v1/auth/chzzk/callback";
+    private static final long CHZZK_AUTH_STATE_TTL_MILLIS = 10 * 60 * 1000L;
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final RedisUtil redisUtil;
+
+    @Value("${chzzk.client-id}")
+    private String chzzkClientId;
+
+    @Value("${chzzk.client-secret}")
+    private String chzzkClientSecret;
 
     /**
      * 이메일 회원가입을 처리하는 함수
@@ -279,6 +294,79 @@ public class AuthService {
 
         log.info("[AuthService] refreshToken() - END | userId: {}, email: {}", redisValue.userId(), redisValue.email());
         return result;
+    }
+
+    /**
+     * 치지직 인증 URL을 생성하는 함수
+     * - clientId, redirectUri, state를 포함한 치지직 계정 연동 URL을 생성한다.
+     * - 생성한 state는 callback 검증을 위해 Redis에 저장한다.
+     * @return : 치지직 인증 URL 응답 DTO
+     */
+    @Transactional(readOnly = true)
+    public AuthChzzkAuthUrlResDto getChzzkAuthUrl() {
+        log.info("[AuthService] getChzzkAuthUrl() - START");
+
+        /*
+            1. 치지직 인증 state 생성
+            - CSRF 방지를 위해 임시 UUID 기반 state 값을 생성한다.
+         */
+        String state = UUID.randomUUID().toString();
+
+        /*
+            2. state Redis 저장
+            - callback 요청 검증을 위해 생성 직후 Redis에 state 값을 저장한다.
+         */
+        redisUtil.setChzzkAuthState(state, CHZZK_AUTH_STATE_TTL_MILLIS);
+
+        /*
+            3. 치지직 인증 URL 생성
+            - clientId, redirectUri, state를 query parameter로 조합한다.
+         */
+        String authUrl = UriComponentsBuilder.fromHttpUrl(CHZZK_AUTH_BASE_URL)
+                .queryParam("clientId", chzzkClientId)
+                .queryParam("redirectUri", CHZZK_REDIRECT_URI)
+                .queryParam("state", state)
+                .build()
+                .toUriString();
+
+        /*
+            4. ResponseDto 생성
+            - 프론트가 바로 redirect에 사용할 수 있도록 치지직 인증 URL을 반환한다.
+         */
+        AuthChzzkAuthUrlResDto result = AuthChzzkAuthUrlResDto.builder()
+                .authUrl(authUrl)
+                .build();
+
+        log.info("[AuthService] getChzzkAuthUrl() - END | state: {}", state);
+        return result;
+    }
+
+    /**
+     * 치지직 인증 callback 요청을 검증하는 함수
+     * - Redis에 저장된 state 존재 여부를 확인해 유효한 인증 요청인지 검증한다.
+     * - state 검증 이후의 토큰 교환 및 저장 단계는 다음 구현에서 진행한다.
+     * @param code : 치지직 인증 authorization code
+     * @param state : callback으로 전달된 state 값
+     */
+    @Transactional
+    public void handleChzzkCallback(String code, String state) {
+        log.info("[AuthService] handleChzzkCallback() - START | code: {}, state: {}", code, state);
+
+        /*
+            1. 치지직 인증 state 검증
+            - Redis에 저장된 state 값이 없으면 유효하지 않은 인증 요청으로 판단한다.
+         */
+        if (!redisUtil.hasChzzkAuthState(state)) {
+            throw new CustomException(AuthErrorCode.CHZZK_AUTH_STATE_INVALID);
+        }
+
+        /*
+            2. 다음 단계 진행 준비
+            - code를 이용한 Access Token / Refresh Token 교환 및 DB 저장은 다음 구현 단계에서 진행한다.
+         */
+        log.debug("[AuthService] handleChzzkCallback() - chzzkClientSecret configured: {}", chzzkClientSecret != null && !chzzkClientSecret.isBlank());
+
+        log.info("[AuthService] handleChzzkCallback() - END | state: {}", state);
     }
 
     /**
