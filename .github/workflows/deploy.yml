@@ -206,15 +206,15 @@ jobs:
           proxy_username: ${{ secrets.BASTION_EC2_SSH_USER }}
           proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
           script: |
+            rm -f .env
             cd /home/${{ secrets.REDIS_PRIVATE_EC2_SSH_USER }}/deploy/redis
 
-            cat > .env << EOF
-            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }}
-            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }}
-            EOF
-
             docker compose pull
+
+            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }} \
+            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }} \
             docker compose up -d
+
             docker image prune -f
 
 
@@ -294,45 +294,42 @@ jobs:
 
             cd /home/${{ secrets.SPRING_PRIVATE_EC2_SSH_USER }}/deploy/backend
             # ▲ SCP로 복사한 docker-compose.yml이 있는 디렉토리로 이동
-
-            # .env 파일 생성
-            # ▲ docker-compose.yml이 참조할 환경변수 파일 생성
-            #   GitHub Secrets 값을 EC2 로컬 .env 파일로 주입
-            #   이 파일은 Git에 올라가지 않아 민감 정보 보호
-            cat > .env << EOF
-            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }}
-            # ▲ docker-compose.yml에서 이미지 경로 구성에 사용
-            DEV_DB_HOST=${{ secrets.DEV_DB_HOST }}
-            # ▲ RDS 등 데이터베이스 호스트 주소
-            DEV_DB_NAME=${{ secrets.DEV_DB_NAME }}
-            # ▲ 사용할 데이터베이스 이름
-            DEV_DB_USER=${{ secrets.DEV_DB_USER }}
-            # ▲ DB 접속 계정
-            DEV_DB_PW=${{ secrets.DEV_DB_PW }}
-            # ▲ DB 접속 비밀번호
-            DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }}
-            # ▲ JWT 토큰 서명에 사용할 시크릿 키
-            DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }}
-            DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }}
-            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }}
-            DEV_CHAT_REDIS_HOST=${{ secrets.DEV_CHAT_REDIS_HOST }}
-            DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }}
-            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }}
-            DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}}
-            # ▲ 클라우드 프론트 도메인
-            GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
-            REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}}
-            REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}}
-            FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}}
-            FASTAPI_TTS_PATH=${{secrets.FASTAPI_TTS_PATH}}
-            EOF
-
+            
+            rm -f .env
+            
             # 최신 이미지 pull
             docker compose pull
             # ▲ docker-compose.yml에 정의된 이미지의 최신 버전을 Docker Hub에서 다운로드
             #   위 Job에서 push한 :latest 태그 이미지를 가져옴
 
-            # 컨테이너 재시작
+            # 환경변수 직접 주입 & 컨테이너 재시작
+            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }} \
+            # ▲ docker-compose.yml에서 이미지 경로 구성에 사용
+            DEV_DB_HOST=${{ secrets.DEV_DB_HOST }} \
+            # ▲ RDS 등 데이터베이스 호스트 주소
+            DEV_DB_NAME=${{ secrets.DEV_DB_NAME }} \
+            # ▲ 사용할 데이터베이스 이름
+            DEV_DB_USER=${{ secrets.DEV_DB_USER }} \
+            # ▲ DB 접속 계정
+            DEV_DB_PW=${{ secrets.DEV_DB_PW }} \
+            # ▲ DB 접속 비밀번호
+            DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }} \
+            # ▲ JWT 토큰 서명에 사용할 시크릿 키
+            DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }} \
+            DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }} \
+            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }} \
+            DEV_CHAT_REDIS_HOST=${{ secrets.DEV_CHAT_REDIS_HOST }} \
+            DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }} \
+            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }} \
+            DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}} \
+            # ▲ 클라우드 프론트 도메인
+            GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}} \
+            REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}} \
+            REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}} \
+            FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}} \
+            FASTAPI_TTS_PATH=${{secrets.FASTAPI_TTS_PATH}} \
+            CHZZK_CLIENT_ID=${{secrets.CHZZK_CLIENT_ID}} \
+            CHZZK_CLIENT_SECRET=${{secrets.CHZZK_CLIENT_SECRET}} \
             docker compose up -d
             # ▲ 컨테이너를 백그라운드(-d, detach)로 실행
             #   이미 실행 중인 컨테이너가 있으면 변경된 것만 재생성
@@ -380,26 +377,28 @@ jobs:
           proxy_key: ${{ secrets.BASTION_EC2_SSH_KEY }}
           script: |
             cd /home/${{ secrets.FASTAPI_PRIVATE_EC2_SSH_USER }}/deploy/fastapi
-
-            cat > .env << EOF
-            DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }}
-            LOG_LEVEL=INFO
-            HF_HOME=/app/.cache/huggingface
-            XDG_CACHE_HOME=/app/.cache
-            SUPERTONIC_CACHE_DIR=/app/.cache/supertonic
-            SUPERTONIC_LANG=ko
-            SUPERTONIC_DEFAULT_FEMALE=F3
-            SUPERTONIC_DEFAULT_MALE=M3
-            SUPERTONIC_TOTAL_STEPS=5
-            SUPERTONIC_SPEED=1.05
-            SUPERTONIC_AUTO_DOWNLOAD=true
-            SUPERTONIC_INTRA_OP_THREADS=2
-            SUPERTONIC_INTER_OP_THREADS=1
-            EOF
-
+            
+            rm -f .env
+            
             docker compose pull
-            docker compose up -d
+
+            DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }} \
+            LOG_LEVEL=INFO \
+            HF_HOME=/app/.cache/huggingface \
+            XDG_CACHE_HOME=/app/.cache \
+            SUPERTONIC_CACHE_DIR=/app/.cache/supertonic \
+            SUPERTONIC_LANG=ko \
+            SUPERTONIC_DEFAULT_FEMALE=F3 \
+            SUPERTONIC_DEFAULT_MALE=M3 \
+            SUPERTONIC_TOTAL_STEPS=5 \
+            SUPERTONIC_SPEED=1.05 \
+            SUPERTONIC_AUTO_DOWNLOAD=true \
+            SUPERTONIC_INTRA_OP_THREADS=2 \
+            SUPERTONIC_INTER_OP_THREADS=1 \
+            docker compose up -d            
+            
             docker image prune -f
+            
 
 
   # =============================================
