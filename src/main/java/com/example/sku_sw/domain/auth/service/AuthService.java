@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.auth.service;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkRefreshTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenReqDto;
+import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenRevokeReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailResDto;
@@ -46,6 +47,7 @@ public class AuthService {
     private static final long CHZZK_REFRESH_TOKEN_EXPIRES_DAYS = 30L;
     private static final String CHZZK_AUTHORIZATION_GRANT_TYPE = "authorization_code";
     private static final String CHZZK_REFRESH_TOKEN_GRANT_TYPE = "refresh_token";
+    private static final String CHZZK_REFRESH_TOKEN_TYPE_HINT = "refresh_token";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -424,6 +426,62 @@ public class AuthService {
         }
 
         log.info("[AuthService] refreshChzzkAccessToken() - END | userId: {}", user.getId());
+    }
+
+    /**
+     * 저장된 치지직 토큰 만료 및 로컬 인증 정보 정리를 처리하는 함수
+     * - 저장된 Refresh Token이 있으면 치지직 revoke API를 호출해 동일 인증 과정의 토큰 만료를 요청한다.
+     * - 치지직 revoke 실패 여부와 관계없이 사용자 엔티티의 로컬 치지직 인증 토큰은 정리한다.
+     * @param user : 치지직 토큰을 정리할 사용자 엔티티
+     * @return : 치지직 revoke 원격 호출 성공 여부
+     */
+    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = CustomException.class)
+    public boolean revokeChzzkTokens(User user) {
+        log.info("[AuthService] revokeChzzkTokens() - START | userId: {}", user.getId());
+
+        /*
+            1. 치지직 토큰 존재 여부 확인
+            - 저장된 치지직 토큰이 없으면 외부 API 호출 없이 종료한다.
+         */
+        if (isBlank(user.getChzzkAuthAccessToken()) && isBlank(user.getChzzkAuthRefreshToken())) {
+            user.clearChzzkAuthTokens();
+            log.info("[AuthService] revokeChzzkTokens() - END | userId: {}, revokeSucceeded: true, reason: no_tokens", user.getId());
+            return true;
+        }
+
+        /*
+            2. 치지직 토큰 만료 요청 DTO 생성
+            - Refresh Token 기준으로 치지직 revoke API 요청을 준비한다.
+         */
+        AuthChzzkTokenRevokeReqDto revokeRequest = new AuthChzzkTokenRevokeReqDto(
+                chzzkClientId,
+                chzzkClientSecret,
+                user.getChzzkAuthRefreshToken(),
+                CHZZK_REFRESH_TOKEN_TYPE_HINT
+        );
+
+        boolean revokeSucceeded = true;
+
+        try {
+            /*
+                3. 치지직 토큰 만료 요청
+                - 동일 인증 과정으로 발급된 치지직 토큰 전체 제거를 요청한다.
+             */
+            authChzzkApiService.revokeToken(revokeRequest);
+        } catch (CustomException e) {
+            revokeSucceeded = false;
+            log.error("[AuthService] revokeChzzkTokens() - CHZZK token revoke failed | userId: {}, errorCode: {}",
+                    user.getId(), e.getErrorCode());
+        } finally {
+            /*
+                4. 로컬 치지직 인증 정보 정리
+                - 회원탈퇴 또는 계정 정리 시 로컬 DB에 저장된 치지직 인증 정보는 항상 제거한다.
+             */
+            user.clearChzzkAuthTokens();
+        }
+
+        log.info("[AuthService] revokeChzzkTokens() - END | userId: {}, revokeSucceeded: {}", user.getId(), revokeSucceeded);
+        return revokeSucceeded;
     }
 
     /**
