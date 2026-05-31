@@ -338,7 +338,7 @@ jobs:
   # JOB 5. FastAPI EC2 배포 (Bastion Host 경유)
   # =============================================
   deploy-fastapi:
-    needs: build-fastapi
+    needs: [build-backend, deploy-redis]
 
     runs-on: ubuntu-latest
 

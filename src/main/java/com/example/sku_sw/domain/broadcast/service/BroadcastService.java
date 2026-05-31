@@ -1,5 +1,8 @@
 package com.example.sku_sw.domain.broadcast.service;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
+import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
+import com.example.sku_sw.domain.auth.service.AuthService;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterImageRedisDto;
@@ -12,6 +15,7 @@ import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
@@ -55,6 +59,7 @@ public class BroadcastService {
     private final CharacterRepository characterRepository;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
+    private final AuthService authService;
     private final BroadcastStreamIdGenerator streamIdGenerator;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketHandler broadcastWebSocketHandler;
@@ -73,7 +78,7 @@ public class BroadcastService {
      * @param characterId : 방송을 시작할 캐릭터 ID
      * @return : 방송 시작 응답 DTO (streamId, startedAt)
      */
-    @Transactional
+    @Transactional(noRollbackFor = ChzzkReauthRequiredException.class)
     public BroadcastStartResDto startBroadcast(Long userId, Long characterId) {
         log.info("[BroadcastService] startBroadcast() - START | userId: {}, characterId: {}", userId, characterId);
         /*
@@ -84,12 +89,10 @@ public class BroadcastService {
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.USER_NOT_FOUND));
 
         /*
-            2. 치지직 Auth 토큰 저장 여부 확인
-            - 치지직 Auth Access Token / Refresh Token이 모두 저장되어 있어야 방송을 시작할 수 있다.
+            2. 치지직 Auth 토큰 사용 가능 여부 확인
+            - 치지직 Auth Access Token / Refresh Token이 모두 저장되어 있고 만료상태가 아니어야 방송을 시작할 수 있다.
          */
-        if (!user.hasChzzkAuthTokens()) {
-            throw new CustomException(BroadcastErrorCode.CHZZK_AUTH_REQUIRED);
-        }
+        ensureChzzkAuthReadyForBroadcast(userId, user);
 
         /*
             3. 선택된 캐릭터 검증
@@ -145,6 +148,60 @@ public class BroadcastService {
 
         log.info("[BroadcastService] startBroadcast() - END | streamId: {}", streamId);
         return result;
+    }
+
+    /**
+     * 방송 시작 전 치지직 인증 토큰 상태를 점검하는 함수
+     * - 치지직 Auth Access Token / Refresh Token 저장 여부를 확인한다.
+     * - Access Token 만료 시 Refresh Token으로 재발급을 시도한다.
+     * - Refresh Token도 만료되었거나 유효하지 않으면 재인증 URL과 함께 예외를 발생시킨다.
+     * @param userId : 방송을 시작하는 사용자 ID
+     * @param user : Write Lock을 획득한 사용자 엔티티
+     */
+    private void ensureChzzkAuthReadyForBroadcast(Long userId, User user) {
+        log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - START | userId: {}", userId);
+        /*
+            1. 치지직 Auth 토큰 저장 & 인증 여부 확인
+            - 치지직 Auth Access Token / Refresh Token이 모두 저장되어 있어야 방송을 시작할 수 있다.
+         */
+        if (!user.hasChzzkAuthTokens()) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_AUTH_REQUIRED);
+        }
+
+        /*
+            2. 치지직 Auth Access Token 만료 여부 확인
+            - Access Token이 아직 유효하면 추가 작업 없이 방송 시작 로직을 이어서 진행한다.
+         */
+        if (!user.isChzzkAuthAccessTokenExpired()) {
+            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - accessExpired: {}, refreshExpired: {}, accessExpiresAt: {}, refreshExpiresAt: {}",
+                    user.isChzzkAuthAccessTokenExpired(),
+                    user.isChzzkAuthRefreshTokenExpired(),
+                    user.getChzzkAuthAccessTokenExpiresAt(),
+                    user.getChzzkAuthRefreshTokenExpiresAt());
+            return;
+        }
+
+        try {
+            /*
+                3. 치지직 Access Token 재발급 시도
+                - 저장된 Refresh Token으로 치지직 Access / Refresh Token 재발급을 시도한다.
+             */
+            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - TRY_REFRESH");
+            authService.refreshChzzkAccessToken(user);
+            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - END | userId: {}", userId);
+        } catch (CustomException e) {
+            /*
+                4. Refresh Token 만료/무효 시 재인증 요구
+                - Refresh Token이 로컬 기준 만료되었거나 치지직이 무효 토큰으로 응답한 경우 재인증 URL을 반환한다.
+             */
+            if (user.isChzzkAuthRefreshTokenExpired() || e.getErrorCode() == AuthErrorCode.CHZZK_AUTH_REFRESH_TOKEN_INVALID) {
+                user.clearChzzkAuthTokens();
+                AuthChzzkAuthUrlResDto authUrlResDto = authService.createChzzkAuthUrl(userId);
+                throw new ChzzkReauthRequiredException(authUrlResDto);
+            }
+
+            throw e;
+        }
     }
 
     /**

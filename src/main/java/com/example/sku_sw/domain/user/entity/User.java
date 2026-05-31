@@ -16,6 +16,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @NoArgsConstructor
 public class User {
+    private static final long CHZZK_TOKEN_EXPIRY_BUFFER_SECONDS = 60L;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -86,18 +88,30 @@ public class User {
     }
 
     public void clearChzzkAuthTokens() {
+        this.chzzkApiAuthorized = false;
         this.chzzkAuthAccessToken = null;
         this.chzzkAuthRefreshToken = null;
         this.chzzkAuthAccessTokenExpiresAt = null;
         this.chzzkAuthRefreshTokenExpiresAt = null;
     }
 
+    public boolean isChzzkAuthAccessTokenExpired() {
+        return isExpired(chzzkAuthAccessTokenExpiresAt);
+    }
+
+    public boolean isChzzkAuthRefreshTokenExpired() {
+        return isExpired(chzzkAuthRefreshTokenExpiresAt);
+    }
+
     public boolean hasChzzkAuthTokens() {
-        return hasText(chzzkAuthAccessToken) && hasText(chzzkAuthRefreshToken);
+        return chzzkApiAuthorized && hasText(chzzkAuthAccessToken) && hasText(chzzkAuthRefreshToken);
     }
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
 
+    private boolean isExpired(LocalDateTime expiresAt) {
+        return expiresAt == null || !expiresAt.isAfter(LocalDateTime.now().plusSeconds(CHZZK_TOKEN_EXPIRY_BUFFER_SECONDS));
+    }
 }

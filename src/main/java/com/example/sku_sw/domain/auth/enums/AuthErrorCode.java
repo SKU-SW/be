@@ -18,6 +18,10 @@ public enum AuthErrorCode implements BaseErrorCode {
     INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "유효하지 않은 Refresh Token입니다."),
     REFRESH_TOKEN_REUSE(HttpStatus.UNAUTHORIZED, "Refresh Token이 이미 사용되었습니다."),
     CHZZK_AUTH_TOKEN_REQUEST_FAILED(HttpStatus.UNAUTHORIZED, "치지직 토큰 발급에 실패했습니다."),
+    CHZZK_AUTH_REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "치지직 Refresh Token이 유효하지 않습니다."),
+
+    // 502 BAD_GATEWAY
+    CHZZK_AUTH_TOKEN_REFRESH_FAILED(HttpStatus.BAD_GATEWAY, "치지직 Access Token 재발급에 실패했습니다."),
 
     // 409 CONFLICT
     ALREADY_EXIST_EMAIL(HttpStatus.CONFLICT, "이미 가입한 이메일입니다.");
