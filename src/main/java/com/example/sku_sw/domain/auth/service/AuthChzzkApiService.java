@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.auth.service;
 
 import com.example.sku_sw.domain.auth.dto.AuthChzzkApiResDto;
+import com.example.sku_sw.domain.auth.dto.AuthChzzkRefreshTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenResDto;
 import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
@@ -69,5 +70,59 @@ public class AuthChzzkApiService {
                     request.state(), e.getMessage());
             throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_REQUEST_FAILED);
         }
+    }
+
+    /**
+     * 치지직 Access Token 재발급을 요청하는 함수
+     * - refresh_token grant 방식으로 치지직 Access / Refresh Token 재발급을 요청한다.
+     * @param request : 치지직 Refresh Token 재발급 요청 DTO
+     * @return : 치지직 토큰 재발급 응답 DTO
+     */
+    public AuthChzzkTokenResDto requestRefreshToken(AuthChzzkRefreshTokenReqDto request) {
+        log.info("[AuthChzzkApiService] requestRefreshToken() - START");
+
+        try {
+            AuthChzzkApiResDto<AuthChzzkTokenResDto> response = webClient.post()
+                    .uri(CHZZK_TOKEN_PATH)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::isError, clientResponse ->
+                            clientResponse.bodyToMono(String.class)
+                                    .map(errorBody -> {
+                                        log.error("[AuthChzzkApiService] requestRefreshToken() - CHZZK token refresh API error | status: {}, body: {}",
+                                                clientResponse.statusCode(), errorBody);
+                                        return resolveRefreshTokenException(clientResponse.statusCode(), errorBody);
+                                    })
+                    )
+                    .bodyToMono(new ParameterizedTypeReference<AuthChzzkApiResDto<AuthChzzkTokenResDto>>() {
+                    })
+                    .block();
+
+            if (response == null || response.content() == null) {
+                log.error("[AuthChzzkApiService] requestRefreshToken() - invalid CHZZK refresh response | response: {}", response);
+                throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_RESPONSE_INVALID);
+            }
+
+            log.info("[AuthChzzkApiService] requestRefreshToken() - END");
+            return response.content();
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[AuthChzzkApiService] requestRefreshToken() - CHZZK refresh API call failed | error: {}", e.getMessage());
+            throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_REFRESH_FAILED);
+        }
+    }
+
+    private CustomException resolveRefreshTokenException(HttpStatusCode statusCode, String errorBody) {
+        String normalizedErrorBody = errorBody == null ? "" : errorBody.toLowerCase();
+        if (statusCode.value() == 401
+                || normalizedErrorBody.contains("invalid_token")
+                || normalizedErrorBody.contains("invalid token")
+                || normalizedErrorBody.contains("expired")) {
+            return new CustomException(AuthErrorCode.CHZZK_AUTH_REFRESH_TOKEN_INVALID);
+        }
+
+        return new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_REFRESH_FAILED);
     }
 }

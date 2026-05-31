@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.auth.service;
 
 import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
+import com.example.sku_sw.domain.auth.dto.AuthChzzkRefreshTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkTokenResDto;
 import com.example.sku_sw.domain.auth.dto.AuthLoginEmailReqDto;
@@ -27,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -43,6 +45,7 @@ public class AuthService {
     private static final long CHZZK_AUTH_STATE_TTL_MILLIS = 10 * 60 * 1000L;
     private static final long CHZZK_REFRESH_TOKEN_EXPIRES_DAYS = 30L;
     private static final String CHZZK_AUTHORIZATION_GRANT_TYPE = "authorization_code";
+    private static final String CHZZK_REFRESH_TOKEN_GRANT_TYPE = "refresh_token";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -323,19 +326,40 @@ public class AuthService {
         Long userId = SecurityUtil.getCurrentUserId();
 
         /*
-            2. 치지직 인증 state 생성
+            2. 사용자 ID 기반 치지직 인증 URL 생성
+            - 실제 치지직 인증 URL 생성 로직은 공통 메서드에 위임한다.
+         */
+        AuthChzzkAuthUrlResDto result = createChzzkAuthUrl(userId);
+
+        log.info("[AuthService] getChzzkAuthUrl() - END | userId: {}", userId);
+        return result;
+    }
+
+    /**
+     * 사용자 ID 기준 치지직 인증 URL을 생성하는 함수
+     * - clientId, redirectUri, state를 포함한 치지직 계정 연동 URL을 생성한다.
+     * - 생성한 state는 callback 검증을 위해 Redis에 저장한다.
+     * @param userId : 치지직 인증을 수행할 사용자 ID
+     * @return : 치지직 인증 URL 응답 DTO
+     */
+    @Transactional
+    public AuthChzzkAuthUrlResDto createChzzkAuthUrl(Long userId) {
+        log.info("[AuthService] createChzzkAuthUrl() - START | userId: {}", userId);
+
+        /*
+            1. 치지직 인증 state 생성
             - CSRF 방지를 위해 임시 UUID 기반 state 값을 생성한다.
          */
         String state = UUID.randomUUID().toString();
 
         /*
-            3. state Redis 저장
+            2. state Redis 저장
             - callback 요청 검증 및 사용자 식별을 위해 생성 직후 Redis에 state와 userId를 저장한다.
          */
         redisUtil.setChzzkAuthState(state, userId, CHZZK_AUTH_STATE_TTL_MILLIS);
 
         /*
-            4. 치지직 인증 URL 생성
+            3. 치지직 인증 URL 생성
             - clientId, redirectUri, state를 query parameter로 조합한다.
          */
         String authUrl = UriComponentsBuilder.fromHttpUrl(CHZZK_AUTH_BASE_URL)
@@ -346,15 +370,60 @@ public class AuthService {
                 .toUriString();
 
         /*
-            5. ResponseDto 생성
+            4. ResponseDto 생성
             - 프론트가 바로 redirect에 사용할 수 있도록 치지직 인증 URL을 반환한다.
          */
         AuthChzzkAuthUrlResDto result = AuthChzzkAuthUrlResDto.builder()
                 .authUrl(authUrl)
                 .build();
 
-        log.info("[AuthService] getChzzkAuthUrl() - END | state: {}", state);
+        log.info("[AuthService] createChzzkAuthUrl() - END | userId: {}, state: {}", userId, state);
         return result;
+    }
+
+    /**
+     * 치지직 Access Token 재발급을 처리하는 함수
+     * - 저장된 Refresh Token으로 치지직 Access / Refresh Token 재발급을 시도한다.
+     * - 재발급 성공 시 사용자 엔티티의 치지직 인증 토큰 정보를 최신 값으로 갱신한다.
+     * @param user : 치지직 토큰을 재발급할 사용자 엔티티
+     */
+    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = CustomException.class)
+    public void refreshChzzkAccessToken(User user) {
+        log.info("[AuthService] refreshChzzkAccessToken() - START | userId: {}", user.getId());
+
+        /*
+            1. 치지직 Refresh Token 재발급 요청 DTO 생성
+            - refresh_token grant 방식으로 치지직 Access / Refresh Token 재발급 요청을 준비한다.
+         */
+        AuthChzzkRefreshTokenReqDto refreshTokenRequest = new AuthChzzkRefreshTokenReqDto(
+                CHZZK_REFRESH_TOKEN_GRANT_TYPE,
+                user.getChzzkAuthRefreshToken(),
+                chzzkClientId,
+                chzzkClientSecret
+        );
+
+        try {
+            /*
+                2. 치지직 Access Token 재발급 요청
+                - 치지직 Open API를 호출해 Access / Refresh Token 재발급을 수행한다.
+             */
+            AuthChzzkTokenResDto tokenResponse = authChzzkApiService.requestRefreshToken(refreshTokenRequest);
+            validateChzzkTokenResponse(tokenResponse);
+
+            /*
+                3. 사용자 치지직 인증 정보 갱신
+                - 새로 발급된 Access / Refresh Token과 만료 시각을 사용자 엔티티에 반영한다.
+             */
+            applyChzzkAuthTokens(user, tokenResponse);
+        } catch (CustomException e) {
+            if (e.getErrorCode() == AuthErrorCode.CHZZK_AUTH_REFRESH_TOKEN_INVALID) {
+                throw e;
+            }
+
+            throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_REFRESH_FAILED);
+        }
+
+        log.info("[AuthService] refreshChzzkAccessToken() - END | userId: {}", user.getId());
     }
 
     /**
@@ -412,23 +481,10 @@ public class AuthService {
                 .orElseThrow(() -> new CustomException(AuthErrorCode.CHZZK_AUTH_STATE_INVALID));
 
         /*
-            6. 치지직 토큰 만료 시각 계산
-            - Access Token은 expiresIn 기준, Refresh Token은 30일 기준으로 만료 시각을 계산한다.
-         */
-        LocalDateTime currentDateTime = LocalDateTime.now();
-        LocalDateTime accessTokenExpiresAt = currentDateTime.plusSeconds(tokenResponse.expiresIn());
-        LocalDateTime refreshTokenExpiresAt = currentDateTime.plus(CHZZK_REFRESH_TOKEN_EXPIRES_DAYS, ChronoUnit.DAYS);
-
-        /*
-            7. 사용자 치지직 인증 정보 저장
+            6. 사용자 치지직 인증 정보 저장
             - Access / Refresh Token, 각 만료 시각, 인증 완료 상태를 사용자 엔티티에 반영한다.
          */
-        user.updateChzzkAuthTokens(
-                tokenResponse.accessToken(),
-                tokenResponse.refreshToken(),
-                accessTokenExpiresAt,
-                refreshTokenExpiresAt
-        );
+        applyChzzkAuthTokens(user, tokenResponse);
 
 
         log.info("[AuthService] handleChzzkCallback() - END | state: {}", state);
@@ -491,6 +547,26 @@ public class AuthService {
                 || tokenResponse.expiresIn() <= 0) {
             throw new CustomException(AuthErrorCode.CHZZK_AUTH_TOKEN_RESPONSE_INVALID);
         }
+    }
+
+    /**
+     * 사용자 엔티티에 치지직 인증 토큰을 반영하는 함수
+     * - Access Token 만료 시각은 expiresIn 기준으로 계산한다.
+     * - Refresh Token 만료 시각은 현재 시각 기준 30일로 계산한다.
+     * @param user : 치지직 토큰을 저장할 사용자 엔티티
+     * @param tokenResponse : 치지직 토큰 응답 DTO
+     */
+    private void applyChzzkAuthTokens(User user, AuthChzzkTokenResDto tokenResponse) {
+        LocalDateTime currentDateTime = LocalDateTime.now();
+        LocalDateTime accessTokenExpiresAt = currentDateTime.plusSeconds(tokenResponse.expiresIn());
+        LocalDateTime refreshTokenExpiresAt = currentDateTime.plus(CHZZK_REFRESH_TOKEN_EXPIRES_DAYS, ChronoUnit.DAYS);
+
+        user.updateChzzkAuthTokens(
+                tokenResponse.accessToken(),
+                tokenResponse.refreshToken(),
+                accessTokenExpiresAt,
+                refreshTokenExpiresAt
+        );
     }
 
     private boolean isBlank(String value) {

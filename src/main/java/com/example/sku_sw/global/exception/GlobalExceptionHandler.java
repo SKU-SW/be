@@ -1,5 +1,7 @@
 package com.example.sku_sw.global.exception;
 
+import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
+import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
 import com.example.sku_sw.global.exception.model.BaseErrorCode;
 import com.example.sku_sw.global.response.GlobalResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +19,22 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ChzzkReauthRequiredException.class)
+    public ResponseEntity<GlobalResponse<AuthChzzkAuthUrlResDto>> handleChzzkReauthRequiredException(
+            ChzzkReauthRequiredException e) {
+        BaseErrorCode baseErrorCode = e.getErrorCode();
+
+        log.error("[GlobalExceptionHandler] handleChzzkReauthRequiredException - message: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(baseErrorCode.getStatus())
+                .body(new GlobalResponse<>(
+                        baseErrorCode.getStatus().value(),
+                        baseErrorCode.getMessage(),
+                        e.getAuthUrlResDto()
+                ));
+    }
 
     // CustomException 예외 처리
     @ExceptionHandler(CustomException.class)
