@@ -22,6 +22,7 @@ public enum AuthErrorCode implements BaseErrorCode {
 
     // 502 BAD_GATEWAY
     CHZZK_AUTH_TOKEN_REFRESH_FAILED(HttpStatus.BAD_GATEWAY, "치지직 Access Token 재발급에 실패했습니다."),
+    CHZZK_AUTH_TOKEN_REVOKE_FAILED(HttpStatus.BAD_GATEWAY, "치지직 토큰 만료 요청에 실패했습니다."),
 
     // 409 CONFLICT
     ALREADY_EXIST_EMAIL(HttpStatus.CONFLICT, "이미 가입한 이메일입니다.");
