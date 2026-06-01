@@ -9,6 +9,7 @@ import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 /**
  * Broadcast / Chat Redis 연결 Bean을 수동으로 등록하는 설정 클래스
@@ -107,6 +108,15 @@ public class RedisConfig {
             @Qualifier("chatRedisConnectionFactory") LettuceConnectionFactory connectionFactory
     ) {
         return createStringRedisTemplate(connectionFactory);
+    }
+
+    @Bean
+    public RedisMessageListenerContainer chatRedisMessageListenerContainer(
+            @Qualifier("chatRedisConnectionFactory") LettuceConnectionFactory connectionFactory
+    ) {
+        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+        container.setConnectionFactory(connectionFactory);
+        return container;
     }
 
     /**

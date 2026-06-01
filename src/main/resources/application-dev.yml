@@ -69,10 +69,11 @@ broadcast:
 
 fastapi:
   base-url: ${FASTAPI_BASE_URL:http://localhost:8000}
-  tts-path: ${FASTAPI_TTS_PATH:/api/tts/synthesize}
+  chzzk-session-connect-path: ${FASTAPI_SESSION_CONNECT_PATH:/api/chzzk/session/connect}
+  chzzk-channel-connect-path: ${FASTAPI_CHANNEL_CONNECT_PATH:/api/chzzk/channel/connect}
+  chzzk-channel-disconnect-path: ${FASTAPI_CHANNEL_DISCONNECT_PATH:/api/chzzk/channel/disconnect}
   connect-timeout-ms: 5000
   read-timeout-ms: 30000
-  max-in-memory-size-bytes: ${FASTAPI_MAX_IN_MEMORY_SIZE_BYTES:2097152}
 
 app:
   redis:

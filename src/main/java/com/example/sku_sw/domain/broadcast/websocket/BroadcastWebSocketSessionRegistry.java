@@ -4,8 +4,10 @@ import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
@@ -80,13 +82,17 @@ public class BroadcastWebSocketSessionRegistry {
             WebSocketSession geminiSession,
             GeminiLiveWebSocketHandler geminiHandler
     ) {
-        BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
-        if (bundle == null || !bundle.matchesGeneration(expectedGeneration)) {
-            return false;
-        }
+        final boolean[] registered = {false};
+        sessions.computeIfPresent(broadcastStreamId, (key, bundle) -> {
+            if (!bundle.matchesGeneration(expectedGeneration)) {
+                return bundle;
+            }
 
-        bundle.registerGeminiSession(geminiSession, geminiHandler);
-        return true;
+            bundle.registerGeminiSession(geminiSession, geminiHandler);
+            registered[0] = true;
+            return bundle;
+        });
+        return registered[0];
     }
 
     /**
@@ -102,23 +108,75 @@ public class BroadcastWebSocketSessionRegistry {
             long generation,
             WebSocketSessionBundleStatus status
     ) {
-        BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
-        if (bundle == null || !bundle.matchesGeneration(generation)) {
-            return false;
-        }
+        final boolean[] updated = {false};
+        sessions.computeIfPresent(broadcastStreamId, (key, bundle) -> {
+            if (!bundle.matchesGeneration(generation)) {
+                return bundle;
+            }
 
-        bundle.updateStatus(status);
-        return true;
+            bundle.updateStatus(status);
+            updated[0] = true;
+            return bundle;
+        });
+        return updated[0];
+    }
+
+    /**
+     * 방송 종료 요청으로 현재 세션 번들을 완전히 종료한다.
+     * - Client/Gemini WebSocket을 모두 닫고 Registry에서 제거한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle disconnect(String broadcastStreamId) {
+        return disconnect(broadcastStreamId, CloseStatus.NORMAL.withReason("Broadcast terminated"));
+    }
+
+    /**
+     * 방송 종료 요청으로 현재 세션 번들을 완전히 종료한다.
+     * - Client/Gemini WebSocket을 모두 닫고 Registry에서 제거한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle disconnect(String broadcastStreamId, CloseStatus closeStatus) {
+        return removeSessionBundle(broadcastStreamId, closeStatus, "disconnect");
     }
 
     /**
      * WebSocket 세션 번들을 제거한다.
+     * - 제거 성공 시 Client/Gemini WebSocket을 모두 닫는다.
      *
      * @param broadcastStreamId : 방송 스트림 ID
      * @return : 제거된 세션 번들 (없으면 null)
      */
     public BroadcastWebSocketSessionBundle removeSessionBundle(String broadcastStreamId) {
-        return sessions.remove(broadcastStreamId);
+        return removeSessionBundle(broadcastStreamId, CloseStatus.NORMAL.withReason("Session removed"), "removeSessionBundle");
+    }
+
+    /**
+     * WebSocket 세션 번들을 제거한다.
+     * - 제거 성공 시 Client/Gemini WebSocket을 모두 닫는다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle removeSessionBundle(String broadcastStreamId, CloseStatus closeStatus, String caller) {
+        BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
+        if (bundle == null) {
+            return null;
+        }
+
+        boolean removed = sessions.remove(broadcastStreamId, bundle);
+        if (!removed) {
+            return null;
+        }
+
+        terminateBundle(bundle, closeStatus, caller, broadcastStreamId);
+        return bundle;
     }
 
     /**
@@ -130,12 +188,43 @@ public class BroadcastWebSocketSessionRegistry {
      * @return : 제거 성공 여부
      */
     public boolean removeSessionBundle(String broadcastStreamId, WebSocketSession clientSession) {
+        return removeSessionBundle(
+                broadcastStreamId,
+                clientSession,
+                CloseStatus.NORMAL.withReason("Client session removed"),
+                "removeSessionBundle"
+        );
+    }
+
+    /**
+     * 현재 등록된 세션 번들의 클라이언트 세션이 전달받은 클라이언트 세션과 동일한 경우에만 제거한다.
+     * - 재연결 상황에서 이전 세션의 close 이벤트가 새 세션을 제거하지 않도록 방지한다.
+     * - 제거 성공 시 Client/Gemini WebSocket을 모두 닫는다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param clientSession     : 제거 기준이 되는 클라이언트 WebSocket 세션
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @return : 제거 성공 여부
+     */
+    public boolean removeSessionBundle(
+            String broadcastStreamId,
+            WebSocketSession clientSession,
+            CloseStatus closeStatus,
+            String caller
+    ) {
         BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
         if (bundle == null || !bundle.matchesClientSession(clientSession)) {
             return false;
         }
 
-        return sessions.remove(broadcastStreamId, bundle);
+        boolean removed = sessions.remove(broadcastStreamId, bundle);
+        if (!removed) {
+            return false;
+        }
+
+        terminateBundle(bundle, closeStatus, caller, broadcastStreamId);
+        return true;
     }
 
     /**
@@ -146,13 +235,84 @@ public class BroadcastWebSocketSessionRegistry {
      * @return : 제거된 세션 번들 (없으면 null)
      */
     public BroadcastWebSocketSessionBundle removeSessionBundleIfCurrent(String broadcastStreamId, long generation) {
+        return removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                generation,
+                CloseStatus.NORMAL.withReason("Current session removed"),
+                "removeSessionBundleIfCurrent"
+        );
+    }
+
+    /**
+     * 현재 generation이 일치하는 경우에만 세션 번들을 제거한다.
+     * - 제거 성공 시 Client/Gemini WebSocket을 모두 닫는다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation        : 기대하는 generation
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle removeSessionBundleIfCurrent(
+            String broadcastStreamId,
+            long generation,
+            CloseStatus closeStatus,
+            String caller
+    ) {
         BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
         if (bundle == null || !bundle.matchesGeneration(generation)) {
             return null;
         }
 
         boolean removed = sessions.remove(broadcastStreamId, bundle);
-        return removed ? bundle : null;
+        if (!removed) {
+            return null;
+        }
+
+        terminateBundle(bundle, closeStatus, caller, broadcastStreamId);
+        return bundle;
+    }
+
+    /**
+     * BroadcastStreamId로 세션 번들을 제거한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle removeSessionBundleIfCurrent(String broadcastStreamId) {
+        return removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                CloseStatus.NORMAL.withReason("Current session removed"),
+                "removeSessionBundleIfCurrent"
+        );
+    }
+
+    /**
+     * BroadcastStreamId로 세션 번들을 제거한다.
+     * - 제거 성공 시 Client/Gemini WebSocket을 모두 닫는다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @return : 제거된 세션 번들 (없으면 null)
+     */
+    public BroadcastWebSocketSessionBundle removeSessionBundleIfCurrent(
+            String broadcastStreamId,
+            CloseStatus closeStatus,
+            String caller
+    ) {
+        BroadcastWebSocketSessionBundle bundle = sessions.get(broadcastStreamId);
+        if (bundle == null) {
+            return null;
+        }
+
+        boolean removed = sessions.remove(broadcastStreamId, bundle);
+        if (!removed) {
+            return null;
+        }
+
+        terminateBundle(bundle, closeStatus, caller, broadcastStreamId);
+        return bundle;
     }
 
     /**
@@ -171,7 +331,12 @@ public class BroadcastWebSocketSessionRegistry {
             return true;
         }
 
-        sessions.remove(broadcastStreamId, bundle);
+        removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                bundle.getGeneration(),
+                CloseStatus.NORMAL.withReason("Client session already closed"),
+                "hasSessionBundle"
+        );
         return false;
     }
 
@@ -249,5 +414,101 @@ public class BroadcastWebSocketSessionRegistry {
      */
     public Set<Map.Entry<String, BroadcastWebSocketSessionBundle>> getActiveSessionBundlesSnapshot() {
         return Collections.unmodifiableSet(new HashSet<>(sessions.entrySet()));
+    }
+
+    /**
+     * Registry에 더 이상 연결되어 있지 않은 세션 번들의 리소스를 정리한다.
+     * - 재연결로 교체된 이전 번들 정리에 사용한다.
+     *
+     * @param bundle            : 정리할 세션 번들
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @param broadcastStreamId : 방송 스트림 ID
+     */
+    public void closeDetachedSessionBundle(
+            BroadcastWebSocketSessionBundle bundle,
+            CloseStatus closeStatus,
+            String caller,
+            String broadcastStreamId
+    ) {
+        if (bundle == null) {
+            return;
+        }
+
+        closeBundleSessions(bundle, closeStatus, caller, broadcastStreamId);
+        log.info("[BroadcastWebSocketSessionRegistry] {}() - Detached session bundle closed | streamId: {}, generation: {}",
+                caller, broadcastStreamId, bundle.getGeneration());
+    }
+
+    /**
+     * Registry에서 제거된 세션 번들의 리소스를 정리한다.
+     * - Client/Gemini WebSocket을 모두 닫고 상태를 CLOSING으로 갱신한다.
+     *
+     * @param bundle            : 정리할 세션 번들
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @param broadcastStreamId : 방송 스트림 ID
+     */
+    private void terminateBundle(
+            BroadcastWebSocketSessionBundle bundle,
+            CloseStatus closeStatus,
+            String caller,
+            String broadcastStreamId
+    ) {
+        if (bundle == null) {
+            return;
+        }
+
+        closeBundleSessions(bundle, closeStatus, caller, broadcastStreamId);
+
+        log.info("[BroadcastWebSocketSessionRegistry] {}() - Session bundle removed | streamId: {}, generation: {}",
+                caller, broadcastStreamId, bundle.getGeneration());
+    }
+
+    /**
+     * 세션 번들의 Client/Gemini WebSocket을 모두 닫는다.
+     *
+     * @param bundle            : 정리할 세션 번들
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @param broadcastStreamId : 방송 스트림 ID
+     */
+    private void closeBundleSessions(
+            BroadcastWebSocketSessionBundle bundle,
+            CloseStatus closeStatus,
+            String caller,
+            String broadcastStreamId
+    ) {
+        bundle.updateStatus(WebSocketSessionBundleStatus.CLOSING);
+        closeSessionQuietly(bundle.getClientSession(), closeStatus, caller, "Client", broadcastStreamId);
+        closeSessionQuietly(bundle.getGeminiSession(), closeStatus, caller, "Gemini", broadcastStreamId);
+    }
+
+    /**
+     * WebSocket 세션을 조용히 종료한다.
+     *
+     * @param session           : 종료할 세션
+     * @param closeStatus       : 종료에 사용할 CloseStatus
+     * @param caller            : 호출자명
+     * @param sessionLabel      : 세션 구분 라벨
+     * @param broadcastStreamId : 방송 스트림 ID
+     */
+    private void closeSessionQuietly(
+            WebSocketSession session,
+            CloseStatus closeStatus,
+            String caller,
+            String sessionLabel,
+            String broadcastStreamId
+    ) {
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+
+        try {
+            session.close(closeStatus);
+        } catch (IOException e) {
+            log.warn("[BroadcastWebSocketSessionRegistry] {}() - Failed to close {} session | streamId: {}",
+                    caller, sessionLabel, broadcastStreamId);
+        }
     }
 }

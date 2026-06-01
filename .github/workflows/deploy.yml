@@ -320,7 +320,7 @@ jobs:
             REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}} \
             REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}} \
             FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}} \
-            FASTAPI_TTS_PATH=${{secrets.FASTAPI_TTS_PATH}} \
+            FASTAPI_SESSION_CONNECT_PATH=${{secrets.FASTAPI_SESSION_CONNECT_PATH}} \
             CHZZK_CLIENT_ID=${{secrets.CHZZK_CLIENT_ID}} \
             CHZZK_CLIENT_SECRET=${{secrets.CHZZK_CLIENT_SECRET}} \
             docker compose up -d

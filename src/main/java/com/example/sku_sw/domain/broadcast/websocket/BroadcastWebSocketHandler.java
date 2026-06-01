@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.websocket;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastMessageReqDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
@@ -18,6 +19,9 @@ import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstr
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
+import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
+import com.example.sku_sw.domain.chat.util.FastApiUtil;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -66,6 +70,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final TransactionTemplate transactionTemplate;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final ChatRedisUtil chatRedisUtil;
+    private final FastApiUtil fastApiUtil;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession clientSession) {
@@ -77,7 +83,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             log.warn("[BroadcastWebSocketHandler] afterConnectionEstablished() - Redis key not found, closing session | userId: {}, streamId: {}",
                     userId, broadcastStreamId);
             closeSessionQuietly(clientSession, CloseStatus.POLICY_VIOLATION.withReason("Broadcast not available"), "afterConnectionEstablished", "Client");
-            sessionRegistry.removeSessionBundle(broadcastStreamId, clientSession);
+            sessionRegistry.removeSessionBundle(
+                    broadcastStreamId,
+                    clientSession,
+                    CloseStatus.POLICY_VIOLATION.withReason("Broadcast not available"),
+                    "afterConnectionEstablished"
+            );
             return;
         }
 
@@ -158,13 +169,23 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
             abnormalTerminateBroadcast(broadcastStreamId);
             sendErrorAndClose(session, e.getErrorCode().getMessage());
-            sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
+            sessionRegistry.removeSessionBundleIfCurrent(
+                    broadcastStreamId,
+                    generation != null ? generation : -1L,
+                    CloseStatus.POLICY_VIOLATION.withReason(e.getErrorCode().getMessage()),
+                    "handleTextMessage"
+            );
         } catch (Exception e) {
             log.error("[BroadcastWebSocketHandler] handleTextMessage() - Unexpected error | userId: {}, streamId: {}, error: {}",
                     userId, broadcastStreamId, e.getMessage());
             abnormalTerminateBroadcast(broadcastStreamId);
             sendErrorAndClose(session, "Internal server error");
-            sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
+            sessionRegistry.removeSessionBundleIfCurrent(
+                    broadcastStreamId,
+                    generation != null ? generation : -1L,
+                    CloseStatus.SERVER_ERROR.withReason("Internal server error"),
+                    "handleTextMessage"
+            );
         }
     }
 
@@ -302,6 +323,10 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
                 broadcastStreamId, requestedTurnNumber, savedInfo.cursorId());
     }
 
+    /**
+     * 비정상 방송 종료 시 방송 관련 설정들을 초기화 및 종료하는 함수
+     * @param broadcastStreamId
+     */
     private void abnormalTerminateBroadcast(String broadcastStreamId) {
         log.info("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - START | streamId: {}", broadcastStreamId);
 
@@ -322,7 +347,29 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             });
 
             broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+            BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+
+            if (broadcastUserRedisDto != null) {
+                if (broadcastUserRedisDto.getChannelName() != null && !broadcastUserRedisDto.getChannelName().isBlank()) {
+                    try {
+                        fastApiUtil.disconnectChzzkRedisChannel(new FastApiChzzkRedisChannelReqDto(
+                                broadcastStreamId,
+                                broadcastUserRedisDto.getSessionKey(),
+                                broadcastUserRedisDto.getChannelName()
+                        ));
+                    } catch (Exception e) {
+                        log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - FastAPI disconnect failed | streamId: {}, error: {}",
+                                broadcastStreamId, e.getMessage(), e);
+                    }
+                }
+
+                if (broadcastUserRedisDto.getChannelId() != null && !broadcastUserRedisDto.getChannelId().isBlank()) {
+                    chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
+                }
+            }
+
             broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
             broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
         } catch (Exception e) {
             log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Failed | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
@@ -374,12 +421,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         log.error("[BroadcastWebSocketHandler] handleTransportError() - Transport error | streamId: {}, generation: {}, error: {}",
                 broadcastStreamId, generation, exception.getMessage());
 
-        sessionRegistry.updateBundleStatusIfCurrent(broadcastStreamId, generation, WebSocketSessionBundleStatus.CLOSING);
-        BroadcastWebSocketSessionBundle removedBundle = sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (removedBundle != null) {
-            closeSessionQuietly(session, CloseStatus.SERVER_ERROR.withReason("Client transport error"), "handleTransportError", "Client");
-            closeGeminiSession(removedBundle, CloseStatus.SERVER_ERROR.withReason("Client transport error"), "handleTransportError", broadcastStreamId);
-        }
+        sessionRegistry.removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                generation != null ? generation : -1L,
+                CloseStatus.SERVER_ERROR.withReason("Client transport error"),
+                "handleTransportError"
+        );
     }
 
     @Override
@@ -388,28 +435,15 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         Long userId = (Long) session.getAttributes().get(WebSocketAttributes.USER_ID.getValue());
         Long generation = (Long) session.getAttributes().get(WebSocketAttributes.SESSION_GENERATION.getValue());
 
-        BroadcastWebSocketSessionBundle removedBundle = sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (removedBundle != null) {
-            closeGeminiSession(removedBundle, CloseStatus.NORMAL.withReason("Client connection closed"), "afterConnectionClosed", broadcastStreamId);
-        }
+        sessionRegistry.removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                generation != null ? generation : -1L,
+                CloseStatus.NORMAL.withReason("Client connection closed"),
+                "afterConnectionClosed"
+        );
 
         log.info("[BroadcastWebSocketHandler] afterConnectionClosed() - Session removed | userId: {}, streamId: {}, generation: {}, status: {}",
                 userId, broadcastStreamId, generation, status);
-    }
-
-    public void disconnect(String broadcastStreamId) {
-        disconnect(broadcastStreamId, CloseStatus.NORMAL.withReason("Broadcast terminated"));
-    }
-
-    public void disconnect(String broadcastStreamId, CloseStatus closeStatus) {
-        BroadcastWebSocketSessionBundle bundle = sessionRegistry.removeSessionBundle(broadcastStreamId);
-        if (bundle != null) {
-            bundle.updateStatus(WebSocketSessionBundleStatus.CLOSING);
-            closeSessionQuietly(bundle.getClientSession(), closeStatus, "disconnect", "Client");
-            closeGeminiSession(bundle, closeStatus, "disconnect", broadcastStreamId);
-        } else {
-            log.warn("[BroadcastWebSocketHandler] disconnect() - Session not found or already closed | streamId: {}", broadcastStreamId);
-        }
     }
 
     public int getActiveSessionCount() {
@@ -427,10 +461,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             WebSocketSession clientSession = bundle.getClientSession();
 
             if (clientSession == null || !clientSession.isOpen()) {
-                BroadcastWebSocketSessionBundle removedBundle = sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, bundle.getGeneration());
-                if (removedBundle != null) {
-                    closeGeminiSession(removedBundle, CloseStatus.POLICY_VIOLATION.withReason("Client session closed"), "pingActiveSessions", broadcastStreamId);
-                }
+                sessionRegistry.removeSessionBundleIfCurrent(
+                        broadcastStreamId,
+                        bundle.getGeneration(),
+                        CloseStatus.POLICY_VIOLATION.withReason("Client session closed"),
+                        "pingActiveSessions"
+                );
                 closedCount++;
                 continue;
             }
@@ -438,11 +474,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             Instant lastPongAt = (Instant) clientSession.getAttributes().get(WebSocketAttributes.LAST_PONG_AT.getValue());
             if (lastPongAt != null && Duration.between(lastPongAt, now).toMillis() > PONG_TIMEOUT_MS) {
                 log.warn("[BroadcastWebSocketHandler] pingActiveSessions() - Pong timeout, closing session | streamId: {}", broadcastStreamId);
-                closeSessionQuietly(clientSession, CloseStatus.POLICY_VIOLATION.withReason("Pong timeout"), "pingActiveSessions", "Client");
-                BroadcastWebSocketSessionBundle removedBundle = sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, bundle.getGeneration());
-                if (removedBundle != null) {
-                    closeGeminiSession(removedBundle, CloseStatus.POLICY_VIOLATION.withReason("Pong timeout"), "pingActiveSessions", broadcastStreamId);
-                }
+                sessionRegistry.removeSessionBundleIfCurrent(
+                        broadcastStreamId,
+                        bundle.getGeneration(),
+                        CloseStatus.POLICY_VIOLATION.withReason("Pong timeout"),
+                        "pingActiveSessions"
+                );
                 closedCount++;
                 continue;
             }
@@ -465,27 +502,12 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
-        closeSessionQuietly(oldBundle.getClientSession(), CloseStatus.POLICY_VIOLATION.withReason("Replaced by new connection"),
-                "afterConnectionEstablished", "Old Client");
-        closeGeminiSession(oldBundle, CloseStatus.POLICY_VIOLATION.withReason("Replaced by new connection"),
-                "afterConnectionEstablished", broadcastStreamId);
-    }
-
-    private void closeGeminiSession(
-            BroadcastWebSocketSessionBundle bundle,
-            CloseStatus closeStatus,
-            String caller,
-            String broadcastStreamId
-    ) {
-        if (bundle == null || !bundle.isGeminiSessionOpen()) {
-            return;
-        }
-
-        try {
-            bundle.getGeminiSession().close(closeStatus);
-        } catch (IOException e) {
-            log.warn("[BroadcastWebSocketHandler] {}() - Failed to close Gemini session | streamId: {}", caller, broadcastStreamId);
-        }
+        sessionRegistry.closeDetachedSessionBundle(
+                oldBundle,
+                CloseStatus.POLICY_VIOLATION.withReason("Replaced by new connection"),
+                "afterConnectionEstablished",
+                broadcastStreamId
+        );
     }
 
     private void closeSessionQuietly(

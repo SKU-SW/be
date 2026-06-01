@@ -317,9 +317,14 @@ public class BroadcastGeminiBootstrapService {
             String errorMessage
     ) {
         sessionRegistry.updateBundleStatusIfCurrent(broadcastStreamId, generation, WebSocketSessionBundleStatus.FAILED);
-        geminiUtil.closeGeminiSessionQuietly(geminiSession);
-        sessionRegistry.removeSessionBundleIfCurrent(broadcastStreamId, generation);
         sendErrorAndClose(clientSession, closeStatus, errorMessage);
+        geminiUtil.closeGeminiSessionQuietly(geminiSession);
+        sessionRegistry.removeSessionBundleIfCurrent(
+                broadcastStreamId,
+                generation,
+                closeStatus.withReason(errorMessage),
+                "terminateFailedBundle"
+        );
     }
 
 

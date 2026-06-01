@@ -5,6 +5,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCompactionSnapsh
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueRefreshSnapshotDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueSnapshotItemDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
@@ -34,6 +35,7 @@ import java.util.Objects;
 @Component
 public class BroadcastRedisUtil {
     private static final String BROADCAST_CHARACTER_KEY_PREFIX = "BroadcastCharacter:";
+    private static final String BROADCAST_USER_KEY_PREFIX = "BroadcastUser:";
     private static final String BROADCAST_INFO_KEY_PREFIX = "BroadcastInfo:";
     private static final String BROADCAST_INFO_CURSOR_SEQUENCE_KEY = "BroadcastInfoCursor:GlobalSeq";
     private static final String BROADCAST_INFO_SUMMARY_PROGRESS_KEY_PREFIX = "BroadcastInfoSummaryInProgress:";
@@ -79,6 +81,78 @@ public class BroadcastRedisUtil {
         String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
         redisTemplate.delete(key);
         log.debug("[BroadcastRedisUtil] 방송 캐릭터 정보가 Redis에서 삭제되었습니다. streamId: {}", broadcastStreamId);
+    }
+
+    /**
+     * 방송 사용자 정보를 Redis에 저장하는 함수
+     * - Key: BroadcastUser:{broadcastStreamId}
+     * - Value: 방송 사용자 정보 JSON
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param value : 저장할 방송 사용자 정보
+     */
+    public void setBroadcastUserValue(String broadcastStreamId, BroadcastUserRedisDto value) {
+        String key = BROADCAST_USER_KEY_PREFIX + broadcastStreamId;
+        try {
+            String jsonValue = objectMapper.writeValueAsString(value);
+            ValueOperations<String, String> values = redisTemplate.opsForValue();
+            values.set(key, jsonValue);
+        } catch (JsonProcessingException e) {
+            log.error("Broadcast User Redis Value JSON 변환 오류: {}", e.getMessage());
+            throw new RuntimeException("Broadcast User Redis Save Error", e);
+        }
+    }
+
+    /**
+     * 방송 사용자 정보를 Redis에서 삭제하는 함수
+     * @param broadcastStreamId : 삭제할 방송 스트림 ID
+     */
+    public void deleteBroadcastUserValue(String broadcastStreamId) {
+        String key = BROADCAST_USER_KEY_PREFIX + broadcastStreamId;
+        redisTemplate.delete(key);
+        log.debug("[BroadcastRedisUtil] 방송 사용자 정보가 Redis에서 삭제되었습니다. streamId: {}", broadcastStreamId);
+    }
+
+    /**
+     * Redis에 방송 사용자 정보가 존재하는지 확인하는 함수
+     * @param broadcastStreamId : 확인할 방송 스트림 ID
+     * @return : 키 존재 여부
+     */
+    public boolean hasBroadcastUserValue(String broadcastStreamId) {
+        String key = BROADCAST_USER_KEY_PREFIX + broadcastStreamId;
+        Boolean hasKey = redisTemplate.hasKey(key);
+        return Boolean.TRUE.equals(hasKey);
+    }
+
+    /**
+     * Redis에서 방송 사용자 정보 JSON 문자열을 조회하는 함수
+     * @param broadcastStreamId : 조회할 방송 스트림 ID
+     * @return : 방송 사용자 정보 JSON 문자열 (없으면 null)
+     */
+    public String getBroadcastUserValue(String broadcastStreamId) {
+        String key = BROADCAST_USER_KEY_PREFIX + broadcastStreamId;
+        ValueOperations<String, String> values = redisTemplate.opsForValue();
+        return values.get(key);
+    }
+
+    /**
+     * Redis에서 방송 사용자 정보 DTO를 조회하는 함수
+     * - BroadcastUser:{broadcastStreamId} key의 JSON을 파싱하여 DTO로 반환한다.
+     * @param broadcastStreamId : 조회할 방송 스트림 ID
+     * @return : 방송 사용자 정보 DTO
+     * @throws CustomException : Redis에 데이터가 없는 경우 BROADCAST_USER_REDIS_NOT_FOUND
+     */
+    public BroadcastUserRedisDto getBroadcastUserDto(String broadcastStreamId) {
+        String json = getBroadcastUserValue(broadcastStreamId);
+        if (json == null) {
+            log.warn("[BroadcastRedisUtil] Broadcast user not found in Redis | streamId: {}", broadcastStreamId);
+            throw new CustomException(BroadcastErrorCode.BROADCAST_USER_REDIS_NOT_FOUND);
+        }
+        try {
+            return objectMapper.readValue(json, BroadcastUserRedisDto.class);
+        } catch (JsonProcessingException e) {
+            log.error("[BroadcastRedisUtil] Broadcast user JSON parsing error | streamId: {}, error: {}", broadcastStreamId, e.getMessage());
+            throw new RuntimeException("Broadcast User Redis Parse Error", e);
+        }
     }
 
     /**
