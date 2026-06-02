@@ -127,7 +127,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         log.info("[BroadcastWebSocketHandler] handleTextMessage() - Received | userId: {}, streamId: {}, generation: {}, payload: {}",
                 userId, broadcastStreamId, generation, message.getPayload());
 
-        // 1. Session Registry에서
+        // 1. Session Registry에서 해당 Client WebSocket이 포함된 Session Bundle을 가져온다.
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation != null ? generation : -1L);
         if (bundle == null || !bundle.matchesClientSession(session) || !bundle.canAcceptClientMessage()) {
             sendStatusMessage(session, WebSocketSessionBundleStatus.GEMINI_CONNECTING.name(), BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY.getMessage());
@@ -158,6 +158,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         try {
+            // AI 응답 인터럽트 요청이 아닌 경우, 일반 Client Message
             broadcastMessageService.handleClientMessage(broadcastStreamId, generation, reqDto.message());
         } catch (CustomException e) {
             log.error("[BroadcastWebSocketHandler] handleTextMessage() - CustomException | userId: {}, streamId: {}, errorCode: {}",

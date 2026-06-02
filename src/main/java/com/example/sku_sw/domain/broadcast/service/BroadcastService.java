@@ -89,7 +89,7 @@ public class BroadcastService {
      * @param characterId : 방송을 시작할 캐릭터 ID
      * @return : 방송 시작 응답 DTO (streamId, startedAt)
      */
-    @Transactional(noRollbackFor = ChzzkReauthRequiredException.class)
+    @Transactional
     public BroadcastStartResDto startBroadcast(Long userId, Long characterId) {
         log.info("[BroadcastService] startBroadcast() - START | userId: {}, characterId: {}", userId, characterId);
         /*
