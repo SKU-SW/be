@@ -30,7 +30,6 @@ public class BroadcastWebSocketSessionRegistry {
      * Key: broadcastStreamId, Value: BroadcastWebSocketSessionBundle
      */
     private final ConcurrentHashMap<String, BroadcastWebSocketSessionBundle> sessions = new ConcurrentHashMap<>();
-
     /**
      * AtomicLong: 자바 멀티스레드 환경에서 안전하게 Long 값을 원자적으로 다루기 위한 클래스
      * - BroadcastWebSocketSessionBundle을 구분할 수 있게 각 번들별로 붙여주는 시퀀스값

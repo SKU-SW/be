@@ -21,12 +21,21 @@ public class ChzzkChatMessageService {
     public void processChatMessage(String payload) {
         log.info("[ChzzkChatMessageService] processChatMessage() - START | payload: {}", payload);
 
-        /*
-            1. JSON 파싱
-            - 전달받은 payload를 ChzzkChatMessageDto로 역직렬화한다.
-         */
         try {
+            /*
+                1. JSON 파싱
+                - 전달받은 payload를 ChzzkChatMessageDto로 역직렬화한다.
+            */
             ChzzkChatMessageDto message = objectMapper.readValue(payload, ChzzkChatMessageDto.class);
+
+            /*
+                2. Gemini에게
+             */
+
+            /*
+                3. Redis에 채팅 데이터 저장
+             */
+
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());
         } catch (JsonProcessingException e) {

@@ -216,6 +216,7 @@ class ChzzkSessionService:
             return
         profile = payload.get("profile") or {}
         message = {
+            "broadcastStreamId": broadcast_stream_id,
             "channelId": channel_id,
             "nickname": profile.get("nickname", ""),
             "userRoleCode": profile.get("userRoleCode", ""),

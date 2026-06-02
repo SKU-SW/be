@@ -4,6 +4,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
+import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -53,7 +54,7 @@ public class BroadcastGeminiRequestService {
             bundle.incrementRequestFlight();
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
-            realtimeInputNode.put("text", clientMessage);
+            realtimeInputNode.put("text", getClientMessage(clientMessage));
 
             WebSocketSession geminiSession = bundle.getGeminiSession();
             geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
@@ -97,7 +98,7 @@ public class BroadcastGeminiRequestService {
             bundle.incrementRequestFlight();
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
-            realtimeInputNode.put("text", clientMessage);
+            realtimeInputNode.put("text", getClientMessage(clientMessage));
 
             WebSocketSession geminiSession = bundle.getGeminiSession();
             geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
@@ -154,5 +155,20 @@ public class BroadcastGeminiRequestService {
                     broadcastStreamId, generation, e.getMessage());
             // 인터럽트 요청 실패는 세션을 종료하지 않고 로깅만 수행한다.
         }
+    }
+
+
+    public void sendChatRequest(
+            ChzzkChatMessageDto message
+    ){
+
+    }
+    
+    private String getClientMessage(String clientMessage){
+        return "(스트리머)" + clientMessage;
+    }
+
+    private String getChatMessage(String chatMessage){
+        return null;
     }
 }
