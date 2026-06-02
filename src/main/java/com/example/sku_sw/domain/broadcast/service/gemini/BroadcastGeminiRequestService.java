@@ -7,6 +7,7 @@ import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRe
 import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Map;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,14 @@ public class BroadcastGeminiRequestService {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
+
+    private static final Map<String, String> USER_ROLE_CODE_TO_KOREAN = Map.of(
+            "common_chat_user", "시청자",
+            "manager", "매니저",
+            "subscription_user", "구독자",
+            "top_fan_user", "열혈팬",
+            "streaming_chat_notice_admin", "공지 관리자"
+    );
 
     /**
      * 클라이언트 메시지를 Gemini Live WebSocket 세션으로 전송한다.
@@ -158,17 +167,82 @@ public class BroadcastGeminiRequestService {
     }
 
 
-    public void sendChatRequest(
-            ChzzkChatMessageDto message
-    ){
+    /**
+     * 시청자 채팅 메시지를 Gemini Live WebSocket 세션으로 전송한다.
+     * - userRoleCode에 따라 접두어를 붙여 포맷팅한다. (Streamer: "(스트리머)", 일반: "(한글역할, 닉네임)", null: "(시청자, 닉네임)")
+     * - 세션 번들이 없거나 Gemini 전송 불가 상태면 로깅 후 종료한다. (비동기 채팅이므로 예외 미발생)
+     *
+     * @param message : Chzzk 채팅 메시지 DTO
+     */
+    public void sendChatRequest(ChzzkChatMessageDto message) {
+        log.info("[BroadcastGeminiService] sendChatRequest() - START | streamId: {}, nickname: {}",
+                message.broadcastStreamId(), message.nickname());
 
+        /*
+            1. 세션 번들 조회
+            - generation 검증 없이 broadcastStreamId로 현재 세션 번들을 조회한다.
+            - 번들이 없거나 Gemini 전송 불가 상태면 로깅 후 종료한다.
+         */
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(message.broadcastStreamId());
+        if (bundle == null || !bundle.canSendToGemini()) {
+            log.info("[BroadcastGeminiService] sendChatRequest() - No ready Gemini session, skipping | streamId: {}",
+                    message.broadcastStreamId());
+            log.info("[BroadcastGeminiService] sendChatRequest() - END | streamId: {}, action: skip",
+                    message.broadcastStreamId());
+            return;
+        }
+
+        /*
+            2. 채팅 메시지 포맷팅 후 Gemini 전송
+            - userRoleCode에 따라 "(시청자, 닉네임)" 또는 "(스트리머)" 접두어를 붙인다.
+            - processClientMessage()와 동일한 realtimeInput.text 메시지 구조로 전송한다.
+         */
+        try {
+            bundle.incrementRequestFlight();
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
+            realtimeInputNode.put("text", getChatMessage(message));
+
+            WebSocketSession geminiSession = bundle.getGeminiSession();
+            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+
+            log.info("[BroadcastGeminiService] sendChatRequest() - END | streamId: {}, action: sent",
+                    message.broadcastStreamId());
+        } catch (Exception e) {
+            bundle.decrementRequestFlight();
+            log.error("[BroadcastGeminiService] sendChatRequest() - Failed | streamId: {}, error: {}",
+                    message.broadcastStreamId(), e.getMessage());
+        }
     }
     
     private String getClientMessage(String clientMessage){
         return "(스트리머)" + clientMessage;
     }
 
-    private String getChatMessage(String chatMessage){
-        return null;
+    /**
+     * 채팅 메시지 포맷팅
+     * - userRoleCode에 따라 접두어를 붙여 Gemini에게 전달할 메시지를 생성한다.
+     *   - "streamer" → "(스트리머)" + content
+     *   - null/empty → "(시청자, {nickname})" + content
+     *   - 그 외 → "({한글 역할명}, {nickname})" + content
+     * @param message : Chzzk 채팅 메시지 DTO
+     * @return : Gemini에게 전달할 포맷팅된 메시지
+     */
+    private String getChatMessage(ChzzkChatMessageDto message) {
+        String userRoleCode = message.userRoleCode();
+        String nickname = message.nickname();
+        String content = message.content();
+
+        String prefix;
+        if ("streamer".equals(userRoleCode)) {
+            prefix = "(스트리머)";
+        } else if (userRoleCode == null || userRoleCode.isEmpty()) {
+            prefix = "(시청자, " + nickname + ")";
+        } else {
+            String koreanRole = USER_ROLE_CODE_TO_KOREAN.getOrDefault(userRoleCode, userRoleCode);
+            prefix = "(" + koreanRole + ", " + nickname + ")";
+        }
+
+        return prefix + content;
     }
 }

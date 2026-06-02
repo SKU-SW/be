@@ -5,8 +5,8 @@ services:
     build:
       context: ../..
       dockerfile: docker/fastapi/Dockerfile
-    image: sku-sw-fastapi-chzzk-session:latest
-    container_name: sku-sw-fastapi-chzzk-session
+    image: fastapi-server:latest
+    container_name: fastapi-server
     ports:
       - "8000:8000"
     environment:
@@ -22,7 +22,7 @@ services:
       - DEV_CHAT_REDIS_HOST=${DEV_CHAT_REDIS_HOST:-host.docker.internal}
       - DEV_CHAT_REDIS_PORT=${DEV_CHAT_REDIS_PORT:-6381}
       - DEV_CHAT_REDIS_PW=${DEV_CHAT_REDIS_PW:-1234}
-    restart: unless-stopped
+    restart: always
 
 # networks:
 #   sku-sw-network:
