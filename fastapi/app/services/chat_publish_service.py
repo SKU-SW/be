@@ -15,10 +15,9 @@ class ChatPublishService:
 
     async def startup(self) -> None:
         self.redis = Redis(
-            host=os.getenv("CHAT_REDIS_HOST", "localhost"),
-            port=int(os.getenv("CHAT_REDIS_PORT", "6381")),
-            password=os.getenv("CHAT_REDIS_PASSWORD", ""),
-            db=int(os.getenv("CHAT_REDIS_DB", "0")),
+            host=os.getenv("DEV_CHAT_REDIS_HOST") or "localhost",
+            port=int(os.getenv("DEV_CHAT_REDIS_PORT") or "6381"),
+            password=os.getenv("DEV_CHAT_REDIS_PW") or "1234",
             decode_responses=True,
         )
 

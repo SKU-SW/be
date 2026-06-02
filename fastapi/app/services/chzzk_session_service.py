@@ -130,6 +130,7 @@ class ChzzkSessionService:
         chzzk_session_registry.save_inflight_socket(pending.broadcast_stream_id, socket_client)
         state = SocketWaitState(socket_client=socket_client)
 
+        # @socket_client.event: 함수 이름을 이벤트명으로 자동으로 인식한다.
         @socket_client.event
         async def disconnect() -> None:
             async with chzzk_session_registry.stream_lock(pending.broadcast_stream_id):
@@ -154,6 +155,11 @@ class ChzzkSessionService:
                 state.subscribed_event.set()
                 return
             await self._publish_chat_event_if_ready(pending.broadcast_stream_id, message_type or "UNKNOWN", normalized_payload)
+
+        @socket_client.on("CHAT")
+        async def on_chat(payload: object) -> None:
+            normalized_payload = self._normalize_payload(payload)
+            await self._publish_chat_message(pending.broadcast_stream_id, normalized_payload)
 
         connect_task = socket_client.connect(session_url, transports=["websocket"])
 
@@ -200,6 +206,23 @@ class ChzzkSessionService:
             "channelName": active_session.channel_name,
             "payload": payload,
         })
+
+    async def _publish_chat_message(self, broadcast_stream_id: str, payload: dict) -> None:
+        active_session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
+        if active_session is None or not active_session.redis_publish_ready:
+            return
+        channel_id = payload.get("channelId")
+        if not channel_id:
+            return
+        profile = payload.get("profile") or {}
+        message = {
+            "channelId": channel_id,
+            "nickname": profile.get("nickname", ""),
+            "userRoleCode": profile.get("userRoleCode", ""),
+            "content": payload.get("content", ""),
+            "messageTime": payload.get("messageTime"),
+        }
+        await chat_publish_service.publish(active_session.channel_name, message)
 
     def _build_headers(self, access_token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
