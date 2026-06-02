@@ -10,11 +10,8 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * 다중 Redis 연결 정보를 바인딩하는 프로퍼티 클래스
- *
- * 이 클래스의 역할은 "Redis 연결 정보를 보관하는 것"이지, 실제 Redis 연결을 만들거나 Redis 명령을 수행하는 것이 아니다.
- * 즉, 이 클래스는 설정 파일의 값을 Java 객체로 묶어 주는 "설정 바인딩 전용 객체"라고 보면 된다.
- * Redis가 1개일 때는 {@code spring.data.redis.*} 자동설정만으로 충분했지만 지금은 Broadcast 저장 Redis와 Chat Pub/Sub Redis로 역할이 분리되었다.
- * 따라서 Redis 설정도 2세트가 필요하고, 이 값을 구조적으로 관리할 객체가 필요하다.
+ * - application.yml 설정 파일의 값을 Java 객체로 묶어주는 "설정 바인딩 전용 객체"
+ * - 현재 Redis 설정이 2개이므로, 본 Class로 2개의 Redis 설정을 관리한다.
  *
  * Spring은 이 클래스 자체를 Bean 1개로 등록한다.
  * broadcast, chat은 별도 Bean이 아니라, 이 Bean 내부에 포함된 하위 값 객체이다.

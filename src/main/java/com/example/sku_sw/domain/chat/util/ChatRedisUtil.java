@@ -1,4 +1,4 @@
-package com.example.sku_sw.global.util;
+package com.example.sku_sw.domain.chat.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,13 +15,16 @@ import org.springframework.stereotype.Component;
 public class ChatRedisUtil {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final ChatRedisSubscriber chatRedisSubscriber;
 
     public ChatRedisUtil(
             @Qualifier("chatStringRedisTemplate") StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ChatRedisSubscriber chatRedisSubscriber
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.chatRedisSubscriber = chatRedisSubscriber;
     }
 
     /**
@@ -46,5 +49,22 @@ public class ChatRedisUtil {
             log.error("[ChatRedisUtil] 메시지 JSON 직렬화 중 오류가 발생했습니다. channel: {}, error: {}", channel, e.getMessage());
             throw new RuntimeException("Chat Redis Publish Error", e);
         }
+    }
+
+    /**
+     * Chat Redis에서 psubscribe를 진행하는 함수
+     * @param channelId : 방송 채널별 고유 ID (치지직)
+     * @return Chat:{channelId}.message 양식의 ChannelName
+     */
+    public String subscribeChannelPattern(String channelId) {
+        return chatRedisSubscriber.subscribeChannelPattern(channelId);
+    }
+
+    /**
+     * Chat Redis에서 punsubscribe를 진행하는 함수
+     * @param channelId : 방송 채널별 고유 ID (치지직)
+     */
+    public void unsubscribeChannelPattern(String channelId) {
+        chatRedisSubscriber.unsubscribeChannelPattern(channelId);
     }
 }

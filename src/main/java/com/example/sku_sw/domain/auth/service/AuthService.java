@@ -389,7 +389,7 @@ public class AuthService {
      * - 재발급 성공 시 사용자 엔티티의 치지직 인증 토큰 정보를 최신 값으로 갱신한다.
      * @param user : 치지직 토큰을 재발급할 사용자 엔티티
      */
-    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = CustomException.class)
+    @Transactional
     public void refreshChzzkAccessToken(User user) {
         log.info("[AuthService] refreshChzzkAccessToken() - START | userId: {}", user.getId());
 

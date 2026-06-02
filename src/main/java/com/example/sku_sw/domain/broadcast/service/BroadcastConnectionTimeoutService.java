@@ -1,15 +1,20 @@
 package com.example.sku_sw.domain.broadcast.service;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
+import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
+import com.example.sku_sw.domain.chat.util.FastApiUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.socket.CloseStatus;
 
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,6 +46,8 @@ public class BroadcastConnectionTimeoutService {
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final TransactionTemplate transactionTemplate;
     private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final ChatRedisUtil chatRedisUtil;
+    private final FastApiUtil fastApiUtil;
 
     public BroadcastConnectionTimeoutService(
             TaskScheduler taskScheduler,
@@ -48,6 +55,8 @@ public class BroadcastConnectionTimeoutService {
             BroadcastRedisUtil broadcastRedisUtil,
             BroadcastWebSocketSessionRegistry sessionRegistry,
             BroadcastDialogueCompactionService broadcastDialogueCompactionService,
+            ChatRedisUtil chatRedisUtil,
+            FastApiUtil fastApiUtil,
             PlatformTransactionManager transactionManager
     ) {
         this.taskScheduler = taskScheduler;
@@ -55,6 +64,8 @@ public class BroadcastConnectionTimeoutService {
         this.broadcastRedisUtil = broadcastRedisUtil;
         this.sessionRegistry = sessionRegistry;
         this.broadcastDialogueCompactionService = broadcastDialogueCompactionService;
+        this.chatRedisUtil = chatRedisUtil;
+        this.fastApiUtil = fastApiUtil;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -128,17 +139,17 @@ public class BroadcastConnectionTimeoutService {
                 - DB에 쓰기 락을 획득한 뒤 BROADCASTING 상태일 때만 abnormalTerminate 상태를 기록한다.
                 - Redis 삭제 이후 세션을 재확인하여 세션이 생겼으면 Redis 복구 후 rollback 처리한다.
              */
-            transactionTemplate.execute(status -> {
+            Boolean abnormalTerminationCommitted = transactionTemplate.execute(status -> {
                 Broadcast broadcast = broadcastRepository.findByStreamIdAndStatusForUpdate(broadcastStreamId, BroadcastStatus.BROADCASTING)
                         .orElse(null);
                 if (broadcast == null) {
                     log.warn("[BroadcastConnectionTimeoutService] handleTimeout() - Broadcast not found or not BROADCASTING | streamId: {}", broadcastStreamId);
-                    return null;
+                    return false;
                 }
 
                 if (sessionRegistry.hasSessionBundle(broadcastStreamId)) {
                     log.info("[BroadcastConnectionTimeoutService] handleTimeout() - WebSocket session found in transaction, skipping timeout | streamId: {}", broadcastStreamId);
-                    return null;
+                    return false;
                 }
 
                 broadcast.abnormalTerminate();
@@ -154,20 +165,54 @@ public class BroadcastConnectionTimeoutService {
                         broadcastRedisUtil.setBroadcastCharacterValueRaw(broadcastStreamId, redisBackupJson);
                     }
                     status.setRollbackOnly();
-                    return null;
+                    return false;
                 }
 
                 log.info("[BroadcastConnectionTimeoutService] handleTimeout() - No WebSocket session, committing abnormal termination | streamId: {}", broadcastStreamId);
 
-                return null;
+                return true;
             });
 
-            if (!sessionRegistry.hasSessionBundle(broadcastStreamId)) {
-                broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-                broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
-                log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Redis backup & delete completed | streamId: {}", broadcastStreamId);
+            if (!Boolean.TRUE.equals(abnormalTerminationCommitted)) {
+                log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Timeout cleanup skipped because abnormal termination was not committed | streamId: {}", broadcastStreamId);
+                return;
             }
 
+            /*
+                4. DB에 있는 값까지 비정상 종료 처리가 된 상태이므로, 무조건 나머지 방송 비정상 종료 처리를 한다.
+                - BroadcastUser에 데이터가 있다면, fastapi에게 해당 Chat Redis Channel 연결 종료 요청을 보낸다.
+                - 해당 요청이 성공적으로 왔다면 Spring Boot에서 Chat Redis Channel을 punsubscribe 처리한다.
+                - 이후 Redis에 있는 BroadcastCharacter, BroadcastUser, BroadcastInfo 접두사 데이터들을 삭제한다.
+                - 이 과정 중에 WebSocketSessionRegistry에 Session Bundle 객체가 생성되었을 수도 있으니, Session Bundle 객체를 비활성화한다.
+             */
+            BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+            if (broadcastUserRedisDto != null) {
+                if (broadcastUserRedisDto.getChannelName() != null && !broadcastUserRedisDto.getChannelName().isBlank()) {
+                    try {
+                        fastApiUtil.disconnectChzzkRedisChannel(new FastApiChzzkRedisChannelReqDto(
+                                broadcastStreamId,
+                                broadcastUserRedisDto.getSessionKey(),
+                                broadcastUserRedisDto.getChannelName()
+                        ));
+                    } catch (Exception e) {
+                        log.error("[BroadcastConnectionTimeoutService] handleTimeout() - FastAPI disconnect failed | streamId: {}, error: {}",
+                                broadcastStreamId, e.getMessage(), e);
+                    }
+                }
+                if (broadcastUserRedisDto.getChannelId() != null && !broadcastUserRedisDto.getChannelId().isBlank()) {
+                    chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
+                }
+            }
+            broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
+            sessionRegistry.removeSessionBundleIfCurrent(
+                    broadcastStreamId,
+                    CloseStatus.SERVER_ERROR.withReason("Broadcast connection timeout"),
+                    "handleTimeout"
+            );
+
+            log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Redis backup & delete completed | streamId: {}", broadcastStreamId);
             log.info("[BroadcastConnectionTimeoutService] handleTimeout() - Abnormal termination processed | streamId: {}", broadcastStreamId);
         } catch (Exception e) {
             log.error("[BroadcastConnectionTimeoutService] handleTimeout() - Error during timeout handling | streamId: {}, error: {}", broadcastStreamId, e.getMessage(), e);

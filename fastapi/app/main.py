@@ -1,50 +1,47 @@
-"""
-FastAPI TTS Service - SKU_SW 프로젝트
-
-Supertonic-2 를 활용한 음성 합성 REST API 서버.
-Spring Boot 백엔드에서 HTTP 호출하여 TTS 음성을 생성하고 multipart 응답을 받습니다.
-
-실행 (로컬):
-    pip install -r requirements.txt
-    uvicorn app.main:app --reload --port 8000
-
-도커 실행:
-    docker compose up --build
-"""
-
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 
-import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from .router import router as tts_router
-from .tts_adapter import tts_adapter
+from .exceptions import ChzzkSessionException
+from .models import ChzzkSessionConnectErrorRes
+from .registry import chzzk_session_registry
+from .router_chzzk import channel_router, session_router
+from .services.chat_publish_service import chat_publish_service
 
-# ---------------------------------------------------------------------------
-# 로깅 설정
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
 
-# ---------------------------------------------------------------------------
-# FastAPI 앱 생성
-# ---------------------------------------------------------------------------
+def configure_logging() -> None:
+    log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    configure_logging()
+    chzzk_session_registry.end_shutdown()
+    await chat_publish_service.startup()
+    yield
+    chzzk_session_registry.begin_shutdown()
+    await chzzk_session_registry.close_all_sessions()
+    await chat_publish_service.shutdown()
+
+
 app = FastAPI(
-    title="SKU_SW TTS Service",
-    description="Supertonic-2 기반 음성 합성 서비스 (Spring 연동)",
+    title="SKU_SW FastAPI",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# ---------------------------------------------------------------------------
-# CORS - Spring Nginx 프록시 환경 대응
-# ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -53,34 +50,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# 라우터 등록
-# ---------------------------------------------------------------------------
-app.include_router(tts_router)
+app.include_router(session_router)
+app.include_router(channel_router)
 
 
-# ---------------------------------------------------------------------------
-# 헬스 체크
-# ---------------------------------------------------------------------------
 @app.get("/health", tags=["System"])
-async def health_check():
-    return {
-        "status": "ok",
-        "service": "tts-fastapi",
-        "ttsEngine": getattr(tts_adapter, "_engine", None),
-    }
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
-@app.on_event("startup")
-async def warmup_tts_engine() -> None:
-    try:
-        tts_adapter._init_engine()
-    except Exception as exc:
-        logging.getLogger(__name__).warning("TTS warmup failed: %s", exc)
+@app.exception_handler(ChzzkSessionException)
+async def handle_chzzk_session_exception(_: Request, exc: ChzzkSessionException) -> JSONResponse:
+    error_response = ChzzkSessionConnectErrorRes(
+        code=exc.code,
+        message=exc.message,
+        broadcastStreamId=exc.broadcast_stream_id,
+        attemptId=exc.attempt_id,
+    )
+    return JSONResponse(status_code=exc.status_code, content=error_response.model_dump())
 
 
-# ---------------------------------------------------------------------------
-# 직접 실행
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+@app.exception_handler(RequestValidationError)
+async def handle_validation_exception(_: Request, exc: RequestValidationError) -> JSONResponse:
+    error_response = ChzzkSessionConnectErrorRes(
+        code="INVALID_REQUEST",
+        message="요청값이 올바르지 않습니다.",
+        broadcastStreamId=None,
+        attemptId=None,
+    )
+    return JSONResponse(status_code=400, content=error_response.model_dump())
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(_: Request, exc: Exception) -> JSONResponse:
+    logging.getLogger(__name__).exception("Unhandled FastAPI exception", exc_info=exc)
+    error_response = ChzzkSessionConnectErrorRes(
+        code="UNEXPECTED_INTERNAL_ERROR",
+        message="서버 내부 오류가 발생했습니다.",
+        broadcastStreamId=None,
+        attemptId=None,
+    )
+    return JSONResponse(status_code=500, content=error_response.model_dump())

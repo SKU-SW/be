@@ -10,8 +10,13 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.CharacterPersonaInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelResDto;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateReqDto;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
@@ -20,9 +25,10 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
+import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
-import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketHandler;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
 import com.example.sku_sw.domain.character.entity.CharacterTriggerWord;
@@ -31,6 +37,7 @@ import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
+import com.example.sku_sw.domain.chat.util.FastApiUtil;
 import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +47,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.util.StringUtils;
 import org.springframework.web.socket.CloseStatus;
 
 import java.time.LocalDateTime;
@@ -49,6 +57,7 @@ import java.util.EnumSet;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -62,9 +71,11 @@ public class BroadcastService {
     private final AuthService authService;
     private final BroadcastStreamIdGenerator streamIdGenerator;
     private final BroadcastRedisUtil broadcastRedisUtil;
-    private final BroadcastWebSocketHandler broadcastWebSocketHandler;
+    private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
     private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final FastApiUtil fastApiUtil;
+    private final ChatRedisUtil chatRedisUtil;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
 
@@ -78,7 +89,7 @@ public class BroadcastService {
      * @param characterId : 방송을 시작할 캐릭터 ID
      * @return : 방송 시작 응답 DTO (streamId, startedAt)
      */
-    @Transactional(noRollbackFor = ChzzkReauthRequiredException.class)
+    @Transactional
     public BroadcastStartResDto startBroadcast(Long userId, Long characterId) {
         log.info("[BroadcastService] startBroadcast() - START | userId: {}, characterId: {}", userId, characterId);
         /*
@@ -131,14 +142,30 @@ public class BroadcastService {
         Broadcast savedBroadcast = broadcastRepository.save(broadcast);
 
         /*
-            8. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
-            - 방송 시작 DB 커밋이 확정된 이후 Redis에 방송 캐릭터 정보를 저장한다.
+            8. FastAPI에 치지직 세션 연결 요청
+            - DB 저장 후 FastAPI에 세션 연결을 동기 요청한다.
+            - 실패 시 예외를 발생시켜 트랜잭션을 롤백한다.
          */
-        BroadcastCharacterRedisDto redisDto = buildBroadcastCharacterRedisDto(character);
-        registerBroadcastRedisSaveAfterCommit(savedBroadcast.getStreamId(), redisDto);
+        String attemptId = UUID.randomUUID().toString();
+        FastApiChzzkSessionCreateReqDto fastApiRequest = new FastApiChzzkSessionCreateReqDto(
+                savedBroadcast.getStreamId(),
+                attemptId,
+                user.getChzzkAuthAccessToken()
+        );
+        FastApiChzzkSessionCreateResDto fastApiResponse = fastApiUtil.createChzzkSession(fastApiRequest)
+                .block();
+        validateFastApiChzzkSessionCreateResDto(savedBroadcast, attemptId, fastApiResponse);
 
         /*
-            9. ResponseDto 생성
+            9. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
+            - 방송 시작 DB 커밋이 확정된 이후 Redis에 방송 캐릭터/사용자 정보를 저장한다.
+         */
+        BroadcastCharacterRedisDto redisDto = buildBroadcastCharacterRedisDto(character);
+        BroadcastUserRedisDto broadcastUserRedisDto = buildBroadcastUserRedisDto(fastApiResponse);
+        registerBroadcastRedisSaveAfterCommit(savedBroadcast.getStreamId(), redisDto, broadcastUserRedisDto);
+
+        /*
+            10. ResponseDto 생성
             - 저장된 Broadcast의 streamId와 startedAt을 포맷하여 응답 DTO를 생성한다.
          */
         BroadcastStartResDto result = BroadcastStartResDto.builder()
@@ -149,6 +176,23 @@ public class BroadcastService {
         log.info("[BroadcastService] startBroadcast() - END | streamId: {}", streamId);
         return result;
     }
+
+
+    private void validateFastApiChzzkSessionCreateResDto(Broadcast savedBroadcast, String attemptId, FastApiChzzkSessionCreateResDto fastApiResponse) {
+        if (fastApiResponse == null) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
+        }
+        if (!savedBroadcast.getStreamId().equals(fastApiResponse.broadcastStreamId())) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
+        }
+        if (!attemptId.equals(fastApiResponse.attemptId())) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_ATTEMPT_MISMATCH);
+        }
+        if (!StringUtils.hasText(fastApiResponse.sessionKey()) || !StringUtils.hasText(fastApiResponse.channelId())) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
+        }
+    }
+
 
     /**
      * 방송 시작 전 치지직 인증 토큰 상태를 점검하는 함수
@@ -467,6 +511,25 @@ public class BroadcastService {
         return result;
     }
 
+    private BroadcastUserRedisDto buildBroadcastUserRedisDto(FastApiChzzkSessionCreateResDto fastApiResponse){
+        return BroadcastUserRedisDto.builder()
+                .sessionKey(fastApiResponse.sessionKey())
+                .channelId(fastApiResponse.channelId())
+                .channelName(null)
+                .build();
+    }
+
+    private FastApiChzzkRedisChannelReqDto buildFastApiChzzkRedisChannelReqDto(
+            String broadcastStreamId,
+            BroadcastUserRedisDto broadcastUserRedisDto
+    ) {
+        return new FastApiChzzkRedisChannelReqDto(
+                broadcastStreamId,
+                broadcastUserRedisDto.getSessionKey(),
+                broadcastUserRedisDto.getChannelName()
+        );
+    }
+
     /**
      * 현재 방송 정보 조회용 방송 캐릭터 정보 응답 DTO 생성
      * @param broadcast : 진행 중인 방송 엔티티
@@ -758,21 +821,108 @@ public class BroadcastService {
      *
      * @param broadcastStreamId : 방송 스트림 ID
      * @param redisDto : Redis에 저장할 방송 캐릭터 정보
+     * @param broadcastUserRedisDto : Redis에 저장할 방송 사용자 정보
      */
-    private void registerBroadcastRedisSaveAfterCommit(String broadcastStreamId, BroadcastCharacterRedisDto redisDto) {
+    private void registerBroadcastRedisSaveAfterCommit(
+            String broadcastStreamId,
+            BroadcastCharacterRedisDto redisDto,
+            BroadcastUserRedisDto broadcastUserRedisDto
+    ) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                String subscribedChannelId = null;
+                boolean fastApiConnected = false;
                 try {
+                    /*
+                        1. BroadcastCharacterValue, BroadcastUserValue, SummarySlot 초기화 & Redis Channel 구독
+                     */
                     broadcastRedisUtil.setBroadcastCharacterValue(broadcastStreamId, redisDto);
                     broadcastRedisUtil.initializeSummarySlot(broadcastStreamId);
-                    // Redis 저장 성공 시 WebSocket 연결 타임아웃 등록
+                    subscribedChannelId = broadcastUserRedisDto.getChannelId();
+                    String channelName = chatRedisUtil.subscribeChannelPattern(subscribedChannelId);
+                    broadcastUserRedisDto.setChannelName(channelName);
+                    broadcastRedisUtil.setBroadcastUserValue(broadcastStreamId, broadcastUserRedisDto);
+
+                    /*
+                        2. FastApi로 Redis Channel로 구독 완료 요청
+                        - 동기적으로 Redis Channel "FastAPI <-> Redis <-> Spring Boot" 연결 완료 응답 수신
+                     */
+                    FastApiChzzkRedisChannelResDto response = fastApiUtil.connectChzzkRedisChannel(
+                            buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
+                    );
+                    fastApiConnected = "연결 성공".equals(response.status());
+
+                    /*
+                        3. FastApi 세션 연결과 FastApi와의 Pub Sub Redis 연결까지 완료한 뒤에, Connection Timeout을 등록한다.
+                     */
                     broadcastConnectionTimeoutService.registerConnectionTimeout(broadcastStreamId);
                 } catch (Exception e) {
+                    /*
+                        4. 위 과정에서 예외가 발생하면 방송 시작 afterCommit() 로직을 롤백한다.
+                     */
                     log.error("[BroadcastService] 방송 캐릭터 정보 Redis 저장 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                    rollbackBroadcastStartAfterCommit(broadcastStreamId, broadcastUserRedisDto, subscribedChannelId, fastApiConnected);
                 }
             }
         });
+    }
+
+    /**
+     * AfterCommit 과정에서 예외가 발생했을 때 과정을 RollBack 한다
+     * @param broadcastStreamId
+     * @param broadcastUserRedisDto
+     * @param subscribedChannelId
+     * @param fastApiConnected
+     */
+    private void rollbackBroadcastStartAfterCommit(
+            String broadcastStreamId,
+            BroadcastUserRedisDto broadcastUserRedisDto,
+            String subscribedChannelId,
+            boolean fastApiConnected
+    ) {
+        try {
+            /*
+                1. fastApi가 연결되어있고, BroadcastUser:broadcastStreamId에 channelName이 저장되어있는 경우
+                - fastApi에게 Session Registry에 연결되어있는 ChzzkRedisChannel을 연결해제하도록 설정
+                - fastApi의 ChzzkRedisChannel이 해제될 때까지 동기적으로 대기한다.
+             */
+            if (fastApiConnected && StringUtils.hasText(broadcastUserRedisDto.getChannelName())) {
+                fastApiUtil.disconnectChzzkRedisChannel(
+                        buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
+                );
+            }
+        } catch (Exception e) {
+            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - FastAPI disconnect failed | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage(), e);
+        }
+
+        try {
+            /*
+                2. fastApi가 Redis Channel 연결을 해제한 이후, Spring Boot의 Chat Redis 구독을 끊는다.
+             */
+            if (StringUtils.hasText(subscribedChannelId)) {
+                chatRedisUtil.unsubscribeChannelPattern(subscribedChannelId);
+            }
+        } catch (Exception e) {
+            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - Chat unsubscribe failed | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage(), e);
+        }
+
+        try {
+            /*
+                3. Broadcast Redis에 저장되어있는 값들을 삭제한다.
+                - BroadcastCharacterValue
+                - BroadcastUserValue
+                - BroadcastInfo
+             */
+            broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
+            broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
+        } catch (Exception e) {
+            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - Redis rollback failed | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage(), e);
+        }
     }
 
     /**
@@ -792,13 +942,23 @@ public class BroadcastService {
             public void afterCommit() {
                 try {
                     broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+                    BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+                    if (StringUtils.hasText(broadcastUserRedisDto.getChannelName())) {
+                        fastApiUtil.disconnectChzzkRedisChannel(
+                                buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
+                        );
+                    }
+                    if (StringUtils.hasText(broadcastUserRedisDto.getChannelId())) {
+                        chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
+                    }
                     broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
+                    broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
                     broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
                 } catch (Exception e) {
                     log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
                 }
 
-                broadcastWebSocketHandler.disconnect(
+                sessionRegistry.disconnect(
                         broadcastStreamId,
                         CloseStatus.NORMAL.withReason("Broadcast terminated")
                 );

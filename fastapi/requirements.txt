@@ -1,15 +1,11 @@
 # FastAPI 서버
 fastapi>=0.104.0,<1.0.0
 uvicorn[standard]>=0.24.0,<1.0.0
-python-multipart>=0.0.6
-
-# TTS 엔진
-supertonic>=1.1.1
-onnxruntime>=1.20.0
-soundfile>=0.12.1
-numpy>=1.26.0
 
 # 테스트
 pytest>=7.4.0
 pytest-asyncio>=0.23.0
 httpx>=0.25.0
+python-socketio[asyncio_client]==4.6.1
+aiohttp>=3.4
+redis>=5.0.1
