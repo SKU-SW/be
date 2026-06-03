@@ -297,41 +297,35 @@ jobs:
             
             rm -f .env
             
-            # 최신 이미지 pull
-            docker compose pull
-            # ▲ docker-compose.yml에 정의된 이미지의 최신 버전을 Docker Hub에서 다운로드
-            #   위 Job에서 push한 :latest 태그 이미지를 가져옴
+            # 환경변수 export (이후 모든 명령어에서 공유)
+            export DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }}
+            export DEV_DB_HOST=${{ secrets.DEV_DB_HOST }}
+            export DEV_DB_NAME=${{ secrets.DEV_DB_NAME }}
+            export DEV_DB_USER=${{ secrets.DEV_DB_USER }}
+            export DEV_DB_PW=${{ secrets.DEV_DB_PW }}
+            export DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }}
+            export DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }}
+            export DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }}
+            export DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }}
+            export DEV_CHAT_REDIS_HOST=${{ secrets.DEV_CHAT_REDIS_HOST }}
+            export DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }}
+            export DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }}
+            export DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}}
+            export GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
+            export REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}}
+            export REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}}
+            export FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}}
+            export FASTAPI_SESSION_CONNECT_PATH=${{secrets.FASTAPI_SESSION_CONNECT_PATH}}
+            export CHZZK_CLIENT_ID=${{secrets.CHZZK_CLIENT_ID}}
+            export CHZZK_CLIENT_SECRET=${{secrets.CHZZK_CLIENT_SECRET}}
 
-            # 환경변수 직접 주입 & 컨테이너 재시작
-            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }} \
-            DEV_DB_HOST=${{ secrets.DEV_DB_HOST }} \
-            DEV_DB_NAME=${{ secrets.DEV_DB_NAME }} \
-            DEV_DB_USER=${{ secrets.DEV_DB_USER }} \
-            DEV_DB_PW=${{ secrets.DEV_DB_PW }} \
-            DEV_JWT_SECRET_KEY=${{ secrets.DEV_JWT_SECRET_KEY }} \
-            DEV_BROADCAST_REDIS_HOST=${{ secrets.DEV_BROADCAST_REDIS_HOST }} \
-            DEV_BROADCAST_REDIS_PORT=${{ secrets.DEV_BROADCAST_REDIS_PORT }} \
-            DEV_BROADCAST_REDIS_PW=${{ secrets.DEV_BROADCAST_REDIS_PW }} \
-            DEV_CHAT_REDIS_HOST=${{ secrets.DEV_CHAT_REDIS_HOST }} \
-            DEV_CHAT_REDIS_PORT=${{ secrets.DEV_CHAT_REDIS_PORT }} \
-            DEV_CHAT_REDIS_PW=${{ secrets.DEV_CHAT_REDIS_PW }} \
-            DEV_CLOUDFRONT_DOMAIN=${{secrets.DEV_CLOUDFRONT_DOMAIN}} \
-            GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}} \
-            REDIS_BROADCAST_DIALOGUE_MAX_NUM=${{secrets.REDIS_BROADCAST_DIALOGUE_MAX_NUM}} \
-            REDIS_MAX_REFRESH_RETRY_COUNT=${{secrets.REDIS_MAX_REFRESH_RETRY_COUNT}} \
-            FASTAPI_BASE_URL=${{secrets.FASTAPI_BASE_URL}} \
-            FASTAPI_SESSION_CONNECT_PATH=${{secrets.FASTAPI_SESSION_CONNECT_PATH}} \
-            CHZZK_CLIENT_ID=${{secrets.CHZZK_CLIENT_ID}} \
-            CHZZK_CLIENT_SECRET=${{secrets.CHZZK_CLIENT_SECRET}} \
-            docker compose up -d
-            # ▲ 컨테이너를 백그라운드(-d, detach)로 실행
-            #   이미 실행 중인 컨테이너가 있으면 변경된 것만 재생성
-            #   처음 실행이면 새로 생성
+            # 최신 이미지 pull & 컨테이너 재시작
+            docker compose pull
+            docker compose up -d --pull always
+            # ▲ --pull always: latest 태그라도 레지스트리에서 최신 이미지를 강제 pull
 
             # 사용하지 않는 이미지 정리
             docker image prune -f
-            # ▲ 태그가 없는(dangling) 이미지 강제(-f) 삭제
-            #   이전 배포에서 사용하던 이미지가 남아 디스크 낭비되는 것 방지
             
 
   # =============================================
@@ -373,16 +367,16 @@ jobs:
             
             rm -f .env
             
-            docker compose pull
+            export DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }}
+            export LOG_LEVEL=INFO
+            export HF_HOME=/app/.cache/huggingface
+            export XDG_CACHE_HOME=/app/.cache
+            export DEV_CHAT_REDIS_HOST=${{secrets.DEV_CHAT_REDIS_HOST}}
+            export DEV_CHAT_REDIS_PORT=${{secrets.DEV_CHAT_REDIS_PORT}}
+            export DEV_CHAT_REDIS_PW=${{secrets.DEV_CHAT_REDIS_PW}}
 
-            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }} \
-            LOG_LEVEL=INFO \
-            HF_HOME=/app/.cache/huggingface \
-            XDG_CACHE_HOME=/app/.cache \
-            DEV_CHAT_REDIS_HOST=${{secrets.DEV_CHAT_REDIS_HOST}} \
-            DEV_CHAT_REDIS_PORT=${{secrets.DEV_CHAT_REDIS_PORT}} \
-            DEV_CHAT_REDIS_PW=${{secrets.DEV_CHAT_REDIS_PW}} \
-            docker compose up -d            
+            docker compose pull
+            docker compose up -d --pull always            
             
             docker image prune -f
             
