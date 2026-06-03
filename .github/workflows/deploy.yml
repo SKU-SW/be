@@ -375,7 +375,7 @@ jobs:
             
             docker compose pull
 
-            DOCKER_HUB_USERNAME=${{ secrets.DOCKER_HUB_USERNAME }} \
+            DEV_BACKEND_DOCKER_HUB_ID=${{ secrets.DOCKER_HUB_USERNAME }} \
             LOG_LEVEL=INFO \
             HF_HOME=/app/.cache/huggingface \
             XDG_CACHE_HOME=/app/.cache \
