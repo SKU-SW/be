@@ -5,7 +5,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/fastapi/Dockerfile
-    image: fastapi-server:latest
+    image: ${DEV_BACKEND_DOCKER_HUB_ID}/fastapi-server:latest
     container_name: fastapi-server
     ports:
       - "8000:8000"
