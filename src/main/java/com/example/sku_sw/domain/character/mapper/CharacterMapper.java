@@ -5,11 +5,9 @@ import com.example.sku_sw.domain.character.dto.CharacterImageResDto;
 import com.example.sku_sw.domain.character.dto.CharacterListResDto;
 import com.example.sku_sw.domain.character.dto.CharacterPersonaResDto;
 import com.example.sku_sw.domain.character.dto.CharacterSelectResDto;
-import com.example.sku_sw.domain.character.dto.VoiceTypeResDto;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.entity.CharacterImage;
 import com.example.sku_sw.domain.character.entity.CharacterPersona;
-import com.example.sku_sw.domain.character.entity.VoiceType;
 import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -46,7 +44,6 @@ public interface CharacterMapper {
     @Mapping(target = "characterName", source = "character.name")
     @Mapping(target = "triggerWords", source = "triggerWords")
     @Mapping(target = "gender", source = "character.gender")
-    @Mapping(target = "voiceTypeId", source = "character.voiceType.id")
     @Mapping(target = "characterImageUrl", source = "characterImageUrl")
     @Mapping(target = "characterPersona", source = "character.characterPersona")
     @Mapping(target = "isSelected", source = "isSelected")
@@ -58,14 +55,6 @@ public interface CharacterMapper {
      * @return : 변환된 CharacterPersonaResDto
      */
     CharacterPersonaResDto toPersonaResDto(CharacterPersona characterPersona);
-
-    /**
-     * VoiceType Entity -> VoiceTypeResDto 변환
-     * @param voiceType : 변환할 VoiceType Entity
-     * @return : 변환된 VoiceTypeResDto
-     */
-    @Mapping(target = "voiceTypeId", source = "voiceType.id")
-    VoiceTypeResDto toVoiceTypeResDto(VoiceType voiceType);
 
     /**
      * CharacterImage Entity -> CharacterImageResDto 변환

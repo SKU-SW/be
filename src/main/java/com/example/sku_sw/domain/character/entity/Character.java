@@ -49,10 +49,6 @@ public class Character extends BaseTimeEntity {
     private Gender gender;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "voice_type_id", nullable = false)
-    private VoiceType voiceType;
-
-    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "character_image_id", nullable = false)
     private CharacterImage characterImage;
 
@@ -67,10 +63,9 @@ public class Character extends BaseTimeEntity {
     // ======================================
     // [비즈니스 로직]
     // ======================================
-    public void updateCharacter(String name, Gender gender, VoiceType voiceType, CharacterImage characterImage) {
+    public void updateCharacter(String name, Gender gender, CharacterImage characterImage) {
         this.name = name;
         this.gender = gender;
-        this.voiceType = voiceType;
         this.characterImage = characterImage;
     }
 }

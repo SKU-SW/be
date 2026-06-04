@@ -56,7 +56,7 @@ public class BroadcastGeminiLiveService {
      *
      * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
      */
-    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(String broadcastStreamId, String systemPrompt) {
+    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(String broadcastStreamId, String systemPrompt, String voiceName) {
         log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - START | streamId: {}", broadcastStreamId);
 
         /*
@@ -64,7 +64,7 @@ public class BroadcastGeminiLiveService {
             - 해당 함수 호출 직후 executeFuture 객체를 바로 반환받는다.
          */
         URI geminiUri = createGeminiLiveWebSocketUri();
-        GeminiLiveWebSocketHandler liveWebSocketHandler = geminiLiveWebSocketHandlerFactory.create(systemPrompt);
+        GeminiLiveWebSocketHandler liveWebSocketHandler = geminiLiveWebSocketHandlerFactory.create(systemPrompt, voiceName);
         CompletableFuture<WebSocketSession> executeFuture = webSocketClient.execute(
                 liveWebSocketHandler,
                 new WebSocketHttpHeaders(),

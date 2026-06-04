@@ -11,7 +11,6 @@ import com.example.sku_sw.domain.character.entity.CharacterImage;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
 import com.example.sku_sw.domain.character.entity.CharacterPersona;
 import com.example.sku_sw.domain.character.entity.CharacterTriggerWord;
-import com.example.sku_sw.domain.character.entity.VoiceType;
 import com.example.sku_sw.domain.character.enums.*;
 import com.example.sku_sw.domain.character.mapper.CharacterMapper;
 import com.example.sku_sw.domain.character.repository.CharacterImageDetailRepository;
@@ -19,7 +18,6 @@ import com.example.sku_sw.domain.character.repository.CharacterImageRepository;
 import com.example.sku_sw.domain.character.repository.CharacterPersonaRepository;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.character.repository.CharacterTriggerWordRepository;
-import com.example.sku_sw.domain.character.repository.VoiceTypeRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
@@ -46,7 +44,6 @@ public class CharacterService {
     private final CharacterRepository characterRepository;
     private final CharacterPersonaRepository characterPersonaRepository;
     private final CharacterTriggerWordRepository characterTriggerWordRepository;
-    private final VoiceTypeRepository voiceTypeRepository;
     private final CharacterImageRepository characterImageRepository;
     private final CharacterImageDetailRepository characterImageDetailRepository;
     private final UserRepository userRepository;
@@ -71,19 +68,7 @@ public class CharacterService {
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.USER_NOT_FOUND));
 
         /*
-            2. VoiceType 조회 및 성별 검증
-            - voiceTypeId로 목소리 타입을 조회하고, 존재하지 않으면 VOICE_TYPE_NOT_FOUND 예외를 발생시킨다.
-            - 목소리 타입의 성별과 캐릭터의 성별이 일치하는지 검증한다.
-        */
-        VoiceType voiceType = voiceTypeRepository.findById(req.voiceTypeId())
-                .orElseThrow(() -> new CustomException(CharacterErrorCode.VOICE_TYPE_NOT_FOUND));
-
-        if (voiceType.getGender() != req.gender()) {
-            throw new CustomException(CharacterErrorCode.VOICE_TYPE_GENDER_MISMATCH);
-        }
-
-        /*
-            3. CharacterImage 조회 및 성별 검증
+             2. CharacterImage 조회 및 성별 검증
             - characterImageId로 캐릭터 이미지를 조회하고, 존재하지 않으면 CHARACTER_IMAGE_NOT_FOUND 예외를 발생시킨다.
             - 조회한 캐릭터 이미지의 성별과 캐릭터의 성별이 일치하는지 검증한다.
         */
@@ -107,7 +92,6 @@ public class CharacterService {
                 .user(user)
                 .name(req.characterName())
                 .gender(req.gender())
-                .voiceType(voiceType)
                 .characterImage(characterImage)
                 .build();
 
@@ -124,8 +108,6 @@ public class CharacterService {
         CharacterPersona persona = CharacterPersona.builder()
                 .character(character)
                 .presetType(req.characterPersona().presetType())
-                .speechStyle(req.characterPersona().speechStyle())
-                .personality(req.characterPersona().personality())
                 .build();
         persona = characterPersonaRepository.save(persona);
 
@@ -285,25 +267,16 @@ public class CharacterService {
         log.info("[CharacterService] getSettings() - START");
 
         /*
-            1. VoiceType 목록 조회
-            - 모든 VoiceType을 조회한다.
-        */
-        List<VoiceType> voiceTypes = voiceTypeRepository.findAll();
-
-        /*
-            2. CharacterImage 목록 조회
-            - 모든 CharacterImage를 조회한다. Fetch Join으로 캐릭터 이미지 정보까지 같이 1차 캐시에 로드한다.
-        */
+             1. CharacterImage 목록 조회
+             - 모든 CharacterImage를 조회한다. Fetch Join으로 캐릭터 이미지 정보까지 같이 1차 캐시에 로드한다.
+         */
         List<CharacterImage> characterImages = characterImageRepository.findAllWithImageDetails();
 
         /*
-            3. CharacterSettingsResDto 생성
-            - voiceTypes, characterImages, presetTypes, speechStyles, personalities를 설정한다.
-        */
+             2. CharacterSettingsResDto 생성
+             - characterImages, presetTypes를 설정한다.
+         */
         CharacterSettingsResDto result = CharacterSettingsResDto.builder()
-                .voiceTypes(voiceTypes.stream()
-                        .map(characterMapper::toVoiceTypeResDto)
-                        .collect(Collectors.toList()))
                 .characterImages(characterImages.stream()
                         .map(image -> {
                             String imageUrl = image.getImageDetails().getFirst().getImageUrl();
@@ -311,8 +284,6 @@ public class CharacterService {
                         })
                         .collect(Collectors.toList()))
                 .presetTypes(Arrays.asList(PresetType.values()))
-                .speechStyles(Arrays.asList(SpeechStyle.values()))
-                .personalities(Arrays.asList(Personality.values()))
                 .build();
 
         log.info("[CharacterService] getSettings() - END");
@@ -340,18 +311,7 @@ public class CharacterService {
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_NOT_FOUND));
 
         /*
-            2. VoiceType 조회 및 성별 검증
-            - voiceTypeId로 목소리 타입을 조회하고, 존재하지 않으면 VOICE_TYPE_NOT_FOUND 예외를 발생시킨다.
-            - 목소리 타입의 성별과 캐릭터의 성별이 일치하는지 검증한다.
-        */
-        VoiceType voiceType = voiceTypeRepository.findById(req.voiceTypeId())
-                .orElseThrow(() -> new CustomException(CharacterErrorCode.VOICE_TYPE_NOT_FOUND));
-        if (voiceType.getGender() != req.gender()) {
-            throw new CustomException(CharacterErrorCode.VOICE_TYPE_GENDER_MISMATCH);
-        }
-
-        /*
-            3. CharacterImage 조회 및 성별 검증
+             2. CharacterImage 조회 및 성별 검증
             - characterImageId로 캐릭터 이미지를 조회하고, 존재하지 않으면 CHARACTER_IMAGE_NOT_FOUND 예외를 발생시킨다.
             - 캐릭터의 성별과 캐릭터 이미지의 성별이 일치하는지 검증한다.
         */
@@ -373,10 +333,7 @@ public class CharacterService {
             - characterRepository.findByIdAndUserId()에서 CharacterPersona fetch join으로 조회 완료
             - 기존에 존재하던 캐릭터 페르소나 인스턴스의 정보를 수정한다.
         */
-        character.getCharacterPersona().updateCharacterPersona(
-                req.characterPersona().presetType(),
-                req.characterPersona().speechStyle(),
-                req.characterPersona().personality());
+        character.getCharacterPersona().updateCharacterPersona(req.characterPersona().presetType());
 
         /*
             6. 기존 TriggerWords 일괄 삭제
@@ -401,7 +358,7 @@ public class CharacterService {
             8. Character 정보 업데이트
             - name, gender, voiceType, characterImage를 업데이트한다.
         */
-        character.updateCharacter(req.characterName(), req.gender(), voiceType, characterImage);
+        character.updateCharacter(req.characterName(), req.gender(), characterImage);
 
         log.info("[CharacterService] updateCharacter() - END | characterId: {}", characterId);
     }

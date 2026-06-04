@@ -1,8 +1,6 @@
 package com.example.sku_sw.domain.character.entity;
 
-import com.example.sku_sw.domain.character.enums.Personality;
 import com.example.sku_sw.domain.character.enums.PresetType;
-import com.example.sku_sw.domain.character.enums.SpeechStyle;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -39,21 +37,12 @@ public class CharacterPersona {
     @Column(nullable = false)
     private PresetType presetType;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private SpeechStyle speechStyle;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Personality personality;
 
     // ===============================================
     // [비즈니스 로직]
     // ===============================================
-    public void updateCharacterPersona(PresetType presetType, SpeechStyle speechStyle, Personality personality) {
+    public void updateCharacterPersona(PresetType presetType) {
         this.presetType = presetType;
-        this.speechStyle = speechStyle;
-        this.personality = personality;
     }
 
 }

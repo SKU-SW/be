@@ -37,11 +37,12 @@ public class ChzzkChatMessageService {
             ChzzkChatMessageDto message = objectMapper.readValue(payload, ChzzkChatMessageDto.class);
 
             /*
-                2. Gemini에게 채팅 메시지 전송
-                - BroadcastGeminiRequestService.sendChatRequest()에 위임한다.
+                2. Gemini에게 채팅 메시지 전송 (비-생성 컨텍스트 전용)
+                - BroadcastGeminiRequestService.sendViewerChatRequest()에 위임한다.
+                - clientContent / turnComplete:false 메시지 구조로 전송되어 모델 turn을 요청하지 않는다.
                 - userRoleCode 기반 "(시청자, 닉네임)" / "(스트리머)" 접두어 포맷팅 포함.
              */
-            broadcastGeminiRequestService.sendChatRequest(message);
+            broadcastGeminiRequestService.sendViewerChatRequest(message);
 
             /*
                 3. Redis BroadcastInfo에 채팅 데이터 저장

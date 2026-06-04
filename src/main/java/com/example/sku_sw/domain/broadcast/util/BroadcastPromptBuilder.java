@@ -2,19 +2,15 @@ package com.example.sku_sw.domain.broadcast.util;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
-import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
-import com.example.sku_sw.domain.character.enums.Personality;
-import com.example.sku_sw.domain.character.enums.SpeechStyle;
-import com.example.sku_sw.global.exception.CustomException;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+
 
 /**
  * Gemini API에 전달할 방송 프롬프트를 생성하는 Builder
@@ -23,7 +19,7 @@ import java.util.stream.IntStream;
 @Slf4j
 @Component
 public class BroadcastPromptBuilder {
-    private static final Integer PERSONALITY_PROMPT_COUNT = 5;
+    private static final Integer PERSONALITY_PROMPT_COUNT = 50;
 
     /**
      * Gemini Function Calling용 전체 프롬프트를 생성한다.
@@ -41,33 +37,21 @@ public class BroadcastPromptBuilder {
 
         String summaryContent = buildSummaryContent(summary);
         String recentBroadcastContent = buildRecentBroadcastContent(recentActiveInfos);
-        String personalityGoodExampleContent = buildPersonalityExampleContent(character.getCharacterPersonality().getGoodExamples(), PERSONALITY_PROMPT_COUNT);
-        String personalityBadExampleContent = buildPersonalityExampleContent(character.getCharacterPersonality().getBadExamples(), PERSONALITY_PROMPT_COUNT);
-        String speechStyleGoodExampleContent = buildSpeechStyleExampleContent(character.getCharacterSpeechStyle().getGoodExamples());
-        String speechStyleBadExampleContent = buildSpeechStyleExampleContent(character.getCharacterSpeechStyle().getBadExamples());
+        String personaGoodExampleContent = buildPersonaExampleContent(character.getCharacterPresetType().getGoodExamples(), PERSONALITY_PROMPT_COUNT);
+        String personaBadExampleContent = buildPersonaExampleContent(character.getCharacterPresetType().getBadExamples(), PERSONALITY_PROMPT_COUNT);
 
         String genderStr = character.getCharacterGender() != null ? character.getCharacterGender().getValue() : "";
-        String ageGroupStr = character.getCharacterVoiceAgeGroup() != null ? character.getCharacterVoiceAgeGroup().name() : "";
-        String personalityStr = character.getCharacterPersonality() != null ? character.getCharacterPersonality().getValue() : "";
-        String speechStyleStr = character.getCharacterSpeechStyle() != null ? character.getCharacterSpeechStyle().getValue() : "";
+        String personalityStr = character.getCharacterPresetType() != null ? character.getCharacterPresetType().getDescription() : "";
 
         String prompt = String.format("""
                         # 1. 페르소나 및 캐릭터 프로필
                         - 이름: %s
                         - 성별: %s
-                        - 연령대: %s
-                        - 성격 키워드: %s
-                        ## 성격 맞춤형 응답 예시 (지향)
+                        - 페르소나 키워드: %s
+                        ## 자연스러운 응답 예시
                         %s
         
-                        ## 성격에 맞지 않는 응답 예시 (지양)
-                        %s
-        
-                        - 기본 말투 키워드: %s
-                        ## 자연스러운 말투 예시 (지향)
-                        %s
-        
-                        ## 부자연스러운 말투 예시 (지양)
+                        ## 어색한 응답 예시
                         %s
                         
                         # 2. 실시간 대화 맥락 및 히스토리
@@ -79,8 +63,8 @@ public class BroadcastPromptBuilder {
                         
                         # 3. 실시간 대화 흐름 유지 지침
                         - 당신은 위의 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 내역', 그리고 이 세션 동안 실시간으로 들어오는 화자별 텍스트(`스트리머:`, `시청자:`, `도네이션:`)의 흐름을 하나의 연속된 타임라인으로 완벽히 기억해야 합니다.
-                        - 새로운 메시지가 들어오면 전체 대화 기록을 확인하고 방송 문맥에 맞는 응답을 생성하세요.
-                        - 이전에 했던 말을 똑같이 반복하지 말고, 문맥이 누적됨에 따라 진전된 리액션을 하세요.
+                        - 새로운 메시지가 들어오면 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 내역', '전체 대화 기록'을 확인하고 방송 문맥에 맞는 응답을 생성하세요.
+                        - 반드시 이전 방송 문맥 및 흐름을 파악하고 응답을 생성하세요.
                         
                         # 4. Tool Calls 규칙
                         [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 현재 생성 중인 응답만 중단하고 Tool Call을 절대 실행하지마세요.
@@ -88,6 +72,7 @@ public class BroadcastPromptBuilder {
                         - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면, 어떠한 텍스트나 음성도 생성하지 말고 오직 `set_talking_state(isTalking=false)` Tool Call만 실행하세요.
                             - 답변해야 하는 경우: 스트리머가 AI 캐릭터에게 직접 말을 거는 경우, AI의 직전 발화에 이어서 반응을 요구하는 경우, 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
                             - 답변하면 안 되는 경우: 혼잣말에 가까운 경우, 채팅창, 게임, 다른 사람에게 한 말인 경우, AI를 부른 것이 아니라 단순 리액션인 경우
+                        - "(스트리머)"로 시작되지 않는 요청에 대해서는 절대 set_talking_state Tool Call을 실행하지 마세요.
         
                         ## 4.2 set_response_emotion
                         - AI가 답변해야 하는 상황이라면, 답변 텍스트를 생성하기 전에 `set_response_emotion` Tool Call을 호출하여 감정 상태를 먼저 전달해야 합니다.
@@ -99,17 +84,15 @@ public class BroadcastPromptBuilder {
                         - 1~2문장으로 짧고 명확하게 핵심만 말하세요.
                         - [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 절대 AI 캐릭터의 응답을 생성하지마세요.
                         - "(스트리머)"로 시작되지 않는 요청에 대해서는 절대 AI 캐릭터의 응답을 생성하지마세요.
-                        - 주어진 응답/말투 예시를 참고해서 응답하세요. 이때, 스타일만 참고하고 문장을 그대로 인용하거나 복사해서 쓰지 마세요.
-                        - 과한 공감이나 재질문같은 AI스러운 기계적이고 상투적인 어색한 문체나, 현실에서 잘 쓰이지 않는 말투를 절대 사용하지 말고, 자연스러운 한국인 말투를 구사하세요.""",
+                        - 주어진 응답/말투 예시를 참고해서 응답하되, 스타일만 참고하고 절대로 문장을 그대로 인용하거나 복사해서 쓰지 마세요.
+                        - 과한 공감이나 재질문같은 AI스러운 기계적이고 상투적인 어색한 문체나, 현실에서 잘 쓰이지 않는 말투를 절대 사용하지 말고, 자연스러운 한국인 말투를 구사하세요.
+                        - 문맥에 맞지 않는 표현은 사용하지 마세요.
+                        - 최근 응답과 동일한 감정 표현만을 반복하지 말고, 상황에 맞는 다양한 감정 표현을 하세요.""",
                 character.getCharacterName(),
                 genderStr,
-                ageGroupStr,
                 personalityStr,
-                personalityGoodExampleContent,
-                personalityBadExampleContent,
-                speechStyleStr,
-                speechStyleGoodExampleContent,
-                speechStyleBadExampleContent,
+                personaGoodExampleContent,
+                personaBadExampleContent,
                 summaryContent,
                 recentBroadcastContent
         );
@@ -204,21 +187,10 @@ public class BroadcastPromptBuilder {
      * @param examples : 예시 응답들
      * @return : 좋은 답변 예시 문자열
      */
-    private String buildPersonalityExampleContent(List<String> examples, Integer count) {
+    private String buildPersonaExampleContent(List<String> examples, Integer count) {
         List<String> randomExamples = filterRandomExamples(examples, count);
         StringBuilder sb = new StringBuilder();
         appendExamples(sb, randomExamples);
-        return sb.isEmpty() ? "- (없음)" : sb.toString();
-    }
-
-    /**
-     * 말투 Enum에 정의된 답변 예시를 프롬프트 문자열로 변환한다.
-     * @param examples : 예시 응답들
-     * @return : 좋은 답변 예시 문자열
-     */
-    private String buildSpeechStyleExampleContent(List<String> examples) {
-        StringBuilder sb = new StringBuilder();
-        appendExamples(sb, examples);
         return sb.isEmpty() ? "- (없음)" : sb.toString();
     }
 
@@ -249,9 +221,14 @@ public class BroadcastPromptBuilder {
      * @return
      */
     private List<String> filterRandomExamples(List<String> examples, Integer count) {
-        if(examples.size() < count) {
-            log.error("[BroadcastPromptBuilder] filterRandomExamples() - PERSONALITY_PROMPT_COUNT_IS_TOO_BIG");
-            throw new CustomException(BroadcastErrorCode.PERSONALITY_PROMPT_COUNT_IS_TOO_BIG);
+        if (examples == null || examples.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (examples.size() < count) {
+            log.warn("[BroadcastPromptBuilder] filterRandomExamples() - examples.size() < count, returning full list");
+            List<String> copy = new ArrayList<>(examples);
+            Collections.shuffle(copy);
+            return copy;
         }
         List<String> copy = new ArrayList<>(examples);
         Collections.shuffle(copy);

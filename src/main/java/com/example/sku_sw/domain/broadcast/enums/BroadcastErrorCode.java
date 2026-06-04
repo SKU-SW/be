@@ -27,7 +27,7 @@ public enum BroadcastErrorCode implements BaseErrorCode {
     BROADCAST_USER_REDIS_NOT_FOUND(HttpStatus.NOT_FOUND, "방송 사용자 정보를 Redis에서 찾을 수 없습니다."),
     WEBSOCKET_MESSAGE_PARSE_FAILED(HttpStatus.BAD_REQUEST, "WebSocket 메시지 파싱에 실패했습니다."),
     GEMINI_RESPONSE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini API 응답 처리에 실패했습니다."),
-    PERSONALITY_PROMPT_COUNT_IS_TOO_BIG(HttpStatus.INTERNAL_SERVER_ERROR, "성격 프롬프트 개수가 너무 큽니다."),
+    PRESET_EXAMPLE_COUNT_IS_TOO_BIG(HttpStatus.INTERNAL_SERVER_ERROR, "프리셋 예시 개수가 너무 큽니다."),
     CHZZK_SESSION_CONNECT_FAILED(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 요청에 실패했습니다."),
     CHZZK_SESSION_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 응답이 올바르지 않습니다."),
     CHZZK_SESSION_ATTEMPT_MISMATCH(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 시도 ID가 일치하지 않습니다."),
