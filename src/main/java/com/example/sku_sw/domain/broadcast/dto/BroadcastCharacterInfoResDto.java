@@ -20,9 +20,6 @@ public record BroadcastCharacterInfoResDto(
         @Schema(description = "AI 캐릭터 성별", example = "MALE")
         Gender gender,
 
-        @Schema(description = "목소리 종류 PK", example = "1")
-        Long voiceTypeId,
-
         @Schema(description = "캐릭터 외형 이미지 URL", example = "https://example.com/character.png")
         String characterImageUrl,
 

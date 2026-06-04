@@ -29,9 +29,10 @@ public class GeminiLiveWebSocketHandlerFactory {
     /**
      * Gemini Live WebSocket 연결마다 독립적인 Handler 인스턴스를 생성한다.
      * @param systemPrompt : Gemini setup 시 주입할 시스템 프롬프트
+     * @param voiceName : Gemini setup 시 사용할 voice name (null/blank이면 voice config 생략)
      * @return : 세션 전용 GeminiLiveWebSocketHandler
      */
-    public GeminiLiveWebSocketHandler create(String systemPrompt) {
+    public GeminiLiveWebSocketHandler create(String systemPrompt, String voiceName) {
         return new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
@@ -39,7 +40,8 @@ public class GeminiLiveWebSocketHandlerFactory {
                 broadcastGeminiToolCallService,
                 applicationEventPublisher,
                 dialogueModel,
-                systemPrompt
+                systemPrompt,
+                voiceName
         );
     }
 }

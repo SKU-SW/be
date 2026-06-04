@@ -11,6 +11,7 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
+import com.example.sku_sw.domain.character.enums.Gender;
 import com.example.sku_sw.global.exception.CustomException;
 import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,13 +72,14 @@ public class BroadcastGeminiBootstrapService {
                     redisBroadcastDialogueMaxNum
             );
             String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos);
+            String voiceName = deriveVoiceName(character);
 
             /*
                 2. 생성한 시스템 프롬프트를 포함해 Gemini Live WebSocket bootstrap을 시작한다.
                 - setupComplete까지 성공하면 후속 성공 처리로 연결한다.
                 - 실패하면 현재 generation bundle만 정리한다.
              */
-            broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt)
+            broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt, voiceName)
                     .thenAccept(geminiSession -> handleBootstrapSuccess(broadcastStreamId, clientSession, generation, geminiSession))
                     .exceptionally(throwable -> {
                         handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
@@ -100,7 +102,8 @@ public class BroadcastGeminiBootstrapService {
     public CompletableFuture<WebSocketSession> bootstrapGeminiForRefreshAsync(
             String broadcastStreamId,
             long generation,
-            String systemPrompt
+            String systemPrompt,
+            String voiceName
     ) {
         log.info("[BroadcastGeminiBootstrapService] bootstrapGeminiForRefreshAsync() - START | streamId: {}, generation: {}",
                 broadcastStreamId, generation);
@@ -120,7 +123,7 @@ public class BroadcastGeminiBootstrapService {
             2. caller가 전달한 프롬프트로 Gemini 연결을 생성한다.
             - setupComplete까지 완료된 신규 Gemini 세션을 Future로 반환한다.
          */
-        return broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt)
+        return broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, systemPrompt, voiceName)
                 .whenComplete((geminiSession, throwable) -> {
                     if (geminiSession != null) {
                         log.info("[BroadcastGeminiBootstrapService] bootstrapGeminiForRefreshAsync() - END | streamId: {}, generation: {}, sessionId: {}",
@@ -308,6 +311,20 @@ public class BroadcastGeminiBootstrapService {
      * @param closeStatus
      * @param errorMessage
      */
+    /**
+     * BroadcastCharacterRedisDto로부터 voiceName을 추출한다.
+     * @param character 캐릭터 Redis DTO
+     * @return voice name (null 가능)
+     */
+    private String deriveVoiceName(BroadcastCharacterRedisDto character) {
+        if (character == null || character.getCharacterPresetType() == null) {
+            return null;
+        }
+        return character.getCharacterGender() == Gender.MALE
+                ? character.getCharacterPresetType().getMaleVoiceName()
+                : character.getCharacterPresetType().getFemaleVoiceName();
+    }
+
     private void terminateFailedBundle(
             String broadcastStreamId,
             long generation,

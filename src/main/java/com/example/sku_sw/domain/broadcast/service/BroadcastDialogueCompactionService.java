@@ -57,7 +57,7 @@ public class BroadcastDialogueCompactionService {
 
         boolean hasInactive = broadcastRedisUtil.hasInactiveDialogues(broadcastStreamId);
         int activeCount = broadcastRedisUtil.countActiveDialogues(broadcastStreamId);
-        if (!hasInactive && activeCount < redisBroadcastDialogueMaxNum) {
+        if (!hasInactive && (activeCount < redisBroadcastDialogueMaxNum)) {
             log.info("[BroadcastDialogueCompactionService] tryStartCompaction() - END | streamId: {}, action: below_threshold", broadcastStreamId);
             return;
         }

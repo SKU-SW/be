@@ -11,14 +11,17 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
+import com.example.sku_sw.domain.character.enums.Gender;
 import com.example.sku_sw.global.util.GeminiUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 
@@ -44,6 +47,7 @@ public class BroadcastGeminiRefreshService {
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final TaskScheduler taskScheduler;
 
     /**
      * compaction 완료 이후 Gemini refresh를 요청한다.
@@ -57,23 +61,25 @@ public class BroadcastGeminiRefreshService {
         /*
             1. 현재 세션 번들 조회 및 refresh 상태 전환
             - 현재 활성 번들이 없으면 종료한다.
-            - refresh 요청 여부를 true로 바꾸고 REFRESHING 상태로 전환한다.
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
         if (bundle == null || !bundle.isClientSessionOpen()) {
             log.info("[BroadcastGeminiRefreshService] requestRefreshAfterCompaction() - END | streamId: {}, action: bundle_not_found", broadcastStreamId);
             return;
         }
-        bundle.markRefreshRequested();
-        bundle.updateStatus(WebSocketSessionBundleStatus.REFRESHING);
 
         /*
             2. 현재 request-flight 요청 수를 확인한다.
             - Gemini 응답 처리 중이 아니면 즉시 refresh를 시작한다.
             - 응답 처리 중이면 마지막 turn 종료 시점에 refresh가 시작된다.
               (각 Gemini 응답 종료 시점에 재검사가 실행된다. - BroadcastGeminiResponseService.handleCompletedTurnAsync())
+            - 안전장치: 응답 처리 중이면 5초 후 자체 재검사를 예약하여,
+              콜백 누락 시에도 refresh가 영구히 멈추지 않도록 보장한다.
          */
         if (bundle.getRequestFlightCountValue() == 0) {
+            log.info("[BroadcastGeminiRefreshService] requestRefreshAfterCompaction() - Mark Refresh Requested and Set Bundle Status REFRESHING | streamId: {}, inFlightCount: {}", broadcastStreamId, bundle.getRequestFlightCountValue());
+            bundle.markRefreshRequested();
+            bundle.updateStatus(WebSocketSessionBundleStatus.REFRESHING);
             tryStartRefresh(broadcastStreamId, bundle.getGeneration());
         }
 
@@ -139,8 +145,9 @@ public class BroadcastGeminiRefreshService {
                     snapshot.summary(),
                     snapshot.dialogues()
             );
+            String voiceName = deriveVoiceName(character);
             WebSocketSession oldGeminiSession = bundle.getGeminiSession();
-            broadcastGeminiBootstrapService.bootstrapGeminiForRefreshAsync(broadcastStreamId, generation, systemPrompt)
+            broadcastGeminiBootstrapService.bootstrapGeminiForRefreshAsync(broadcastStreamId, generation, systemPrompt, voiceName)
                     .thenAccept(newGeminiSession -> handleRefreshSuccess(
                             broadcastStreamId,
                             generation,
@@ -345,6 +352,20 @@ public class BroadcastGeminiRefreshService {
         bundle.clearRefreshInProgress();
         bundle.resetRefreshRetryCount();
         bundle.clearRefreshSnapshotCursorId();
+    }
+
+    /**
+     * BroadcastCharacterRedisDto로부터 voiceName을 추출한다.
+     * @param character 캐릭터 Redis DTO
+     * @return voice name (null 가능)
+     */
+    private String deriveVoiceName(BroadcastCharacterRedisDto character) {
+        if (character == null || character.getCharacterPresetType() == null) {
+            return null;
+        }
+        return character.getCharacterGender() == Gender.MALE
+                ? character.getCharacterPresetType().getMaleVoiceName()
+                : character.getCharacterPresetType().getFemaleVoiceName();
     }
 
     private void clearRefreshingStatusByFailed(BroadcastWebSocketSessionBundle bundle) {

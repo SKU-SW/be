@@ -10,7 +10,6 @@ public record CharacterDetailResDto(
     String characterName,
     List<String> triggerWords,
     Gender gender,
-    Long voiceTypeId,
     String characterImageUrl,
     CharacterPersonaResDto characterPersona,
     boolean isSelected

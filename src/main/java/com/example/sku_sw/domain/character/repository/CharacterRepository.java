@@ -33,7 +33,6 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
     // 캐릭터 목록 API의 선택된 캐릭터 조회에 사용한다.
     @Query("select c " +
             "from Character c " +
-            "join fetch c.voiceType " +
             "join fetch c.characterPersona " +
             "join fetch c.characterImage " +
             "where c.id=:characterId and c.user.id=:userId")
@@ -47,7 +46,6 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
      */
     @Query("select distinct c " +
             "from Character c " +
-            "join fetch c.voiceType " +
             "join fetch c.characterPersona " +
             "join fetch c.characterImage ci " +
             "left join fetch c.triggerWords tw " +

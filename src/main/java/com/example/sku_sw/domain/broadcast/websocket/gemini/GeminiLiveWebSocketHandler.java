@@ -41,6 +41,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private final ApplicationEventPublisher applicationEventPublisher;
     private final String dialogueModel;
     private final String systemPrompt;
+    private final String voiceName;
     private final CompletableFuture<Void> setupCompleteFuture = new CompletableFuture<>();
 
     private volatile String lastSentSetupPayload;
@@ -58,7 +59,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             BroadcastGeminiToolCallService broadcastGeminiToolCallService,
             ApplicationEventPublisher applicationEventPublisher,
             String dialogueModel,
-            String systemPrompt
+            String systemPrompt,
+            String voiceName
     ) {
         this.objectMapper = objectMapper;
         this.sessionRegistry = sessionRegistry;
@@ -67,6 +69,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         this.applicationEventPublisher = applicationEventPublisher;
         this.dialogueModel = dialogueModel;
         this.systemPrompt = systemPrompt;
+        this.voiceName = voiceName;
     }
 
     /**
@@ -98,6 +101,13 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration());
 
         setupNode.putObject("outputAudioTranscription");
+
+        if (voiceName != null && !voiceName.isBlank()) {
+            ObjectNode speechConfigNode = generationConfigNode.putObject("speechConfig");
+            ObjectNode voiceConfigNode = speechConfigNode.putObject("voiceConfig");
+            ObjectNode prebuiltVoiceConfigNode = voiceConfigNode.putObject("prebuiltVoiceConfig");
+            prebuiltVoiceConfigNode.put("voiceName", voiceName);
+        }
 
         String setupPayload = objectMapper.writeValueAsString(payload);
         lastSentSetupPayload = setupPayload;

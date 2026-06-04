@@ -498,12 +498,9 @@ public class BroadcastService {
                 .characterName(character.getName())
                 .characterGender(character.getGender())
                 .characterTriggerWords(characterTriggerWords)
-                .characterVoiceAgeGroup(character.getVoiceType().getAgeGroup())
-                .characterVoiceTtsId(character.getVoiceType().getTtsId())
                 .characterImagePreset(character.getCharacterImage().getPreset())
                 .characterImages(characterImages)
-                .characterSpeechStyle(character.getCharacterPersona().getSpeechStyle())
-                .characterPersonality(character.getCharacterPersona().getPersonality())
+                .characterPresetType(character.getCharacterPersona().getPresetType())
                 .isTalking(false)
                 .build();
 
@@ -546,12 +543,9 @@ public class BroadcastService {
                     .characterName(redisDto.getCharacterName())
                     .triggerWords(redisDto.getCharacterTriggerWords())
                     .gender(redisDto.getCharacterGender())
-                    .voiceTypeId(broadcast.getCharacter().getVoiceType().getId())
                     .characterImageUrl(extractCharacterImageUrl(broadcast.getCharacter()))
                     .characterPersona(CharacterPersonaInfoResDto.builder()
                             .presetType(broadcast.getCharacter().getCharacterPersona().getPresetType())
-                            .speechStyle(broadcast.getCharacter().getCharacterPersona().getSpeechStyle())
-                            .personality(broadcast.getCharacter().getCharacterPersona().getPersonality())
                             .build())
                     .build();
         } catch (CustomException exception) {
@@ -584,12 +578,9 @@ public class BroadcastService {
                 .characterName(character.getName())
                 .triggerWords(triggerWords)
                 .gender(character.getGender())
-                .voiceTypeId(character.getVoiceType().getId())
                 .characterImageUrl(extractCharacterImageUrl(character))
                 .characterPersona(CharacterPersonaInfoResDto.builder()
                         .presetType(character.getCharacterPersona().getPresetType())
-                        .speechStyle(character.getCharacterPersona().getSpeechStyle())
-                        .personality(character.getCharacterPersona().getPersonality())
                         .build())
                 .build();
 

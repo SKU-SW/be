@@ -168,12 +168,71 @@ public class BroadcastGeminiRequestService {
 
 
     /**
-     * 시청자 채팅 메시지를 Gemini Live WebSocket 세션으로 전송한다.
+     * 시청자 채팅 메시지를 Gemini Live WebSocket 세션으로 전송한다. (비-생성, 컨텍스트 전용)
      * - userRoleCode에 따라 접두어를 붙여 포맷팅한다. (Streamer: "(스트리머)", 일반: "(한글역할, 닉네임)", null: "(시청자, 닉네임)")
      * - 세션 번들이 없거나 Gemini 전송 불가 상태면 로깅 후 종료한다. (비동기 채팅이므로 예외 미발생)
+     * - clientContent / turnComplete:false 메시지 구조를 사용하여 모델 turn을 요청하지 않는다.
+     * - request-flight를 증가시키지 않는다. (시청자 채팅은 Gemini 응답을 트리거하지 않음)
      *
      * @param message : Chzzk 채팅 메시지 DTO
      */
+    public void sendViewerChatRequest(ChzzkChatMessageDto message) {
+        log.info("[BroadcastGeminiService] sendViewerChatRequest() - START | streamId: {}, nickname: {}",
+                message.broadcastStreamId(), message.nickname());
+
+        /*
+            1. 세션 번들 조회
+            - generation 검증 없이 broadcastStreamId로 현재 세션 번들을 조회한다.
+            - 번들이 없거나 Gemini 전송 불가 상태면 로깅 후 종료한다.
+         */
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(message.broadcastStreamId());
+        if (bundle == null || !bundle.canSendToGemini()) {
+            log.info("[BroadcastGeminiService] sendViewerChatRequest() - No ready Gemini session, skipping | streamId: {}",
+                    message.broadcastStreamId());
+            log.info("[BroadcastGeminiService] sendViewerChatRequest() - END | streamId: {}, action: skip",
+                    message.broadcastStreamId());
+            return;
+        }
+
+        /*
+            2. 채팅 메시지 포맷팅 후 Gemini 전송 (clientContent / turnComplete:false)
+            - userRoleCode에 따라 "(시청자, 닉네임)" 또는 "(스트리머)" 접두어를 붙인다.
+            - realtimeInput 대신 clientContent + turnComplete:false를 사용하여 모델 turn을 요청하지 않는다.
+            - request-flight를 증가시키지 않는다.
+         */
+        try {
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode clientContentNode = requestNode.putObject("clientContent");
+            ArrayNode turnsNode = clientContentNode.putArray("turns");
+            ObjectNode turnNode = turnsNode.addObject();
+            turnNode.put("role", "user");
+            ArrayNode partsNode = turnNode.putArray("parts");
+            ObjectNode partNode = partsNode.addObject();
+            partNode.put("text", getChatMessage(message));
+            clientContentNode.put("turnComplete", false);
+
+            WebSocketSession geminiSession = bundle.getGeminiSession();
+            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+
+            log.info("[BroadcastGeminiService] sendViewerChatRequest() - END | streamId: {}, action: sent",
+                    message.broadcastStreamId());
+        } catch (Exception e) {
+            log.error("[BroadcastGeminiService] sendViewerChatRequest() - Failed | streamId: {}, error: {}",
+                    message.broadcastStreamId(), e.getMessage());
+        }
+    }
+
+    /**
+     * 시청자 채팅 메시지를 Gemini Live WebSocket 세션으로 전송한다. (기존 sendViewerChatRequest 이전 버전, 유지보수용)
+     * - userRoleCode에 따라 접두어를 붙여 포맷팅한다. (Streamer: "(스트리머)", 일반: "(한글역할, 닉네임)", null: "(시청자, 닉네임)")
+     * - 세션 번들이 없거나 Gemini 전송 불가 상태면 로깅 후 종료한다. (비동기 채팅이므로 예외 미발생)
+     * - realtimeInput.text 메시지 구조로 전송하며, request-flight를 증가시킨다.
+     *
+     * @param message : Chzzk 채팅 메시지 DTO
+     * @deprecated 시청자 채팅은 {@link #sendViewerChatRequest(ChzzkChatMessageDto)} 사용을 권장.
+     *             이 메서드는 request-flight 누수 위험이 있어 더 이상 호출되지 않는다.
+     */
+    @Deprecated
     public void sendChatRequest(ChzzkChatMessageDto message) {
         log.info("[BroadcastGeminiService] sendChatRequest() - START | streamId: {}, nickname: {}",
                 message.broadcastStreamId(), message.nickname());

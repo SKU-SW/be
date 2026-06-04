@@ -20,10 +20,6 @@ public record CharacterCreateReqDto(
         @NotNull(message = "성별은 필수입니다.")
         Gender gender,
 
-        @Schema(description = "캐릭터 목소리 PK", example = "1")
-        @NotNull(message = "캐릭터 목소리 PK는 필수입니다.")
-        Long voiceTypeId,
-
         @Schema(description = "캐릭터 이미지 PK", example = "1")
         @NotNull(message = "캐릭터 이미지 PK는 필수입니다.")
         Long characterImageId,
