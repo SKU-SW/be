@@ -12,6 +12,7 @@ import socketio
 from ..exceptions import ChzzkSessionException
 from ..models import ChzzkChannelConnectReq, ChzzkChannelConnectRes, ChzzkSessionConnectReq, ChzzkSessionConnectRes
 from ..registry import ActiveChzzkSession, PendingChzzkSessionConnect, chzzk_session_registry
+from .chat_filter_service import chat_filter_service
 from .chat_publish_service import chat_publish_service
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class ChzzkSessionService:
                     active_session.redis_publish_ready = False
                     active_session.channel_name = None
                     chzzk_session_registry.remove_active(pending.broadcast_stream_id)
+                    chat_filter_service.remove_stream(pending.broadcast_stream_id)
                 chzzk_session_registry.remove_inflight_socket(pending.broadcast_stream_id)
 
         @socket_client.on("SYSTEM")
@@ -191,39 +193,21 @@ class ChzzkSessionService:
             active_session = chzzk_session_registry.remove_active(broadcast_stream_id)
             chzzk_session_registry.remove_pending(broadcast_stream_id)
             inflight_socket = chzzk_session_registry.remove_inflight_socket(broadcast_stream_id)
+            chat_filter_service.remove_stream(broadcast_stream_id)
         disconnect_target = socket_client or inflight_socket or (active_session.socket_client if active_session is not None else None)
         if disconnect_target is not None and disconnect_target.connected:
             await disconnect_target.disconnect()
 
     async def _publish_chat_event_if_ready(self, broadcast_stream_id: str, event_type: str, payload: dict) -> None:
-        active_session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
-        if active_session is None or not active_session.redis_publish_ready or not active_session.channel_name:
-            return
-        await chat_publish_service.publish(active_session.channel_name, {
-            "type": event_type,
-            "broadcastStreamId": broadcast_stream_id,
-            "channelId": active_session.channel_id,
-            "channelName": active_session.channel_name,
-            "payload": payload,
-        })
+        # System events are not published to the chat message channel;
+        # only filtered chat messages flow through chat_filter_service.
+        pass
 
     async def _publish_chat_message(self, broadcast_stream_id: str, payload: dict) -> None:
         active_session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
         if active_session is None or not active_session.redis_publish_ready:
             return
-        channel_id = payload.get("channelId")
-        if not channel_id:
-            return
-        profile = payload.get("profile") or {}
-        message = {
-            "broadcastStreamId": broadcast_stream_id,
-            "channelId": channel_id,
-            "nickname": profile.get("nickname", ""),
-            "userRoleCode": profile.get("userRoleCode", ""),
-            "content": payload.get("content", ""),
-            "messageTime": payload.get("messageTime"),
-        }
-        await chat_publish_service.publish(active_session.channel_name, message)
+        await chat_filter_service.ingest_chat(active_session, payload)
 
     def _build_headers(self, access_token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}

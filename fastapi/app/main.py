@@ -9,11 +9,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .config import settings
 from .exceptions import ChzzkSessionException
 from .models import ChzzkSessionConnectErrorRes
 from .registry import chzzk_session_registry
 from .router_chzzk import channel_router, session_router
+from .services.broadcast_context_service import broadcast_context_service
+from .services.chat_filter_service import chat_filter_service
 from .services.chat_publish_service import chat_publish_service
+from .services.gemini_validation_service import gemini_filter_service
 
 
 def configure_logging() -> None:
@@ -28,10 +32,19 @@ def configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     configure_logging()
+    logger = logging.getLogger(__name__)
+    logger.info("Chat filter mode: %s", settings.chat_filter_mode)
+
     chzzk_session_registry.end_shutdown()
     await chat_publish_service.startup()
+    await broadcast_context_service.startup()
+    await gemini_filter_service.startup()
+    await chat_filter_service.startup()
     yield
     chzzk_session_registry.begin_shutdown()
+    await chat_filter_service.shutdown()
+    await gemini_filter_service.shutdown()
+    await broadcast_context_service.shutdown()
     await chzzk_session_registry.close_all_sessions()
     await chat_publish_service.shutdown()
 
