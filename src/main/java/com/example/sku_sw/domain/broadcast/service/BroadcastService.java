@@ -931,9 +931,13 @@ public class BroadcastService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                BroadcastUserRedisDto broadcastUserRedisDto = null;
                 try {
+                    // 1. 동기적으로 대화 요약
                     broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
-                    BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+                    // 2. Redis에서 방송 User 정보 조회
+                    broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+                    // 3. 치지직 Redis 채널 연결 해제 로직
                     if (StringUtils.hasText(broadcastUserRedisDto.getChannelName())) {
                         fastApiUtil.disconnectChzzkRedisChannel(
                                 buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
@@ -942,11 +946,15 @@ public class BroadcastService {
                     if (StringUtils.hasText(broadcastUserRedisDto.getChannelId())) {
                         chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
                     }
-                    broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId);
-                    broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
-                    broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
                 } catch (Exception e) {
-                    log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                    log.error("[BroadcastService] 방송 종료 정리 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                } finally {
+                    try { broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId); }
+                    catch (Exception e) { log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
+                    try { broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId); }
+                    catch (Exception e) { log.error("[BroadcastService] 방송 유저 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
+                    try { broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId); }
+                    catch (Exception e) { log.error("[BroadcastService] 방송 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
                 }
 
                 sessionRegistry.disconnect(

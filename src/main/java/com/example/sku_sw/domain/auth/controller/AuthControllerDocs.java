@@ -18,6 +18,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -146,7 +147,7 @@ public interface AuthControllerDocs {
             @ApiResponse(responseCode = "400", description = "유효하지 않은 치지직 인증 요청입니다.", content = @Content)
     })
     @GetMapping("/chzzk/callback")
-    ResponseEntity<GlobalResponse<Void>> handleChzzkCallback(
+    ModelAndView handleChzzkCallback(
             @Parameter(description = "치지직 인증 authorization code", required = true)
             @RequestParam("code") String code,
 

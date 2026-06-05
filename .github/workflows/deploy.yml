@@ -374,13 +374,17 @@ jobs:
             export DEV_CHAT_REDIS_HOST=${{secrets.DEV_CHAT_REDIS_HOST}}
             export DEV_CHAT_REDIS_PORT=${{secrets.DEV_CHAT_REDIS_PORT}}
             export DEV_CHAT_REDIS_PW=${{secrets.DEV_CHAT_REDIS_PW}}
+            export DEV_BROADCAST_REDIS_HOST=${{secrets.DEV_BROADCAST_REDIS_HOST}}
+            export DEV_BROADCAST_REDIS_PORT=${{secrets.DEV_BROADCAST_REDIS_PORT}}
+            export DEV_BROADCAST_REDIS_PW=${{secrets.DEV_BROADCAST_REDIS_PW}}
+            export GEMINI_API_KEY=${{secrets.GEMINI_API_KEY}}
 
             docker compose pull
             docker compose up -d --pull always            
             
             docker image prune -f
             
-
+            
 
   # =============================================
   # JOB 6. Nginx EC2 배포 (Public Subnet)

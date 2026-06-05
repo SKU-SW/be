@@ -14,6 +14,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.ModelAndView;
 
 @RestController
 @RequiredArgsConstructor
@@ -60,8 +61,8 @@ public class AuthController implements AuthControllerDocs {
     }
 
     @Override
-    public ResponseEntity<GlobalResponse<Void>> handleChzzkCallback(String code, String state) {
+    public ModelAndView handleChzzkCallback(String code, String state) {
         authService.handleChzzkCallback(code, state);
-        return ResponseEntity.ok(GlobalResponse.success("치지직 인증 callback 수신 성공", null));
+        return new ModelAndView("chzzk-success");
     }
 }

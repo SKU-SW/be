@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <title>치지직 연동 완료 — SKU-SW</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fb;
+      --card-bg: #ffffff;
+      --text-primary: #121926;
+      --text-secondary: #4f5d75;
+      --text-muted: #6b7280;
+      --accent: #5865f2;
+      --accent-soft: rgba(88, 101, 242, 0.14);
+      --border: rgba(15, 23, 42, 0.08);
+      --shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+      --button-text: #ffffff;
+      --focus: rgba(88, 101, 242, 0.4);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card-bg: #111827;
+        --text-primary: #f8fafc;
+        --text-secondary: #d1d5db;
+        --text-muted: #94a3b8;
+        --accent-soft: rgba(88, 101, 242, 0.18);
+        --border: rgba(148, 163, 184, 0.16);
+        --shadow: 0 24px 56px rgba(2, 6, 23, 0.4);
+        --button-text: #0b1220;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 480px;
+      padding: 32px 28px 24px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: var(--card-bg);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+
+    .hero-mark {
+      margin: 0 auto 20px;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-card {
+      width: 92px;
+      height: 92px;
+      display: grid;
+      place-items: center;
+      border-radius: 28px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+
+    .status-chip svg {
+      flex: none;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 3vw, 1.9rem);
+      line-height: 1.3;
+      letter-spacing: -0.02em;
+    }
+
+    .body-copy {
+      margin: 16px 0 0;
+      color: var(--text-secondary);
+      font-size: 0.98rem;
+    }
+
+    .body-copy strong {
+      color: var(--text-primary);
+    }
+
+    .hint {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.04);
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .hint {
+        background: rgba(248, 250, 252, 0.06);
+      }
+    }
+
+    .actions {
+      margin-top: 24px;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: var(--accent);
+      color: var(--button-text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+      box-shadow: 0 10px 24px rgba(88, 101, 242, 0.22);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    .close-help {
+      display: none;
+      margin-top: 12px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+    }
+
+    .close-help.is-visible {
+      display: block;
+    }
+
+    footer {
+      margin-top: 22px;
+      color: var(--text-muted);
+      font-size: 0.76rem;
+    }
+
+    footer p {
+      margin: 6px 0 0;
+    }
+
+    @media (max-width: 420px) {
+      body {
+        padding: 16px;
+      }
+
+      .card {
+        padding: 28px 20px 20px;
+        border-radius: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="card" aria-labelledby="title">
+    <div class="hero-mark" aria-hidden="true">
+      <div class="brand-card">
+        <svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="8" y="10" width="36" height="24" rx="8" fill="#5865F2"/>
+          <path d="M17 22H35" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M17 28H29" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round"/>
+          <path d="M20 38L26 33.5L32 38" stroke="#121926" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="status-chip">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="9" fill="#5865F2"/>
+          <path d="M5.5 9L7.8 11.3L12.7 6.4" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>연동 완료</span>
+      </div>
+    </div>
+
+    <h1 id="title">치지직 연동이 완료되었습니다</h1>
+
+    <p class="body-copy">
+      <strong>SKU-SW 앱이 치지직 계정 정보를 안전하게 받아갔습니다.</strong><br>
+      아래 닫기 버튼을 누른 뒤 원래 SKU-SW 앱으로 돌아가 주세요.<br>
+      앱에서 자동으로 연동 상태가 반영됩니다. <strong>(최대 5초)</strong>
+    </p>
+
+    <div class="hint" role="status" aria-live="polite">
+      이 창을 닫은 뒤 SKU-SW 앱으로 돌아가면 됩니다.
+    </div>
+
+    <div class="actions">
+      <button id="close-button" type="button">이 창 닫기</button>
+      <p id="close-help" class="close-help">닫히지 않으면 직접 닫아주세요.</p>
+    </div>
+
+    <footer>
+      <p>이 페이지가 보이면 인증은 성공한 상태입니다.</p>
+      <p>문제가 계속되면 SKU-SW 지원 채널 또는 담당자에게 문의해 주세요.</p>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      const closeButton = document.getElementById("close-button");
+      const closeHelp = document.getElementById("close-help");
+
+      function showCloseHelp() {
+        if (closeHelp) {
+          closeHelp.classList.add("is-visible");
+        }
+      }
+
+      function attemptClose() {
+        const before = window.closed;
+        window.close();
+
+        window.setTimeout(function () {
+          if (!before && !window.closed) {
+            showCloseHelp();
+          }
+        }, 180);
+      }
+
+      if (closeButton) {
+        closeButton.addEventListener("click", attemptClose);
+      }
+
+    })();
+  </script>
+</body>
+</html>
