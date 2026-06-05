@@ -48,7 +48,7 @@ public class ChzzkChatMessageService {
                 3. Redis BroadcastInfo에 채팅 데이터 저장
                 - DialogueSubject.VIEWER로 BroadcastInfo Redis List에 저장한다.
              */
-            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), DialogueSubject.VIEWER, message.content());
+            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), DialogueSubject.VIEWER, message.content(), null, true);
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());

@@ -84,8 +84,9 @@ class BroadcastGeminiResponseServiceTest {
                 .subject(DialogueSubject.AI_CHARACTER)
                 .content(voiceText)
                 .emotion(emotion)
+                .sentToGemini(true)
                 .build();
-        given(broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion))
+        given(broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion, true))
                 .willReturn(savedInfo);
 
         // when
@@ -93,7 +94,7 @@ class BroadcastGeminiResponseServiceTest {
 
         // then
         verify(broadcastRedisUtil, times(1))
-                .pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion);
+                .pushBroadcastInfo(broadcastStreamId, DialogueSubject.AI_CHARACTER, voiceText, emotion, true);
         verify(applicationEventPublisher, times(1))
                 .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> {
                     if (!(event instanceof BroadcastCompactionCheckRequestedEvent)) {
@@ -134,7 +135,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, null, Emotion.TALKING, requestOwnerBundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
@@ -160,7 +161,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
@@ -189,7 +190,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
         verify(applicationEventPublisher, times(1))
@@ -219,7 +220,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, bundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
@@ -251,7 +252,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(geminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, bundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(applicationEventPublisher, never()).publishEvent(any());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
@@ -515,7 +516,7 @@ class BroadcastGeminiResponseServiceTest {
         service.handleCompletedTurnAsync(staleGeminiSession, broadcastStreamId, generation, turnNumber, voiceText, Emotion.TALKING, requestOwnerBundle);
 
         // then
-        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), any());
+        verify(broadcastRedisUtil, never()).pushBroadcastInfo(anyString(), any(), anyString(), any(), anyBoolean());
         verify(broadcastWebSocketSender, never())
                 .sendTurnCompleteMetadata(anyString(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
         verify(applicationEventPublisher, times(1))

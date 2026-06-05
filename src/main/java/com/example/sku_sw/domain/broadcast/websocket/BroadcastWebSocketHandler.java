@@ -293,7 +293,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
                     broadcastStreamId,
                     DialogueSubject.AI_CHARACTER,
                     interruptedText,
-                    accumulator.getEmotion()
+                    accumulator.getEmotion(),
+                    true
             );
         } catch (Exception e) {
             log.error("[BroadcastWebSocketHandler] handleInterruptRequest() - Redis save failed | streamId: {}, error: {}",

@@ -16,7 +16,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 /**
  * WebSocket을 통해 수신한 클라이언트 텍스트 메시지를 처리하는 서비스
@@ -101,14 +103,26 @@ public class BroadcastMessageService {
         if (hasTriggerWord) {
             log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}", broadcastStreamId);
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
-        }
 
-        broadcastGeminiRequestService.processClientMessage(
-                broadcastStreamId,
-                generation,
-                character,
-                message
-        );
+            // 미전송 데이터 조회 및 결합 전송
+            List<BroadcastInfoRedisDto> unsentDialogues = broadcastRedisUtil.getUnsentDialogues(broadcastStreamId);
+            String combinedMessage = unsentDialogues.stream()
+                    .map(BroadcastInfoRedisDto::content)
+                    .collect(Collectors.joining("\n"));
+            log.info("[BroadcastMessageService] handleClientMessage() - Sending unsent dialogues combined | streamId: {}, unsentCount: {}", broadcastStreamId, unsentDialogues.size());
+
+            broadcastGeminiRequestService.processClientMessage(broadcastStreamId, generation, character, combinedMessage);
+
+            // 전송 완료 후 sentToGemini 마킹
+            List<Long> unsentCursorIds = unsentDialogues.stream()
+                    .map(BroadcastInfoRedisDto::cursorId)
+                    .toList();
+            broadcastRedisUtil.markDialoguesSentToGemini(broadcastStreamId, unsentCursorIds);
+        } else {
+            // isTalking은 true이지만 트리거 워드가 아닌 경우, 현재 메시지만 전송
+            broadcastGeminiRequestService.processClientMessage(broadcastStreamId, generation, character, message);
+            broadcastRedisUtil.markDialoguesSentToGemini(broadcastStreamId, List.of(savedUserInfo.cursorId()));
+        }
 
         log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: gemini_called", broadcastStreamId);
     }

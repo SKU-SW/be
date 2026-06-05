@@ -426,6 +426,7 @@ class BroadcastWebSocketStartIntegrationTest {
                 .cursorId(0L)
                 .content("오늘 방송 요약")
                 .createdAt(LocalDateTime.now())
+                .sentToGemini(true)
                 .build();
         BroadcastCharacterRedisDto character = BroadcastCharacterRedisDto.builder()
                 .characterId(1L)

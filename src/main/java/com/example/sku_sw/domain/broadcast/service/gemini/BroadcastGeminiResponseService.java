@@ -160,6 +160,7 @@ public class BroadcastGeminiResponseService {
                 broadcastStreamId, generation, turnNumber);
         Long savedCursorId = null;
         try {
+
             BroadcastWebSocketSessionBundle bundle = getValidatedBundle(geminiSession, broadcastStreamId, generation, "handleCompletedTurnAsync");
             if (bundle == null) {
                 log.info("[BroadcastGeminiResponseService] handleCompletedTurnAsync() - Stale completion skipped, cleanup continues | streamId: {}, generation: {}, turnNumber: {}",
@@ -177,7 +178,8 @@ public class BroadcastGeminiResponseService {
                     broadcastStreamId,
                     DialogueSubject.AI_CHARACTER,
                     voiceText,
-                    emotion
+                    emotion,
+                    true
             );
             savedCursorId = savedAiInfo.cursorId();
             applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
