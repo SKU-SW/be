@@ -23,8 +23,12 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
+import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
+import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
 import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
@@ -75,6 +79,7 @@ public class BroadcastService {
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
     private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
     private final FastApiUtil fastApiUtil;
+    private final BroadcastStatsRepository broadcastStatsRepository;
     private final ChatRedisUtil chatRedisUtil;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
@@ -467,6 +472,85 @@ public class BroadcastService {
                 result.content().size(),
                 result.hasNext(),
                 result.nextCursor());
+        return result;
+    }
+
+    /**
+     * 현재 방송 채팅 통계 조회
+     * - 최근 10분 동안의 BroadcastStats를 기반으로 여론 현황과 AI 파트너 성향을 계산한다.
+     * @param userId : 조회하는 사용자 ID
+     * @return : 방송 채팅 통계 응답 DTO
+     */
+    @Transactional(readOnly = true)
+    public BroadcastChatStatsResDto getBroadcastChatStats(Long userId) {
+        log.info("[BroadcastService] getBroadcastChatStats() - START | userId: {}", userId);
+
+        /*
+            1. 활성 방송 조회
+            - userId 기준 진행 중인 방송이 없으면 ACTIVE_BROADCAST_NOT_FOUND 예외를 발생시킨다.
+         */
+        Broadcast activeBroadcast = broadcastRepository.findActiveByUserId(userId, BroadcastStatus.BROADCASTING)
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND));
+
+        /*
+            2. 최근 10분 통계 조회
+            - 현재 시각 기준 10분 전부터의 BroadcastStats를 조회한다.
+         */
+        LocalDateTime since = LocalDateTime.now().minusMinutes(10);
+        List<BroadcastStats> statsList = broadcastStatsRepository.findByBroadcastAndRecordedAtAfter(activeBroadcast, since);
+
+        /*
+            3. 긍정/중립/부정 채팅 수 합계 계산
+         */
+        int positiveSum = 0;
+        int neutralSum = 0;
+        int negativeSum = 0;
+        for (BroadcastStats stats : statsList) {
+            positiveSum += stats.getPositiveChatCount();
+            neutralSum += stats.getNeutralChatCount();
+            negativeSum += stats.getNegativeChatCount();
+        }
+        int totalSum = positiveSum + neutralSum + negativeSum;
+
+        /*
+            4. 비율 계산
+            - 전체가 0이면 모든 비율은 0.0
+         */
+        double positiveRatio = totalSum > 0 ? (positiveSum * 100.0) / totalSum : 0.0;
+        double neutralRatio = totalSum > 0 ? (neutralSum * 100.0) / totalSum : 0.0;
+        double negativeRatio = totalSum > 0 ? (negativeSum * 100.0) / totalSum : 0.0;
+
+        /*
+            5. AI 파트너 성향 판별
+            - 가장 높은 비율의 성향을 선택 (긍정 > 중립 > 부정 우선순위)
+         */
+        AiCharacterTendency tendency = AiCharacterTendency.NEUTRAL;
+        if (positiveRatio >= neutralRatio && positiveRatio >= negativeRatio) {
+            tendency = AiCharacterTendency.POSITIVE;
+        } else if (negativeRatio > neutralRatio) {
+            tendency = AiCharacterTendency.NEGATIVE;
+        }
+
+        /*
+            6. ResponseDto 생성
+         */
+        BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = BroadcastChatStatsResDto.PublicOpinionResDto.builder()
+                .positiveChatCount(positiveSum)
+                .neutralChatCount(neutralSum)
+                .negativeChatCount(negativeSum)
+                .totalChatCount(totalSum)
+                .positiveRatio(Math.round(positiveRatio * 10.0) / 10.0)
+                .neutralRatio(Math.round(neutralRatio * 10.0) / 10.0)
+                .negativeRatio(Math.round(negativeRatio * 10.0) / 10.0)
+                .build();
+
+        BroadcastChatStatsResDto result = BroadcastChatStatsResDto.builder()
+                .publicOpinion(publicOpinion)
+                .aiPartnerTendency(tendency)
+                .build();
+
+        log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}",
+                activeBroadcast.getStreamId(), totalSum, tendency);
         return result;
     }
 

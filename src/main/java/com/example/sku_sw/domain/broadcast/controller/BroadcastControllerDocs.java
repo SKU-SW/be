@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
@@ -142,6 +143,41 @@ public interface BroadcastControllerDocs {
             @Parameter(description = "조회할 최신 방송 대화 데이터 개수", required = true)
             @RequestParam(defaultValue = "10") Integer size
     );
+
+    @Operation(summary = "방송 채팅 통계 조회", description = """
+            현재 로그인한 스트리머의 진행 중인 방송 채팅 통계를 조회하는 API입니다.
+
+            [Request Header]
+            - `Authorization: Bearer <Access Token>` 필요
+
+            [Request Body]
+            - 없음
+
+            [Response Body]
+            - `publicOpinion`: 여론 현황 (긍정/중립/부정 채팅 수 및 비율)
+            - `aiPartnerTendency`: AI 파트너 응답 성향 (POSITIVE/NEUTRAL/NEGATIVE)
+
+            [조회 방식]
+            - 최근 10분 동안의 BroadcastStats 데이터를 기반으로 통계를 계산합니다.
+            - AI 파트너 성향은 가장 높은 비율의 여론으로 판별됩니다.
+
+            [예외]
+            - 진행 중인 방송이 없으면 404 예외가 발생합니다.
+            """)
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "방송 채팅 통계 조회 성공",
+                    content = @Content(schema = @Schema(implementation = BroadcastChatStatsResDto.class))
+            ),
+            @ApiResponse(responseCode = "401", description = "인증 실패 / 토큰 만료", content = @Content),
+            @ApiResponse(responseCode = "403", description = "접근 권한 없음", content = @Content),
+            @ApiResponse(responseCode = "404", description = "진행 중인 방송 없음", content = @Content),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content)
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/chat/stats")
+    ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats();
 
     @Operation(summary = "현재 방송 대화 cursor 조회", description = """
             현재 로그인한 스트리머의 진행 중인 방송이 있다면, cursorId를 기반으로 과거 방송 대화 데이터를 조회하는 API입니다.

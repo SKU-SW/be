@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
@@ -37,6 +38,13 @@ public class BroadcastController implements BroadcastControllerDocs {
         Long userId = SecurityUtil.getCurrentUserId();
         CurrentStreamInfoResDto response = broadcastService.getCurrentStreamInfo(userId, size);
         return ResponseEntity.ok(GlobalResponse.success("현재 진행 중인 방송 정보 조회 성공", response));
+    }
+
+    @Override
+    public ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats() {
+        Long userId = SecurityUtil.getCurrentUserId();
+        BroadcastChatStatsResDto response = broadcastService.getBroadcastChatStats(userId);
+        return ResponseEntity.ok(GlobalResponse.success("방송 채팅 통계 조회 성공", response));
     }
 
     @Override

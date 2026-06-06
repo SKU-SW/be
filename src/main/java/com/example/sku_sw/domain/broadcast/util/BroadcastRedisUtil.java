@@ -8,6 +8,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
@@ -220,6 +221,38 @@ public class BroadcastRedisUtil {
         existing.setIsTalking(isTalking);
         setBroadcastCharacterValue(broadcastStreamId, existing);
         log.debug("[BroadcastRedisUtil] updateBroadcastCharacterIsTalking() - Updated | streamId: {}, isTalking: {}", broadcastStreamId, isTalking);
+    }
+
+    /**
+     * Redis의 방송 캐릭터 tendency를 원자적으로 업데이트하는 함수
+     * - tendencyAutoUpdate가 true일 때만 tendency를 업데이트한다.
+     * - Lua 스크립트를 사용하여 원자성을 보장한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param newTendency : 설정할 새로운 성향
+     */
+    public void updateBroadcastCharacterTendencyIfAutoUpdateEnabled(String broadcastStreamId, AiCharacterTendency newTendency) {
+        String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
+
+        String luaScript =
+            "local jsonStr = redis.call('GET', KEYS[1]) " +
+            "if jsonStr == false then return 0 end " +
+            "local autoUpdate = string.find(jsonStr, '\"tendencyAutoUpdate\":true') " +
+            "if autoUpdate == nil then return 0 end " +
+            "local updated = string.gsub(jsonStr, '\"tendency\":\"[A-Z]+\"', '\"tendency\":\"' .. ARGV[1] .. '\"') " +
+            "redis.call('SET', KEYS[1], updated) " +
+            "return 1";
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setResultType(Long.class);
+        script.setScriptText(luaScript);
+
+        Long result = redisTemplate.execute(script, Collections.singletonList(key), newTendency.name());
+
+        if (result == null || result == 0) {
+            log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - Skipped | streamId: {}, autoUpdate: false or key not found", broadcastStreamId);
+        } else {
+            log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - Updated | streamId: {}, tendency: {}", broadcastStreamId, newTendency);
+        }
     }
 
     /**
