@@ -33,6 +33,13 @@ class ActiveChzzkSession:
     connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(slots=True)
+class SentimentScore:
+    positive_chat_count: int = 0
+    neutral_chat_count: int = 0
+    negative_chat_count: int = 0
+
+
 class ChzzkSessionRegistry:
     def __init__(self) -> None:
         self.pending_sessions: dict[str, PendingChzzkSessionConnect] = {}
@@ -41,6 +48,9 @@ class ChzzkSessionRegistry:
         self.shutting_down = False
         self._stream_locks: dict[str, asyncio.Lock] = {}
         self._stream_locks_guard = asyncio.Lock()
+        self._sentiment_scores: dict[str, SentimentScore] = {}
+        self._sentiment_locks: dict[str, asyncio.Lock] = {}
+        self._sentiment_locks_guard = asyncio.Lock()
 
     @asynccontextmanager
     async def stream_lock(self, broadcast_stream_id: str) -> AsyncIterator[None]:
@@ -84,7 +94,41 @@ class ChzzkSessionRegistry:
         self.active_sessions[active.broadcast_stream_id] = active
 
     def remove_active(self, broadcast_stream_id: str) -> ActiveChzzkSession | None:
-        return self.active_sessions.pop(broadcast_stream_id, None)
+        session = self.active_sessions.pop(broadcast_stream_id, None)
+        self._sentiment_scores.pop(broadcast_stream_id, None)
+        self._sentiment_locks.pop(broadcast_stream_id, None)
+        return session
+
+    async def accumulate_sentiment(
+        self, broadcast_stream_id: str, positive: int, neutral: int, negative: int
+    ) -> None:
+        async with self._sentiment_locks_guard:
+            lock = self._sentiment_locks.setdefault(broadcast_stream_id, asyncio.Lock())
+        async with lock:
+            score = self._sentiment_scores.setdefault(broadcast_stream_id, SentimentScore())
+            score.positive_chat_count += positive
+            score.neutral_chat_count += neutral
+            score.negative_chat_count += negative
+
+    def get_sentiment(self, broadcast_stream_id: str) -> SentimentScore | None:
+        return self._sentiment_scores.get(broadcast_stream_id)
+
+    async def get_and_reset_sentiment(self, broadcast_stream_id: str) -> SentimentScore:
+        async with self._sentiment_locks_guard:
+            lock = self._sentiment_locks.setdefault(broadcast_stream_id, asyncio.Lock())
+        async with lock:
+            score = self._sentiment_scores.get(broadcast_stream_id)
+            if score is None:
+                return SentimentScore()
+            result = SentimentScore(
+                positive_chat_count=score.positive_chat_count,
+                neutral_chat_count=score.neutral_chat_count,
+                negative_chat_count=score.negative_chat_count,
+            )
+            score.positive_chat_count = 0
+            score.neutral_chat_count = 0
+            score.negative_chat_count = 0
+            return result
 
     def save_inflight_socket(self, broadcast_stream_id: str, socket_client: socketio.AsyncClient) -> None:
         if self.shutting_down:
@@ -109,6 +153,8 @@ class ChzzkSessionRegistry:
         self.active_sessions.clear()
         self.inflight_sockets.clear()
         self.pending_sessions.clear()
+        self._sentiment_scores.clear()
+        self._sentiment_locks.clear()
 
         for active_session in active_sessions:
             try:

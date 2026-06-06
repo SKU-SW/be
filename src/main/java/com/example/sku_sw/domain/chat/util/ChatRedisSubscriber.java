@@ -1,6 +1,9 @@
 package com.example.sku_sw.domain.chat.util;
 
 import com.example.sku_sw.domain.chat.service.ChzzkChatMessageService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
@@ -20,12 +23,15 @@ public class ChatRedisSubscriber {
 
     private final RedisMessageListenerContainer chatRedisMessageListenerContainer;
     private final ChzzkChatMessageService chzzkChatMessageService;
+    private final ObjectMapper objectMapper;
     private final ConcurrentHashMap<String, MessageListener> channelListeners = new ConcurrentHashMap<>();
 
     public ChatRedisSubscriber(RedisMessageListenerContainer chatRedisMessageListenerContainer,
-                               ChzzkChatMessageService chzzkChatMessageService) {
+                               ChzzkChatMessageService chzzkChatMessageService,
+                               ObjectMapper objectMapper) {
         this.chatRedisMessageListenerContainer = chatRedisMessageListenerContainer;
         this.chzzkChatMessageService = chzzkChatMessageService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -83,8 +89,27 @@ public class ChatRedisSubscriber {
                 subscribedPattern, channel, payload);
 
         /*
-            채팅 메시지가 왔을 때의 동작 수행
+            1. JSON 파싱하여 메시지 타입 구분
+            - positiveChatCount 필드 존재 여부로 통계 데이터인지 채팅 데이터인지 판단
          */
-        chzzkChatMessageService.processChatMessage(payload);
+        try {
+            JsonNode jsonNode = objectMapper.readTree(payload);
+
+            if (jsonNode.has("positiveChatCount")) {
+                /*
+                    2-1. 통계 데이터인 경우
+                    - 채팅 통계 처리 메서드 호출
+                 */
+                chzzkChatMessageService.processChatStatsMessage(payload);
+            } else {
+                /*
+                    2-2. 채팅 데이터인 경우
+                    - 기존 채팅 메시지 처리 메서드 호출
+                 */
+                chzzkChatMessageService.processChatMessage(payload);
+            }
+        } catch (JsonProcessingException e) {
+            log.error("[ChatRedisSubscriber] handleMessage() - Failed to parse payload | payload: {}", payload, e);
+        }
     }
 }

@@ -20,6 +20,8 @@ class Settings:
     gemini_api_base_url: str
     gemini_timeout_sec: float
     gemini_connect_timeout_sec: float
+    sentiment_buffer_window_sec: float
+    sentiment_buffer_max: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,6 +43,8 @@ class Settings:
             ),
             gemini_timeout_sec=float(os.getenv("GEMINI_TIMEOUT_SEC", "10.0")),
             gemini_connect_timeout_sec=float(os.getenv("GEMINI_CONNECT_TIMEOUT_SEC", "0.5")),
+            sentiment_buffer_window_sec=float(os.getenv("SENTIMENT_BUFFER_WINDOW_SEC", "20.0")),
+            sentiment_buffer_max=int(os.getenv("SENTIMENT_BUFFER_MAX", "500")),
         )
 
 

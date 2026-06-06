@@ -19,6 +19,13 @@ class GeminiSelectionResult:
     confidence: float | None = None
 
 
+@dataclass(slots=True)
+class SentimentResult:
+    positive_chat_count: int
+    neutral_chat_count: int
+    negative_chat_count: int
+
+
 class GeminiFilterService:
     """Calls Gemini HTTP REST API to select the most entertaining chat from a batch."""
 
@@ -87,6 +94,51 @@ class GeminiFilterService:
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.warning("Failed to parse Gemini selection response | err=%s raw=%.300s", exc, response.text)
+            return None
+
+    async def analyze_sentiment(self, chats: list[str]) -> SentimentResult | None:
+        """Analyze overall sentiment of chat messages using Gemini function calling."""
+        if self.client is None:
+            return None
+        if not chats:
+            return None
+
+        prompt = _build_sentiment_prompt(chats)
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "tools": [{"functionDeclarations": [SENTIMENT_TOOL_DECLARATION]}],
+            "toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
+        }
+        url = f"/models/{settings.gemini_model}:generateContent"
+
+        try:
+            response = await self.client.post(url, params={"key": settings.gemini_api_key}, json=body)
+            response.raise_for_status()
+        except httpx.TimeoutException:
+            logger.error("Gemini sentiment analysis timeout")
+            return None
+        except httpx.HTTPStatusError as exc:
+            logger.error("Gemini sentiment analysis HTTP %d", exc.response.status_code)
+            return None
+        except Exception:
+            logger.exception("Gemini sentiment analysis unexpected error")
+            return None
+
+        try:
+            payload = response.json()
+            parts = payload["candidates"][0]["content"]["parts"]
+            for part in parts:
+                if "functionCall" in part:
+                    args = part["functionCall"]["args"]
+                    return SentimentResult(
+                        positive_chat_count=int(args["positiveChatCount"]),
+                        neutral_chat_count=int(args["neutralChatCount"]),
+                        negative_chat_count=int(args["negativeChatCount"]),
+                    )
+            logger.warning("No functionCall in Gemini sentiment response | raw=%.300s", response.text)
+            return None
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning("Failed to parse Gemini sentiment response | err=%s raw=%.300s", exc, response.text)
             return None
 
 
@@ -197,6 +249,46 @@ def _safe_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# ----------------------------------------------------------------
+# Sentiment analysis
+# ----------------------------------------------------------------
+
+SENTIMENT_TOOL_DECLARATION = {
+    "name": "analyze_chat_sentiment",
+    "description": "채팅 메시지 목록의 긍정/중립/부정 채팅 개수를 분석하여 반환한다.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "positiveChatCount": {
+                "type": "NUMBER",
+                "description": "긍정적인 채팅의 개수",
+            },
+            "neutralChatCount": {
+                "type": "NUMBER",
+                "description": "중립적인 채팅의 개수",
+            },
+            "negativeChatCount": {
+                "type": "NUMBER",
+                "description": "부정적인 채팅의 개수",
+            },
+        },
+        "required": ["positiveChatCount", "neutralChatCount", "negativeChatCount"],
+    },
+}
+
+
+def _build_sentiment_prompt(chats: list[str]) -> str:
+    parts: list[str] = [
+        "다음 채팅 메시지들의 전체적인 분위기를 분석해줘.",
+        "analyze_chat_sentiment 툴을 호출하여 positiveChatCount(긍정 채팅 개수), neutralChatCount(중립 채팅 개수), negativeChatCount(부정 채팅 개수)를 반환해줘.",
+        "",
+        "[채팅 메시지]",
+    ]
+    for i, chat in enumerate(chats, 1):
+        parts.append(f"{i}. {chat}")
+    return "\n".join(parts)
 
 
 gemini_filter_service = GeminiFilterService()
