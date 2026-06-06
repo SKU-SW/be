@@ -33,4 +33,22 @@ public interface BroadcastStatsRepository extends JpaRepository<BroadcastStats, 
         @Param("broadcast") Broadcast broadcast,
         @Param("since") LocalDateTime since
     );
+
+    /**
+     * 특정 방송의 특정 구간 통계 조회
+     * @param broadcast : 조회할 방송 Entity
+     * @param since : 조회 시작 시각 (inclusive)
+     * @param until : 조회 종료 시각 (inclusive)
+     * @return : 통계 목록 (시간순 정렬)
+     */
+    @Query("SELECT bs FROM BroadcastStats bs " +
+           "WHERE bs.broadcast = :broadcast " +
+           "AND bs.recordedAt >= :since " +
+           "AND bs.recordedAt <= :until " +
+           "ORDER BY bs.recordedAt ASC")
+    List<BroadcastStats> findByBroadcastAndRecordedAtBetween(
+        @Param("broadcast") Broadcast broadcast,
+        @Param("since") LocalDateTime since,
+        @Param("until") LocalDateTime until
+    );
 }

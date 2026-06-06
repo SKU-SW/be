@@ -146,21 +146,27 @@ public interface BroadcastControllerDocs {
 
     @Operation(summary = "방송 채팅 통계 조회", description = """
             현재 로그인한 스트리머의 진행 중인 방송 채팅 통계를 조회하는 API입니다.
-
+            
             [Request Header]
             - `Authorization: Bearer <Access Token>` 필요
-
+            
+            [Query String]
+            - `statsCriteria`: 구간 간격 (분): 1 | 5 | 10 (기본값: 1)
+            - `timeRange`: 조회 범위: 1=1시간, 3=3시간, 0=전체 (기본값: 1)
+            
             [Request Body]
             - 없음
-
+            
             [Response Body]
             - `publicOpinion`: 여론 현황 (긍정/중립/부정 채팅 수 및 비율)
             - `aiPartnerTendency`: AI 파트너 응답 성향 (POSITIVE/NEUTRAL/NEGATIVE)
-
+            - `sentimentFlow`: 감정 흐름 통계 (구간별 긍정/중립/부정 비율)
+            
             [조회 방식]
-            - 최근 10분 동안의 BroadcastStats 데이터를 기반으로 통계를 계산합니다.
+            - 여론 현황: 최근 10분 동안의 BroadcastStats 데이터를 기반으로 통계를 계산합니다.
+            - 감정 흐름: statsCriteria 간격으로 그룹핑하여 구간별 비율을 계산합니다.
             - AI 파트너 성향은 가장 높은 비율의 여론으로 판별됩니다.
-
+            
             [예외]
             - 진행 중인 방송이 없으면 404 예외가 발생합니다.
             """)
@@ -177,7 +183,13 @@ public interface BroadcastControllerDocs {
     })
     @SecurityRequirement(name = "bearerAuth")
     @GetMapping("/chat/stats")
-    ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats();
+    ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats(
+            @Parameter(description = "구간 간격 (분): 1 | 5 | 10", required = true)
+            @RequestParam(defaultValue = "1") Integer statsCriteria,
+
+            @Parameter(description = "조회 범위: 1=1시간, 3=3시간, 0=전체", required = true)
+            @RequestParam(defaultValue = "1") Integer timeRange
+    );
 
     @Operation(summary = "현재 방송 대화 cursor 조회", description = """
             현재 로그인한 스트리머의 진행 중인 방송이 있다면, cursorId를 기반으로 과거 방송 대화 데이터를 조회하는 API입니다.

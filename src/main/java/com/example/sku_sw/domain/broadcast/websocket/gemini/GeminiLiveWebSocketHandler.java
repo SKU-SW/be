@@ -643,7 +643,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             2. refresh 요청 상태라면 refresh 재평가 이벤트를 발행한다.
             - 기존 세션 종료로 request-flight가 0이 되었으므로 refresh 진행 조건을 다시 평가한다.
           */
-        if (bundle.getGeminiSessionRefreshRequested()) {
+        if (bundle.getGeminiSessionRefreshRequested().get()) {
             applicationEventPublisher.publishEvent(BroadcastGeminiRefreshRequestedEvent.builder()
                     .broadcastStreamId(broadcastStreamId)
                     .generation(generation)

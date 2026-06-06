@@ -5,7 +5,6 @@ import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
-import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -17,23 +16,31 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChzzkChatMessageService {
 
+    private static final Map<String, String> USER_ROLE_CODE_TO_KOREAN = Map.of(
+            "common_user", "시청자",
+            "manager", "매니저",
+            "subscription_user", "구독자",
+            "top_fan_user", "열혈팬",
+            "streaming_chat_notice_admin", "공지 관리자"
+    );
+
     private final ObjectMapper objectMapper;
-    private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastStatsRepository broadcastStatsRepository;
 
     /**
      * FastApi로부터 전달받은 Chzzk 채팅 메시지를 파싱하고,
-     * Gemini 전송 및 Redis 저장을 수행한다.
-     * - Gemini 전송: BroadcastGeminiRequestService.sendChatRequest()에 위임
-     * - Redis 저장: BroadcastRedisUtil.pushBroadcastInfo()로 DialogueSubject.VIEWER 저장
+     * Redis 저장만 수행한다.
+     * - 스트리머 채팅은 DialogueSubject.STREAMER로 저장한다.
+     * - 일반 채팅은 Gemini 문맥 누적용 접두어를 포함한 문자열로 저장한다.
      * @param payload : FastApi가 전달한 JSON 형식의 채팅 메시지
      */
     public void processChatMessage(String payload) {
@@ -47,18 +54,15 @@ public class ChzzkChatMessageService {
             ChzzkChatMessageDto message = objectMapper.readValue(payload, ChzzkChatMessageDto.class);
 
             /*
-                2. Gemini에게 채팅 메시지 전송 (비-생성 컨텍스트 전용)
-                - BroadcastGeminiRequestService.sendViewerChatRequest()에 위임한다.
-                - clientContent / turnComplete:false 메시지 구조로 전송되어 모델 turn을 요청하지 않는다.
-                - userRoleCode 기반 "(시청자, 닉네임)" / "(스트리머)" 접두어 포맷팅 포함.
-             */
-            broadcastGeminiRequestService.sendViewerChatRequest(message);
+                2. Redis BroadcastInfo에 채팅 데이터 저장
+                - 스트리머 채팅은 STREAMER로 원문 저장한다.
+                - 일반 채팅은 VIEWER로 Gemini 문맥용 접두어가 포함된 문자열을 저장한다.
+                - FastAPI 채팅은 아직 Gemini로 보내지지 않았으므로 sentToGemini=false로 저장한다.
+              */
+            DialogueSubject dialogueSubject = resolveDialogueSubject(message);
+            String redisContent = buildRedisContent(message);
 
-            /*
-                3. Redis BroadcastInfo에 채팅 데이터 저장
-                - DialogueSubject.VIEWER로 BroadcastInfo Redis List에 저장한다.
-             */
-            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), DialogueSubject.VIEWER, message.content(), null, true);
+            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());
@@ -67,6 +71,69 @@ public class ChzzkChatMessageService {
         }
 
         log.info("[ChzzkChatMessageService] processChatMessage() - END");
+    }
+
+    /**
+     * FastAPI 채팅 메시지의 Redis 저장 subject를 결정한다.
+     * - 스트리머 채팅은 STREAMER로 저장하고, 그 외 채팅은 VIEWER로 저장한다.
+     * @param message : Chzzk 채팅 메시지 DTO
+     * @return : Redis 저장 subject
+     */
+    private DialogueSubject resolveDialogueSubject(ChzzkChatMessageDto message) {
+        log.info("[ChzzkChatMessageService] resolveDialogueSubject() - START | streamId: {}, userRoleCode: {}",
+                message.broadcastStreamId(), message.userRoleCode());
+
+        /*
+            1. userRoleCode 기준으로 대화 주체를 결정한다.
+            - streamer는 STREAMER로 저장한다.
+            - 그 외의 채팅은 VIEWER로 저장한다.
+         */
+        DialogueSubject result = "streamer".equals(message.userRoleCode())
+                ? DialogueSubject.STREAMER
+                : DialogueSubject.VIEWER;
+
+        log.info("[ChzzkChatMessageService] resolveDialogueSubject() - END | subject: {}", result);
+        return result;
+    }
+
+    /**
+     * FastAPI 채팅 메시지를 Redis 저장용 문자열로 변환한다.
+     * - 스트리머 채팅은 원문 그대로 저장한다.
+     * - 일반 채팅은 역할/닉네임 접두어를 포함한 Gemini 문맥 문자열로 저장한다.
+     * @param message : Chzzk 채팅 메시지 DTO
+     * @return : Redis 저장용 문자열
+     */
+    private String buildRedisContent(ChzzkChatMessageDto message) {
+        log.info("[ChzzkChatMessageService] buildRedisContent() - START | streamId: {}, nickname: {}",
+                message.broadcastStreamId(), message.nickname());
+
+        /*
+            1. 스트리머 채팅은 원문 그대로 반환한다.
+            - 이후 공통 Gemini payload 생성 시점에 (스트리머) 접두어를 붙인다.
+         */
+        if ("streamer".equals(message.userRoleCode())) {
+            log.info("[ChzzkChatMessageService] buildRedisContent() - END | contentType: streamer_raw");
+            return message.content();
+        }
+
+        /*
+            2. 일반 채팅은 역할/닉네임 접두어를 포함한 문자열로 변환한다.
+            - BroadcastInfoRedisDto에는 닉네임 필드가 없으므로 저장 시점에 포맷을 완료한다.
+         */
+        String nickname = message.nickname();
+        String userRoleCode = message.userRoleCode();
+
+        String prefix;
+        if (userRoleCode == null || userRoleCode.isEmpty()) {
+            prefix = "(시청자, " + nickname + ")";
+        } else {
+            String koreanRole = USER_ROLE_CODE_TO_KOREAN.getOrDefault(userRoleCode, userRoleCode);
+            prefix = "(" + koreanRole + ", " + nickname + ")";
+        }
+
+        String result = prefix + message.content();
+        log.info("[ChzzkChatMessageService] buildRedisContent() - END | contentType: viewer_prefixed");
+        return result;
     }
 
     /**

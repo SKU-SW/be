@@ -93,8 +93,23 @@ public class BroadcastMessageService {
             return;
         }
 
-        if (!bundle.canSendToGemini()) {
+        if (!bundle.isGeminiSessionOpen()) {
+            log.info("[BroadcastMessageService] handleClientMessage() - Gemini Session is No Open | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
+            return;
+        }
+
+        if (bundle.isGeminiSessionRefreshRequested()) {
             log.info("[BroadcastMessageService] handleClientMessage() - Gemini send blocked during refresh | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
+            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
+            return;
+        }
+
+
+        if (!bundle.isWebSocketSessionBundleReady()) {
+            log.info("[BroadcastMessageService] handleClientMessage() - Gemini Session Bundle is Not Ready | streamId: {}, generation: {}",
                     broadcastStreamId, generation);
             log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
             return;
@@ -103,28 +118,114 @@ public class BroadcastMessageService {
         if (hasTriggerWord) {
             log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}", broadcastStreamId);
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
-
-            // 미전송 데이터 조회 및 결합 전송
-            List<BroadcastInfoRedisDto> unsentDialogues = broadcastRedisUtil.getUnsentDialogues(broadcastStreamId);
-            String combinedMessage = unsentDialogues.stream()
-                    .map(BroadcastInfoRedisDto::content)
-                    .collect(Collectors.joining("\n"));
-            log.info("[BroadcastMessageService] handleClientMessage() - Sending unsent dialogues combined | streamId: {}, unsentCount: {}", broadcastStreamId, unsentDialogues.size());
-
-            broadcastGeminiRequestService.processClientMessage(broadcastStreamId, generation, character, combinedMessage);
-
-            // 전송 완료 후 sentToGemini 마킹
-            List<Long> unsentCursorIds = unsentDialogues.stream()
-                    .map(BroadcastInfoRedisDto::cursorId)
-                    .toList();
-            broadcastRedisUtil.markDialoguesSentToGemini(broadcastStreamId, unsentCursorIds);
-        } else {
-            // isTalking은 true이지만 트리거 워드가 아닌 경우, 현재 메시지만 전송
-            broadcastGeminiRequestService.processClientMessage(broadcastStreamId, generation, character, message);
-            broadcastRedisUtil.markDialoguesSentToGemini(broadcastStreamId, List.of(savedUserInfo.cursorId()));
         }
 
+        sendPendingDialoguesToGemini(broadcastStreamId, generation, character);
+
         log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: gemini_called", broadcastStreamId);
+    }
+
+    /**
+     * Gemini로 아직 전송되지 않은 방송 대화들을 조회해 하나의 payload로 결합 전송한다.
+     * - Redis의 미전송 대화들을 조회한다.
+     * - 각 대화를 Gemini 입력 포맷으로 변환한 뒤 줄바꿈으로 결합한다.
+     * - Gemini 전송이 성공한 경우에만 sentToGemini를 true로 마킹한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param character : 방송 캐릭터 정보
+     */
+    private void sendPendingDialoguesToGemini(
+            String broadcastStreamId,
+            Long generation,
+            BroadcastCharacterRedisDto character
+    ) {
+        log.info("[BroadcastMessageService] sendPendingDialoguesToGemini() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        /*
+            1. Redis에서 미전송 대화를 조회한다.
+            - 현재 방금 저장된 스트리머 메시지와 이전 viewer/chat 누적분을 함께 조회한다.
+         */
+        List<BroadcastInfoRedisDto> unsentDialogues = broadcastRedisUtil.getUnsentDialogues(broadcastStreamId);
+        if (unsentDialogues.isEmpty()) {
+            log.info("[BroadcastMessageService] sendPendingDialoguesToGemini() - END | streamId: {}, action: no_unsent_dialogues",
+                    broadcastStreamId);
+            return;
+        }
+
+        /*
+            2. 미전송 대화들을 Gemini 입력용 payload로 결합한다.
+            - STREAMER는 (스트리머) 접두어를 붙인다.
+            - VIEWER는 저장된 문자열을 그대로 사용한다.
+         */
+        String combinedMessage = buildGeminiDialoguePayload(unsentDialogues);
+        log.info("[BroadcastMessageService] sendPendingDialoguesToGemini() - Combined dialogues | streamId: {}, unsentCount: {}",
+                broadcastStreamId, unsentDialogues.size());
+
+        /*
+            3. 결합한 payload를 Gemini로 전송한다.
+            - 이미 포맷된 여러 줄 대화 블록이므로 추가 접두어 없이 그대로 전송한다.
+         */
+        broadcastGeminiRequestService.processFormattedDialogueMessage(
+                broadcastStreamId,
+                generation,
+                character,
+                combinedMessage
+        );
+
+        /*
+            4. 전송 성공 시 해당 대화들을 sentToGemini=true로 마킹한다.
+         */
+        List<Long> unsentCursorIds = unsentDialogues.stream()
+                .map(BroadcastInfoRedisDto::cursorId)
+                .toList();
+        broadcastRedisUtil.markDialoguesSentToGemini(broadcastStreamId, unsentCursorIds);
+
+        log.info("[BroadcastMessageService] sendPendingDialoguesToGemini() - END | streamId: {}, sentCount: {}",
+                broadcastStreamId, unsentCursorIds.size());
+    }
+
+    /**
+     * 미전송 대화 목록을 Gemini realtimeInput.text payload 문자열로 결합한다.
+     * @param dialogues : 미전송 대화 목록
+     * @return : 줄바꿈으로 결합된 Gemini 입력 문자열
+     */
+    private String buildGeminiDialoguePayload(List<BroadcastInfoRedisDto> dialogues) {
+        log.info("[BroadcastMessageService] buildGeminiDialoguePayload() - START | dialogueCount: {}", dialogues.size());
+
+        /*
+            1. 각 대화를 Gemini 입력 포맷으로 변환한 뒤 줄바꿈으로 결합한다.
+         */
+        String result = dialogues.stream()
+                .map(this::formatDialogueForGemini)
+                .collect(Collectors.joining("\n"));
+
+        log.info("[BroadcastMessageService] buildGeminiDialoguePayload() - END | payloadLength: {}", result.length());
+        return result;
+    }
+
+    /**
+     * Redis 대화를 Gemini 입력용 단일 문자열로 변환한다.
+     * - STREAMER는 (스트리머) 접두어를 붙인다.
+     * - VIEWER 및 그 외 대화는 저장된 문자열을 그대로 사용한다.
+     * @param dialogue : Redis 대화 DTO
+     * @return : Gemini 입력용 단일 문자열
+     */
+    private String formatDialogueForGemini(BroadcastInfoRedisDto dialogue) {
+        log.info("[BroadcastMessageService] formatDialogueForGemini() - START | cursorId: {}, subject: {}",
+                dialogue.cursorId(), dialogue.subject());
+
+        /*
+            1. subject에 따라 Gemini 입력 문자열을 구성한다.
+            - STREAMER는 원문에 (스트리머) 접두어를 부여한다.
+            - VIEWER는 저장 시점에 prefix가 포함되어 있으므로 그대로 사용한다.
+         */
+        String result = dialogue.subject() == DialogueSubject.STREAMER
+                ? "(스트리머)" + dialogue.content()
+                : dialogue.content();
+
+        log.info("[BroadcastMessageService] formatDialogueForGemini() - END | cursorId: {}", dialogue.cursorId());
+        return result;
     }
 
     /**

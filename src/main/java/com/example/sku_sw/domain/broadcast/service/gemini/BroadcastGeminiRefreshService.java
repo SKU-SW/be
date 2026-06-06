@@ -94,7 +94,7 @@ public class BroadcastGeminiRefreshService {
      */
     public boolean isRefreshBlockingCompaction(String broadcastStreamId) {
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
-        return bundle != null && (bundle.isRefreshing() || bundle.getGeminiSessionRefreshRequested() || bundle.getGeminiSessionRefreshInProgress());
+        return bundle != null && (bundle.isRefreshing() || bundle.getGeminiSessionRefreshRequested().get() || bundle.getGeminiSessionRefreshInProgress());
     }
 
     /**
@@ -111,7 +111,7 @@ public class BroadcastGeminiRefreshService {
             - refresh 요청이 없거나 이미 refresh 중이면 중복 시작하지 않는다.
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (bundle == null || !bundle.getGeminiSessionRefreshRequested()) {
+        if (bundle == null || !bundle.getGeminiSessionRefreshRequested().get()) {
             log.info("[BroadcastGeminiRefreshService] tryStartRefresh() - END | streamId: {}, action: refresh_not_requested", broadcastStreamId);
             return;
         }

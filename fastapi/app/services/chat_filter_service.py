@@ -208,11 +208,13 @@ class ChatFilterService:
         if not chats:
             return
 
+        logger.info("Sentiment flush triggered | streamId=%s chatCount=%d", broadcast_stream_id, len(chats))
+
         # Call Gemini sentiment analysis
         result = await gemini_filter_service.analyze_sentiment(chats)
 
         if result is None:
-            logger.debug("Sentiment analysis returned no result | streamId=%s", broadcast_stream_id)
+            logger.warning("Sentiment analysis returned no result | streamId=%s chats=%d", broadcast_stream_id, len(chats))
             return
 
         # Accumulate to registry
@@ -222,7 +224,7 @@ class ChatFilterService:
             result.neutral_chat_count,
             result.negative_chat_count,
         )
-        logger.debug(
+        logger.info(
             "Sentiment accumulated | streamId=%s positive=%d neutral=%d negative=%d",
             broadcast_stream_id,
             result.positive_chat_count,
@@ -235,16 +237,21 @@ class ChatFilterService:
             state.publish_task = asyncio.create_task(
                 self._sentiment_publish_periodically(broadcast_stream_id)
             )
+            logger.info("Sentiment publish timer started | streamId=%s (will publish in 60s)", broadcast_stream_id)
 
     async def _sentiment_publish_periodically(self, broadcast_stream_id: str) -> None:
+        logger.info("Sentiment publish timer waiting 60s | streamId=%s", broadcast_stream_id)
         await asyncio.sleep(60.0)
 
         # Get accumulated sentiment and reset
         sentiment = await chzzk_session_registry.get_and_reset_sentiment(broadcast_stream_id)
+        logger.info("Sentiment retrieved for publish | streamId=%s positive=%d neutral=%d negative=%d",
+                    broadcast_stream_id, sentiment.positive_chat_count, sentiment.neutral_chat_count, sentiment.negative_chat_count)
 
         # Publish to Redis (even if empty)
         session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
         if session is None:
+            logger.warning("Sentiment publish skipped - session not found | streamId=%s", broadcast_stream_id)
             return
 
         payload = {
@@ -255,8 +262,9 @@ class ChatFilterService:
             "negativeChatCount": sentiment.negative_chat_count,
         }
         await chat_publish_service.publish(session.channel_name or "", payload)
-        logger.debug(
-            "Sentiment published | streamId=%s positive=%d neutral=%d negative=%d",
+        logger.info(
+            "Sentiment published to Redis | channel=%s streamId=%s positive=%d neutral=%d negative=%d",
+            session.channel_name,
             broadcast_stream_id,
             sentiment.positive_chat_count,
             sentiment.neutral_chat_count,

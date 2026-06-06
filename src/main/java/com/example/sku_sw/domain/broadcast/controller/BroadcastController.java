@@ -41,9 +41,9 @@ public class BroadcastController implements BroadcastControllerDocs {
     }
 
     @Override
-    public ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats() {
+    public ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats(Integer statsCriteria, Integer timeRange) {
         Long userId = SecurityUtil.getCurrentUserId();
-        BroadcastChatStatsResDto response = broadcastService.getBroadcastChatStats(userId);
+        BroadcastChatStatsResDto response = broadcastService.getBroadcastChatStats(userId, statsCriteria, timeRange);
         return ResponseEntity.ok(GlobalResponse.success("방송 채팅 통계 조회 성공", response));
     }
 

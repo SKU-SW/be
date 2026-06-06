@@ -67,12 +67,11 @@ public class BroadcastPromptBuilder {
                         - 반드시 이전 방송 문맥 및 대화 기록을 파악하고 응답을 생성해야한다.
                         
                         # 4. Tool Calls 규칙
-                        [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 현재 생성 중인 응답만 중단하고 Tool Call을 절대 실행하면 안된다.
+                        [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 현재 생성 중인 응답만 중단하고 Tool Call을 절대 실행하면 안된다. 
                         ## 4.1 set_talking_state
                         - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면, 어떠한 텍스트나 음성도 생성하지 말고 오직 `set_talking_state(isTalking=false)` Tool Call만 실행해야한다.
                             - 답변해야 하는 경우: 스트리머가 AI 캐릭터에게 직접 말을 거는 경우, AI의 직전 발화에 이어서 반응을 요구하는 경우, 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
                             - 답변하면 안 되는 경우: 혼잣말에 가까운 경우, 채팅창, 게임, 다른 사람에게 한 말인 경우, AI를 부른 것이 아니라 단순 리액션인 경우
-                        - "(스트리머)"로 시작되지 않는 요청에 대해서는 절대 set_talking_state Tool Call을 실행하면 안된다.
         
                         ## 4.2 set_response_emotion
                         - AI가 답변해야 하는 상황이라면, 답변 텍스트를 생성하기 전에 `set_response_emotion` Tool Call을 호출하여 감정 상태를 먼저 전달해야 한다.
@@ -83,11 +82,11 @@ public class BroadcastPromptBuilder {
                         # 5. 최종 출력 제약 조건
                         - 1~2문장으로 짧게 응답해야한다.
                         - [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 절대 AI 캐릭터의 응답을 생성하면 안된다.
-                        - "(스트리머)"로 시작되지 않는 요청에 대해서는 절대 AI 캐릭터의 응답을 생성하면 안된다.
                         - 주어진 응답/말투 예시를 참고해서 응답하되, 스타일만 참고하고 절대로 문장을 그대로 인용하거나 복사해서 쓰면 안된다.
                         - 문맥에 맞지 않는 표현은 사용하면 안된다.
                         - 이전 대화 내용과 이어지는 응답을 생성해야한다.
-                        - 최근 응답과 동일한 감정 표현만을 반복하지 말고, 상황에 맞는 다양한 감정 표현을 해야한다.""",
+                        - 최근 응답과 동일한 감정 표현만을 반복하지 말고, 상황에 맞는 다양한 감정 표현을 해야한다.
+                        - 근거가 없는 이상, 과도한 오버액션은 하면 안된다.""",
                 character.getCharacterName(),
                 genderStr,
                 personalityStr,

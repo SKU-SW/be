@@ -126,19 +126,27 @@ class GeminiFilterService:
 
         try:
             payload = response.json()
+            logger.info("Gemini sentiment response | chats=%d raw=%.500s", len(chats), response.text)
             parts = payload["candidates"][0]["content"]["parts"]
             for part in parts:
                 if "functionCall" in part:
                     args = part["functionCall"]["args"]
-                    return SentimentResult(
+                    result = SentimentResult(
                         positive_chat_count=int(args["positiveChatCount"]),
                         neutral_chat_count=int(args["neutralChatCount"]),
                         negative_chat_count=int(args["negativeChatCount"]),
                     )
-            logger.warning("No functionCall in Gemini sentiment response | raw=%.300s", response.text)
+                    logger.info(
+                        "Gemini sentiment parsed | positive=%d neutral=%d negative=%d",
+                        result.positive_chat_count,
+                        result.neutral_chat_count,
+                        result.negative_chat_count,
+                    )
+                    return result
+            logger.warning("No functionCall in Gemini sentiment response | raw=%.500s", response.text)
             return None
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            logger.warning("Failed to parse Gemini sentiment response | err=%s raw=%.300s", exc, response.text)
+            logger.warning("Failed to parse Gemini sentiment response | err=%s raw=%.500s", exc, response.text)
             return None
 
 

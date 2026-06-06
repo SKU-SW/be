@@ -478,12 +478,15 @@ public class BroadcastService {
     /**
      * 현재 방송 채팅 통계 조회
      * - 최근 10분 동안의 BroadcastStats를 기반으로 여론 현황과 AI 파트너 성향을 계산한다.
+     * - 감정 흐름 통계를 계산하여 구간별로 반환한다.
      * @param userId : 조회하는 사용자 ID
+     * @param statsCriteria : 구간 간격 (분): 1 | 5 | 10
+     * @param timeRange : 조회 범위: 1=1시간, 3=3시간, 0=전체
      * @return : 방송 채팅 통계 응답 DTO
      */
     @Transactional(readOnly = true)
-    public BroadcastChatStatsResDto getBroadcastChatStats(Long userId) {
-        log.info("[BroadcastService] getBroadcastChatStats() - START | userId: {}", userId);
+    public BroadcastChatStatsResDto getBroadcastChatStats(Long userId, Integer statsCriteria, Integer timeRange) {
+        log.info("[BroadcastService] getBroadcastChatStats() - START | userId: {}, statsCriteria: {}, timeRange: {}", userId, statsCriteria, timeRange);
 
         /*
             1. 활성 방송 조회
@@ -493,11 +496,11 @@ public class BroadcastService {
                 .orElseThrow(() -> new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND));
 
         /*
-            2. 최근 10분 통계 조회
+            2. 최근 10분 통계 조회 (여론 현황용)
             - 현재 시각 기준 10분 전부터의 BroadcastStats를 조회한다.
          */
-        LocalDateTime since = LocalDateTime.now().minusMinutes(10);
-        List<BroadcastStats> statsList = broadcastStatsRepository.findByBroadcastAndRecordedAtAfter(activeBroadcast, since);
+        LocalDateTime since10min = LocalDateTime.now().minusMinutes(10);
+        List<BroadcastStats> recentStatsList = broadcastStatsRepository.findByBroadcastAndRecordedAtAfter(activeBroadcast, since10min);
 
         /*
             3. 긍정/중립/부정 채팅 수 합계 계산
@@ -505,7 +508,7 @@ public class BroadcastService {
         int positiveSum = 0;
         int neutralSum = 0;
         int negativeSum = 0;
-        for (BroadcastStats stats : statsList) {
+        for (BroadcastStats stats : recentStatsList) {
             positiveSum += stats.getPositiveChatCount();
             neutralSum += stats.getNeutralChatCount();
             negativeSum += stats.getNegativeChatCount();
@@ -532,7 +535,7 @@ public class BroadcastService {
         }
 
         /*
-            6. ResponseDto 생성
+            6. ResponseDto 생성 (여론 현황)
          */
         BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = BroadcastChatStatsResDto.PublicOpinionResDto.builder()
                 .positiveChatCount(positiveSum)
@@ -544,13 +547,66 @@ public class BroadcastService {
                 .negativeRatio(Math.round(negativeRatio * 10.0) / 10.0)
                 .build();
 
+        /*
+            7. 감정 흐름 통계 계산
+            7-1. timeRange에 따른 조회 시작 시각 결정
+         */
+        LocalDateTime flowSince;
+        if (timeRange == 3) {
+            flowSince = LocalDateTime.now().minusHours(3);
+        } else if (timeRange == 0) {
+            flowSince = activeBroadcast.getStartedAt();
+        } else {
+            flowSince = LocalDateTime.now().minusHours(1);
+        }
+        LocalDateTime flowUntil = LocalDateTime.now();
+
+        /*
+            7-2. 감정 흐름용 통계 조회
+         */
+        List<BroadcastStats> flowStatsList = broadcastStatsRepository.findByBroadcastAndRecordedAtBetween(activeBroadcast, flowSince, flowUntil);
+
+        /*
+            7-3. statsCriteria만큼 인접 레코드를 그룹핑하여 구간별 통계 생성
+         */
+        List<BroadcastChatStatsResDto.SentimentFlowItemResDto> sentimentFlow = new ArrayList<>();
+        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+
+        for (int i = 0; i < flowStatsList.size(); i += statsCriteria) {
+            int end = Math.min(i + statsCriteria, flowStatsList.size());
+            List<BroadcastStats> group = flowStatsList.subList(i, end);
+
+            // 긍정/중립/부정 채팅 개수 종합 계산
+            int posSum = group.stream().mapToInt(BroadcastStats::getPositiveChatCount).sum();
+            int neuSum = group.stream().mapToInt(BroadcastStats::getNeutralChatCount).sum();
+            int negSum = group.stream().mapToInt(BroadcastStats::getNegativeChatCount).sum();
+            int total = posSum + neuSum + negSum;
+
+            double posRatio = total > 0 ? Math.round((posSum * 1000.0) / total) / 10.0 : 0.0;
+            double neuRatio = total > 0 ? Math.round((neuSum * 1000.0) / total) / 10.0 : 0.0;
+            double negRatio = total > 0 ? Math.round((negSum * 1000.0) / total) / 10.0 : 0.0;
+
+            String timeLabel = group.get(0).getRecordedAt().format(timeFormatter);
+
+            sentimentFlow.add(BroadcastChatStatsResDto.SentimentFlowItemResDto.builder()
+                    .timeLabel(timeLabel)
+                    .positiveRatio(posRatio)
+                    .neutralRatio(neuRatio)
+                    .negativeRatio(negRatio)
+                    .build());
+        }
+
+        /*
+            8. 최종 응답 DTO 생성
+         */
         BroadcastChatStatsResDto result = BroadcastChatStatsResDto.builder()
                 .publicOpinion(publicOpinion)
                 .aiPartnerTendency(tendency)
+                .sentimentFlow(sentimentFlow)
                 .build();
 
-        log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}",
-                activeBroadcast.getStreamId(), totalSum, tendency);
+        log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}, flowSize: {}",
+                activeBroadcast.getStreamId(), totalSum, tendency, sentimentFlow.size());
         return result;
     }
 
