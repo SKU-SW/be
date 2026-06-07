@@ -20,12 +20,14 @@ class Settings:
     gemini_api_base_url: str
     gemini_timeout_sec: float
     gemini_connect_timeout_sec: float
+    sentiment_buffer_window_sec: float
+    sentiment_buffer_max: int
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
             chat_filter_mode=os.getenv("CHAT_FILTER_MODE", "filtered"),
-            chat_filter_window_sec=float(os.getenv("CHAT_FILTER_WINDOW_SEC", "1.5")),
+            chat_filter_window_sec=float(os.getenv("CHAT_FILTER_WINDOW_SEC", "3.0")),
             chat_filter_buffer_max=int(os.getenv("CHAT_FILTER_BUFFER_MAX", "200")),
             chat_filter_candidate_max=int(os.getenv("CHAT_FILTER_CANDIDATE_MAX", "20")),
             chat_filter_recent_dialogue_limit=int(os.getenv("CHAT_FILTER_RECENT_DIALOGUE_LIMIT", "50")),
@@ -41,6 +43,8 @@ class Settings:
             ),
             gemini_timeout_sec=float(os.getenv("GEMINI_TIMEOUT_SEC", "10.0")),
             gemini_connect_timeout_sec=float(os.getenv("GEMINI_CONNECT_TIMEOUT_SEC", "0.5")),
+            sentiment_buffer_window_sec=float(os.getenv("SENTIMENT_BUFFER_WINDOW_SEC", "20.0")),
+            sentiment_buffer_max=int(os.getenv("SENTIMENT_BUFFER_MAX", "500")),
         )
 
 

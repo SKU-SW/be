@@ -19,6 +19,14 @@ class GeminiSelectionResult:
     confidence: float | None = None
 
 
+@dataclass(slots=True)
+class SentimentResult:
+    positive_chat_count: int
+    neutral_chat_count: int
+    negative_chat_count: int
+    keyword: str = ""
+
+
 class GeminiFilterService:
     """Calls Gemini HTTP REST API to select the most entertaining chat from a batch."""
 
@@ -87,6 +95,61 @@ class GeminiFilterService:
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.warning("Failed to parse Gemini selection response | err=%s raw=%.300s", exc, response.text)
+            return None
+
+    async def analyze_sentiment(self, chats: list[str], context: BroadcastContext | None = None) -> SentimentResult | None:
+        """Analyze overall sentiment of chat messages using Gemini function calling."""
+        if self.client is None:
+            return None
+        if not chats:
+            return None
+
+        prompt = _build_sentiment_prompt(chats, context=context)
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "tools": [{"functionDeclarations": [SENTIMENT_TOOL_DECLARATION]}],
+            "toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
+        }
+        url = f"/models/{settings.gemini_model}:generateContent"
+
+        try:
+            response = await self.client.post(url, params={"key": settings.gemini_api_key}, json=body)
+            response.raise_for_status()
+        except httpx.TimeoutException:
+            logger.error("Gemini sentiment analysis timeout")
+            return None
+        except httpx.HTTPStatusError as exc:
+            logger.error("Gemini sentiment analysis HTTP %d", exc.response.status_code)
+            return None
+        except Exception:
+            logger.exception("Gemini sentiment analysis unexpected error")
+            return None
+
+        try:
+            payload = response.json()
+            logger.info("Gemini sentiment response | chats=%d raw=%.500s", len(chats), response.text)
+            parts = payload["candidates"][0]["content"]["parts"]
+            for part in parts:
+                if "functionCall" in part:
+                    args = part["functionCall"]["args"]
+                    result = SentimentResult(
+                        positive_chat_count=int(args["positiveChatCount"]),
+                        neutral_chat_count=int(args["neutralChatCount"]),
+                        negative_chat_count=int(args["negativeChatCount"]),
+                        keyword=str(args.get("keyword", "")),
+                    )
+                    logger.info(
+                        "Gemini sentiment parsed | positive=%d neutral=%d negative=%d keyword=%s",
+                        result.positive_chat_count,
+                        result.neutral_chat_count,
+                        result.negative_chat_count,
+                        result.keyword,
+                    )
+                    return result
+            logger.warning("No functionCall in Gemini sentiment response | raw=%.500s", response.text)
+            return None
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning("Failed to parse Gemini sentiment response | err=%s raw=%.500s", exc, response.text)
             return None
 
 
@@ -197,6 +260,69 @@ def _safe_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# ----------------------------------------------------------------
+# Sentiment analysis
+# ----------------------------------------------------------------
+
+SENTIMENT_TOOL_DECLARATION = {
+    "name": "analyze_chat_stats",
+    "description": "채팅 메시지 목록의 분위기를 분석하고, 방송 흐름에 맞는 주요 키워드 1개를 추출한다.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "positiveChatCount": {
+                "type": "NUMBER",
+                "description": "긍정적인 채팅의 개수",
+            },
+            "neutralChatCount": {
+                "type": "NUMBER",
+                "description": "중립적인 채팅의 개수",
+            },
+            "negativeChatCount": {
+                "type": "NUMBER",
+                "description": "부정적인 채팅의 개수",
+            },
+            "keyword": {
+                "type": "STRING",
+                "description": "채팅 메시지에 실제로 등장하는 단어/구 중 가장 많이 언급된 핵심 키워드 1개. 반드시 채팅 원문에서 그대로 추출할 것. 추상적 요약이나 범주 라벨(예: '인사', '게임 추천') 금지.",
+            },
+        },
+        "required": ["positiveChatCount", "neutralChatCount", "negativeChatCount", "keyword"],
+    },
+}
+
+
+def _build_sentiment_prompt(chats: list[str], context: BroadcastContext | None = None) -> str:
+    parts: list[str] = [
+        "다음 채팅 메시지들의 분위기를 분석하고, 채팅에서 실제로 사용된 핵심 키워드 1개를 추출해줘.",
+        "keyword는 반드시 채팅 원문에 등장하는 단어/구를 그대로 사용할 것. 추상적 요약(예: '인사', '게임 추천')은 금지.",
+        "analyze_chat_stats 툴을 호출하여 결과를 반환해줘.",
+        "",
+    ]
+    if context is not None:
+        if context.character_raw:
+            character = context.character_raw
+            char_lines: list[str] = []
+            name = character.get("characterName")
+            if name:
+                char_lines.append(f"이름: {name}")
+            trigger = character.get("characterTriggerWords")
+            if trigger:
+                char_lines.append(f"트리거 단어: {trigger}")
+            if char_lines:
+                parts.append("[캐릭터 정보]")
+                parts.extend(char_lines)
+                parts.append("")
+        if context.summary_text:
+            parts.append("[방송 요약]")
+            parts.append(context.summary_text)
+            parts.append("")
+    parts.append("[채팅 메시지]")
+    for i, chat in enumerate(chats, 1):
+        parts.append(f"{i}. {chat}")
+    return "\n".join(parts)
 
 
 gemini_filter_service = GeminiFilterService()

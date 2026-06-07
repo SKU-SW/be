@@ -32,7 +32,7 @@ public class GeminiLiveWebSocketHandlerFactory {
      * @param voiceName : Gemini setup 시 사용할 voice name (null/blank이면 voice config 생략)
      * @return : 세션 전용 GeminiLiveWebSocketHandler
      */
-    public GeminiLiveWebSocketHandler create(String systemPrompt, String voiceName) {
+    public GeminiLiveWebSocketHandler create(String systemPrompt, String voiceName, String resumptionHandle) {
         return new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
@@ -41,7 +41,8 @@ public class GeminiLiveWebSocketHandlerFactory {
                 applicationEventPublisher,
                 dialogueModel,
                 systemPrompt,
-                voiceName
+                voiceName,
+                resumptionHandle
         );
     }
 }

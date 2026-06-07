@@ -40,6 +40,8 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
@@ -143,7 +145,7 @@ class BroadcastWebSocketStartIntegrationTest {
 
         // then
         verify(clientSession, times(1)).close(any(CloseStatus.class));
-        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), any());
+        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
 
@@ -164,7 +166,7 @@ class BroadcastWebSocketStartIntegrationTest {
         failedFuture.completeExceptionally(new RuntimeException("gemini bootstrap failed"));
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(failedFuture);
+        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(failedFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
@@ -216,7 +218,7 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
+        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);
@@ -231,7 +233,7 @@ class BroadcastWebSocketStartIntegrationTest {
 
         // then
         verify(firstClientSession, atLeastOnce()).close(any(CloseStatus.class));
-        verify(geminiUtil, times(1)).closeGeminiSessionQuietly(firstGeminiSession);
+        verify(geminiUtil, times(1)).closeGeminiSessionQuietly(eq(firstGeminiSession), any(), any(CloseStatus.class), any());
 
         // 최신 generation만 유지되고, 현재 bundle은 두 번째 Gemini 세션으로 READY 상태여야 한다.
         BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID);
@@ -267,7 +269,7 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
+        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);
@@ -426,6 +428,7 @@ class BroadcastWebSocketStartIntegrationTest {
                 .cursorId(0L)
                 .content("오늘 방송 요약")
                 .createdAt(LocalDateTime.now())
+                .sentToGemini(true)
                 .build();
         BroadcastCharacterRedisDto character = BroadcastCharacterRedisDto.builder()
                 .characterId(1L)

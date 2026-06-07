@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
@@ -141,6 +142,66 @@ public interface BroadcastControllerDocs {
     ResponseEntity<GlobalResponse<CurrentStreamInfoResDto>> getCurrentStreamInfo(
             @Parameter(description = "조회할 최신 방송 대화 데이터 개수", required = true)
             @RequestParam(defaultValue = "10") Integer size
+    );
+
+    @Operation(summary = "방송 채팅 통계 조회", description = """
+            현재 로그인한 스트리머의 진행 중인 방송 채팅 통계를 조회하는 API입니다.
+            
+            [Request Header]
+            - `Authorization: Bearer <Access Token>` 필요
+            
+            [Query String]
+            - `statsCriteria`: 감정 흐름 통계 구간 간격 (분): `1` | `5` | `10` (기본값: 1)
+            - `timeRange`: 감정 흐름 통계 조회 범위: `1`=1시간 | `3`=3시간 | `0`=전체 (기본값: 1)
+            
+            [Request Body]
+            - 없음
+            
+            [Response Body]
+            - `publicOpinion`: 여론 현황 (최근 10분 기준)
+              - `positiveChatCount`: 긍정 채팅 수
+              - `neutralChatCount`: 중립 채팅 수
+              - `negativeChatCount`: 부정 채팅 수
+              - `totalChatCount`: 전체 채팅 수
+              - `positiveRatio`: 긍정 비율 (%)
+              - `neutralRatio`: 중립 비율 (%)
+              - `negativeRatio`: 부정 비율 (%)
+            - `aiPartnerTendency`: AI 파트너 응답 성향 (`POSITIVE` | `NEUTRAL` | `NEGATIVE`)
+            - `sentimentFlow`: 감정 흐름 통계 (구간별 긍정/중립/부정 비율 목록)
+              - `timeLabel`: 구간 시작 시각 (`HH:mm`)
+              - `positiveRatio`: 해당 구간 긍정 비율 (%)
+              - `neutralRatio`: 해당 구간 중립 비율 (%)
+              - `negativeRatio`: 해당 구간 부정 비율 (%)
+            - `topKeywords`: 상위 키워드 목록 (1위~10위, 등장 횟수 기준 내림차순)
+            
+            [조회 방식]
+            - 여론 현황: 최근 10분 동안의 BroadcastStats 데이터를 기반으로 통계를 계산합니다.
+            - 감정 흐름: statsCriteria 간격으로 그룹핑하여 구간별 비율을 계산합니다.
+            - AI 파트너 성향은 가장 높은 비율의 여론으로 판별됩니다.
+            - 상위 키워드는 오늘 방송 전체 BroadcastKeywords 데이터 중 등장 횟수가 가장 많은 10개를 반환합니다.
+            
+            [예외]
+            - 진행 중인 방송이 없으면 404 예외가 발생합니다.
+            """)
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "방송 채팅 통계 조회 성공",
+                    content = @Content(schema = @Schema(implementation = BroadcastChatStatsResDto.class))
+            ),
+            @ApiResponse(responseCode = "401", description = "인증 실패 / 토큰 만료", content = @Content),
+            @ApiResponse(responseCode = "403", description = "접근 권한 없음", content = @Content),
+            @ApiResponse(responseCode = "404", description = "진행 중인 방송 없음", content = @Content),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content)
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/chat/stats")
+    ResponseEntity<GlobalResponse<BroadcastChatStatsResDto>> getBroadcastChatStats(
+            @Parameter(description = "구간 간격 (분): 1 | 5 | 10", required = true)
+            @RequestParam(defaultValue = "1") Integer statsCriteria,
+
+            @Parameter(description = "조회 범위: 1=1시간, 3=3시간, 0=전체", required = true)
+            @RequestParam(defaultValue = "1") Integer timeRange
     );
 
     @Operation(summary = "현재 방송 대화 cursor 조회", description = """

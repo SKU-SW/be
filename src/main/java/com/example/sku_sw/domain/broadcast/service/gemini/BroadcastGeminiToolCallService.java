@@ -1,5 +1,7 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.character.enums.Emotion;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,9 +41,11 @@ public class BroadcastGeminiToolCallService {
     private static final String FIELD_RESPONSE = "response";
     private static final String FIELD_SUCCESS = "success";
     private static final String FIELD_REASON = "reason";
+    private static final String FIELD_BROADCAST_STREAM_ID = "broadcastStreamId";
 
     private final ObjectMapper objectMapper;
     private final BroadcastRedisUtil broadcastRedisUtil;
+    private final BroadcastWebSocketSessionRegistry sessionRegistry;
 
     /**
      * Gemini setup payload에 포함할 talking state function declaration을 생성한다.
@@ -336,8 +340,10 @@ public class BroadcastGeminiToolCallService {
             functionResponseNode.put(FIELD_NAME, functionName);
             functionResponseNode.set(FIELD_RESPONSE, responseBody);
 //            functionResponseNode.put("scheduling", "SILENT");
+            String payload = objectMapper.writeValueAsString(rootNode);
+            recordOutboundToolResponse(geminiSession, payload);
 
-            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(rootNode)));
+            geminiSession.sendMessage(new TextMessage(payload));
         } catch (Exception e) {
             log.error("[BroadcastGeminiToolCallService] sendToolResponse() - Failed | functionCallId: {}, functionName: {}, error: {}",
                     functionCallId, functionName, e.getMessage());
@@ -378,6 +384,24 @@ public class BroadcastGeminiToolCallService {
         responseBody.put(FIELD_SUCCESS, false);
         responseBody.put(FIELD_REASON, reason);
         return responseBody;
+    }
+
+    private void recordOutboundToolResponse(WebSocketSession geminiSession, String payload) {
+        if (geminiSession == null || geminiSession.getAttributes() == null) {
+            return;
+        }
+
+        Object broadcastStreamIdValue = geminiSession.getAttributes().get(FIELD_BROADCAST_STREAM_ID);
+        if (broadcastStreamIdValue == null) {
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamIdValue.toString());
+        if (bundle == null || bundle.getGeminiSession() != geminiSession || bundle.getGeminiHandler() == null) {
+            return;
+        }
+
+        bundle.getGeminiHandler().recordOutboundMessage("TOOL_RESPONSE", payload);
     }
 
     /**

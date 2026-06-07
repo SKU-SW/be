@@ -76,4 +76,41 @@ public class BroadcastStats {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "broadcast_id", nullable = false)
     private Broadcast broadcast;
+
+    // ======================================
+    // [비즈니스 로직]
+    // ======================================
+
+    public static BroadcastStats create(Integer avgViewerNum, Integer positiveChatCount, Integer neutralChatCount, Integer negativeChatCount, Broadcast broadcast) {
+        return BroadcastStats.builder()
+                .avgViewerNum(avgViewerNum)
+                .totalChatNum(positiveChatCount + neutralChatCount + negativeChatCount)
+                .positiveChatCount(positiveChatCount)
+                .neutralChatCount(neutralChatCount)
+                .negativeChatCount(negativeChatCount)
+                .recordedAt(LocalDateTime.now())
+                .broadcast(broadcast)
+                .build();
+    }
+
+    /**
+     * 채팅 통계 업데이트
+     * @param positiveCount : 긍정 채팅 개수
+     * @param neutralCount : 중립 채팅 개수
+     * @param negativeCount : 부정 채팅 개수
+     */
+    public void updateChatCounts(int positiveCount, int neutralCount, int negativeCount) {
+        this.positiveChatCount = positiveCount;
+        this.neutralChatCount = neutralCount;
+        this.negativeChatCount = negativeCount;
+        this.totalChatNum = positiveCount + neutralCount + negativeCount;
+    }
+
+    /**
+     * 통계 기록 시각 업데이트
+     * @param recordedAt : 기록 시각
+     */
+    public void updateRecordedAt(LocalDateTime recordedAt) {
+        this.recordedAt = recordedAt;
+    }
 }

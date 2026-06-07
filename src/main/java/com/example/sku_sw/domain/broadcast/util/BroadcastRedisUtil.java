@@ -8,6 +8,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastDataStatus;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.global.exception.CustomException;
@@ -223,6 +224,39 @@ public class BroadcastRedisUtil {
     }
 
     /**
+     * Redis의 방송 캐릭터 tendency를 원자적으로 업데이트하는 함수
+     * - tendencyAutoUpdate가 true일 때만 tendency를 업데이트한다.
+     * - Lua 스크립트를 사용하여 원자성을 보장한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param newTendency : 설정할 새로운 성향
+     */
+    public void updateBroadcastCharacterTendencyIfAutoUpdateEnabled(String broadcastStreamId, AiCharacterTendency newTendency) {
+        log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - START : BroadcastCharacter Tendency Auto Update | broadcastStreamId: {}", broadcastStreamId);
+        String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
+
+        String luaScript =
+            "local jsonStr = redis.call('GET', KEYS[1]) " +
+            "if jsonStr == false then return 0 end " +
+            "local autoUpdate = string.find(jsonStr, '\"tendencyAutoUpdate\":true') " +
+            "if autoUpdate == nil then return 0 end " +
+            "local updated = string.gsub(jsonStr, '\"tendency\":\"[A-Z]+\"', '\"tendency\":\"' .. ARGV[1] .. '\"') " +
+            "redis.call('SET', KEYS[1], updated) " +
+            "return 1";
+
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setResultType(Long.class);
+        script.setScriptText(luaScript);
+
+        Long result = redisTemplate.execute(script, Collections.singletonList(key), newTendency.name());
+
+        if (result == null || result == 0) {
+            log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - Skipped | streamId: {}, autoUpdate: false or key not found", broadcastStreamId);
+        } else {
+            log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - Updated | streamId: {}, tendency: {}", broadcastStreamId, newTendency);
+        }
+    }
+
+    /**
      * 방송 시작 시 summary slot을 초기화하는 함수
      * - 0번 인덱스에 기본 summary DTO를 저장한다.
      * @param broadcastStreamId : 방송 스트림 ID
@@ -262,6 +296,21 @@ public class BroadcastRedisUtil {
      * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
      */
     public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content, Emotion emotion) {
+        return pushBroadcastInfo(broadcastStreamId, subject, content, emotion, false);
+    }
+
+    /**
+     * 방송 대화 내역을 Redis List에 추가하는 함수 (sentToGemini 설정 포함)
+     * - Key: BroadcastInfo:{broadcastStreamId}
+     * - Value: cursorId와 dataStatus, emotion, sentToGemini가 포함된 BroadcastInfoRedisDto JSON (Right Push)
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param subject : 대화 주체
+     * @param content : 대화 내용
+     * @param emotion : 응답 감정값
+     * @param sentToGemini : Gemini 전송 여부
+     * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
+     */
+    public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content, Emotion emotion, boolean sentToGemini) {
         String key = getBroadcastInfoKey(broadcastStreamId);
         ensureSummarySlotExists(broadcastStreamId);
         try {
@@ -273,6 +322,7 @@ public class BroadcastRedisUtil {
                     .emotion(emotion)
                     .createdAt(LocalDateTime.now())
                     .dataStatus(BroadcastDataStatus.ACTIVE)
+                    .sentToGemini(sentToGemini)
                     .build();
 
             String jsonValue = objectMapper.writeValueAsString(redisValue);
@@ -416,6 +466,20 @@ public class BroadcastRedisUtil {
     }
 
     /**
+     * Redis List에서 Gemini로 전송되지 않은(sentToGemini=false) ACTIVE 상태 대화를 조회하는 함수
+     * - Summary(index 0)는 제외한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : 미전송 상태의 방송 대화 정보 DTO 목록 (오름차순)
+     */
+    public List<BroadcastInfoRedisDto> getUnsentDialogues(String broadcastStreamId) {
+        return getBroadcastInfos(broadcastStreamId).stream()
+                .skip(1)
+                .filter(info -> info.dataStatus() == BroadcastDataStatus.ACTIVE)
+                .filter(info -> !info.sentToGemini())
+                .toList();
+    }
+
+    /**
      * INACTIVE 상태의 방송 대화 존재 여부를 반환하는 함수
      * @param broadcastStreamId : 방송 스트림 ID
      * @return : INACTIVE 존재 여부
@@ -534,11 +598,44 @@ public class BroadcastRedisUtil {
                     .emotion(info.emotion())
                     .createdAt(info.createdAt())
                     .dataStatus(BroadcastDataStatus.INACTIVE)
+                    .sentToGemini(info.sentToGemini())
                     .build();
             redisTemplate.opsForList().set(key, index, serialize(updatedInfo, broadcastStreamId));
         }
 
         log.info("[BroadcastRedisUtil] markDialoguesInactive() - END | streamId: {}", broadcastStreamId);
+    }
+
+    /**
+     * 지정된 cursorId를 가진 대화들의 sentToGemini를 true로 변경하는 함수
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param cursorIds : sentToGemini를 true로 변경할 대화의 cursorId 목록
+     */
+    public void markDialoguesSentToGemini(String broadcastStreamId, List<Long> cursorIds) {
+        if (cursorIds == null || cursorIds.isEmpty()) {
+            return;
+        }
+        String key = getBroadcastInfoKey(broadcastStreamId);
+        List<String> jsonList = redisTemplate.opsForList().range(key, 0, -1);
+        if (jsonList == null || jsonList.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < jsonList.size(); i++) {
+            BroadcastInfoRedisDto info = deserialize(jsonList.get(i), broadcastStreamId);
+            if (cursorIds.contains(info.cursorId()) && !info.sentToGemini()) {
+                BroadcastInfoRedisDto updatedInfo = BroadcastInfoRedisDto.builder()
+                        .cursorId(info.cursorId())
+                        .subject(info.subject())
+                        .content(info.content())
+                        .emotion(info.emotion())
+                        .createdAt(info.createdAt())
+                        .dataStatus(info.dataStatus())
+                        .sentToGemini(true)
+                        .build();
+                redisTemplate.opsForList().set(key, i, serialize(updatedInfo, broadcastStreamId));
+            }
+        }
+        log.debug("[BroadcastRedisUtil] markDialoguesSentToGemini() - Marked | streamId: {}, cursorIds: {}", broadcastStreamId, cursorIds);
     }
 
     /**
@@ -634,6 +731,7 @@ public class BroadcastRedisUtil {
                 .emotion(null)
                 .createdAt(LocalDateTime.now())
                 .dataStatus(BroadcastDataStatus.ACTIVE)
+                .sentToGemini(true)
                 .build();
     }
 

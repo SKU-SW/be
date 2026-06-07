@@ -160,6 +160,7 @@ public class BroadcastGeminiResponseService {
                 broadcastStreamId, generation, turnNumber);
         Long savedCursorId = null;
         try {
+
             BroadcastWebSocketSessionBundle bundle = getValidatedBundle(geminiSession, broadcastStreamId, generation, "handleCompletedTurnAsync");
             if (bundle == null) {
                 log.info("[BroadcastGeminiResponseService] handleCompletedTurnAsync() - Stale completion skipped, cleanup continues | streamId: {}, generation: {}, turnNumber: {}",
@@ -177,7 +178,8 @@ public class BroadcastGeminiResponseService {
                     broadcastStreamId,
                     DialogueSubject.AI_CHARACTER,
                     voiceText,
-                    emotion
+                    emotion,
+                    true
             );
             savedCursorId = savedAiInfo.cursorId();
             applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
@@ -291,13 +293,13 @@ public class BroadcastGeminiResponseService {
         int previousInFlight = bundle.getRequestFlightCountValue();
         int remainingInFlight = bundle.decrementRequestFlight();
         log.info("[BroadcastGeminiResponseService] handleGeminiTurnFinished() - Request-flight decremented | streamId: {}, generation: {}, previousInFlight: {}, remainingInFlight: {}, refreshRequested: {}",
-                broadcastStreamId, generation, previousInFlight, remainingInFlight, bundle.getGeminiSessionRefreshRequested());
+                broadcastStreamId, generation, previousInFlight, remainingInFlight, bundle.isGeminiSessionRefreshRequested());
 
         /*
             2. refresh 요청이 있고 더 이상 request-flight 요청이 없으면 refresh 이벤트를 발행한다.
             - summary 반영 이후 refreshRequested=true 상태인 경우에만 coordinator 재평가 이벤트를 발행한다.
          */
-        if (remainingInFlight == 0 && bundle.getGeminiSessionRefreshRequested()) {
+        if (remainingInFlight == 0 && bundle.isGeminiSessionRefreshRequested()) {
             log.info("[BroadcastGeminiResponseService] handleGeminiTurnFinished() - Publishing refresh event | streamId: {}, generation: {}",
                     broadcastStreamId, generation);
             applicationEventPublisher.publishEvent(BroadcastGeminiRefreshRequestedEvent.builder()

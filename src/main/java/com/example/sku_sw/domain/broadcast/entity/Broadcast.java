@@ -76,6 +76,10 @@ public class Broadcast {
     @Builder.Default
     private List<BroadcastStats> broadcastStatsList = new ArrayList<>();
 
+    @OneToMany(mappedBy = "broadcast", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<BroadcastKeywords> broadcastKeywordsList = new ArrayList<>();
+
     // ======================================
     // [비즈니스 로직]
     // ======================================

@@ -14,7 +14,8 @@ public record BroadcastInfoRedisDto(
         String content,
         Emotion emotion,
         LocalDateTime createdAt,
-        BroadcastDataStatus dataStatus
+        BroadcastDataStatus dataStatus,
+        boolean sentToGemini
 ) {
     public static BroadcastInfoRedisDto buildSummaryDto(String summaryContent, BroadcastDataStatus dataStatus) {
         return BroadcastInfoRedisDto.builder()
@@ -24,6 +25,7 @@ public record BroadcastInfoRedisDto(
                 .emotion(null)
                 .createdAt(LocalDateTime.now())
                 .dataStatus(dataStatus)
+                .sentToGemini(true)
                 .build();
     }
 }

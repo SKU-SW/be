@@ -9,7 +9,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ..config import settings
-from ..registry import ActiveChzzkSession
+from ..registry import ActiveChzzkSession, chzzk_session_registry
 from .broadcast_context_service import broadcast_context_service
 from .chat_publish_service import chat_publish_service
 from .gemini_validation_service import gemini_filter_service
@@ -49,6 +49,16 @@ class StreamFilterState:
     overflow_drop_count: int = 0
 
 
+@dataclass(slots=True)
+class SentimentBufferState:
+    broadcast_stream_id: str
+    buffer: deque[str] = field(default_factory=deque)
+    flush_task: asyncio.Task | None = None
+    flush_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    publish_task: asyncio.Task | None = None
+    keyword_publish_task: asyncio.Task | None = None
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -59,6 +69,7 @@ class ChatFilterService:
 
     def __init__(self) -> None:
         self.stream_states: dict[str, StreamFilterState] = {}
+        self.sentiment_states: dict[str, SentimentBufferState] = {}
 
     async def startup(self) -> None:
         logger.info(
@@ -72,6 +83,15 @@ class ChatFilterService:
             if state.flush_task is not None and not state.flush_task.done():
                 state.flush_task.cancel()
         self.stream_states.clear()
+
+        for state in list(self.sentiment_states.values()):
+            if state.flush_task is not None and not state.flush_task.done():
+                state.flush_task.cancel()
+            if state.publish_task is not None and not state.publish_task.done():
+                state.publish_task.cancel()
+            if state.keyword_publish_task is not None and not state.keyword_publish_task.done():
+                state.keyword_publish_task.cancel()
+        self.sentiment_states.clear()
 
     # ----------------------------------------------------------------
     # Ingress
@@ -87,6 +107,17 @@ class ChatFilterService:
         content = payload.get("content", "")
         if not content or not content.strip():
             return
+
+        # Sentiment buffer — receives ALL chats (no URL filter, no dedup)
+        sentiment_state = self._get_or_create_sentiment_state(session.broadcast_stream_id)
+        sentiment_state.buffer.append(content)
+        if len(sentiment_state.buffer) > settings.sentiment_buffer_max:
+            sentiment_state.buffer.popleft()
+        if sentiment_state.flush_task is None or sentiment_state.flush_task.done():
+            sentiment_state.flush_task = asyncio.create_task(
+                self._sentiment_flush_after_window(session.broadcast_stream_id)
+            )
+
         if URL_RE.search(content):
             return
 
@@ -137,6 +168,15 @@ class ChatFilterService:
         if state is not None and state.flush_task is not None and not state.flush_task.done():
             state.flush_task.cancel()
 
+        sentiment_state = self.sentiment_states.pop(broadcast_stream_id, None)
+        if sentiment_state is not None:
+            if sentiment_state.flush_task is not None and not sentiment_state.flush_task.done():
+                sentiment_state.flush_task.cancel()
+            if sentiment_state.publish_task is not None and not sentiment_state.publish_task.done():
+                sentiment_state.publish_task.cancel()
+            if sentiment_state.keyword_publish_task is not None and not sentiment_state.keyword_publish_task.done():
+                sentiment_state.keyword_publish_task.cancel()
+
     # ----------------------------------------------------------------
     # Internal — buffer & flush
     # ----------------------------------------------------------------
@@ -149,6 +189,132 @@ class ChatFilterService:
                 channel_name=chat.channel_name,
             )
         return self.stream_states[chat.broadcast_stream_id]
+
+    def _get_or_create_sentiment_state(self, broadcast_stream_id: str) -> SentimentBufferState:
+        if broadcast_stream_id not in self.sentiment_states:
+            self.sentiment_states[broadcast_stream_id] = SentimentBufferState(
+                broadcast_stream_id=broadcast_stream_id,
+            )
+        return self.sentiment_states[broadcast_stream_id]
+
+    async def _sentiment_flush_after_window(self, broadcast_stream_id: str) -> None:
+        await asyncio.sleep(settings.sentiment_buffer_window_sec)
+
+        state = self.sentiment_states.get(broadcast_stream_id)
+        if state is None:
+            return
+
+        async with state.flush_lock:
+            if not state.buffer:
+                return
+            chats = list(state.buffer)
+            state.buffer.clear()
+
+        if not chats:
+            return
+
+        logger.info("Sentiment flush triggered | streamId=%s chatCount=%d", broadcast_stream_id, len(chats))
+
+        # Fetch broadcast context for keyword extraction
+        context = await broadcast_context_service.get_context(broadcast_stream_id)
+
+        # Call Gemini sentiment analysis with context
+        result = await gemini_filter_service.analyze_sentiment(chats, context=context)
+
+        if result is None:
+            logger.warning("Sentiment analysis returned no result | streamId=%s chats=%d", broadcast_stream_id, len(chats))
+            return
+
+        # Accumulate to registry
+        await chzzk_session_registry.accumulate_sentiment(
+            broadcast_stream_id,
+            result.positive_chat_count,
+            result.neutral_chat_count,
+            result.negative_chat_count,
+        )
+        await chzzk_session_registry.accumulate_keyword(broadcast_stream_id, result.keyword)
+        logger.info(
+            "Sentiment accumulated | streamId=%s positive=%d neutral=%d negative=%d keyword=%s",
+            broadcast_stream_id,
+            result.positive_chat_count,
+            result.neutral_chat_count,
+            result.negative_chat_count,
+            result.keyword,
+        )
+
+        # Start 60-second publish timer if not running
+        if state.publish_task is None or state.publish_task.done():
+            state.publish_task = asyncio.create_task(
+                self._sentiment_publish_periodically(broadcast_stream_id)
+            )
+            logger.info("Sentiment publish timer started | streamId=%s (will publish in 60s)", broadcast_stream_id)
+
+        # Start 30-second keyword publish timer if not running
+        if state.keyword_publish_task is None or state.keyword_publish_task.done():
+            state.keyword_publish_task = asyncio.create_task(
+                self._keyword_publish_periodically(broadcast_stream_id)
+            )
+            logger.info("Keyword publish timer started | streamId=%s (will publish in 30s)", broadcast_stream_id)
+
+    async def _sentiment_publish_periodically(self, broadcast_stream_id: str) -> None:
+        logger.info("Sentiment publish timer waiting 60s | streamId=%s", broadcast_stream_id)
+        await asyncio.sleep(60.0)
+
+        # Get accumulated sentiment and reset
+        sentiment = await chzzk_session_registry.get_and_reset_sentiment(broadcast_stream_id)
+        logger.info("Sentiment retrieved for publish | streamId=%s positive=%d neutral=%d negative=%d",
+                    broadcast_stream_id, sentiment.positive_chat_count, sentiment.neutral_chat_count, sentiment.negative_chat_count)
+
+        # Publish to Redis (even if empty)
+        session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
+        if session is None:
+            logger.warning("Sentiment publish skipped - session not found | streamId=%s", broadcast_stream_id)
+            return
+
+        payload = {
+            "channelId": session.channel_id,
+            "broadcastStreamId": broadcast_stream_id,
+            "positiveChatCount": sentiment.positive_chat_count,
+            "neutralChatCount": sentiment.neutral_chat_count,
+            "negativeChatCount": sentiment.negative_chat_count,
+        }
+        await chat_publish_service.publish(session.channel_name or "", payload)
+        logger.info(
+            "Sentiment published to Redis | channel=%s streamId=%s positive=%d neutral=%d negative=%d",
+            session.channel_name,
+            broadcast_stream_id,
+            sentiment.positive_chat_count,
+            sentiment.neutral_chat_count,
+            sentiment.negative_chat_count,
+        )
+
+    async def _keyword_publish_periodically(self, broadcast_stream_id: str) -> None:
+        logger.info("Keyword publish timer waiting 30s | streamId=%s", broadcast_stream_id)
+        await asyncio.sleep(30.0)
+
+        # Get accumulated keywords and reset
+        keyword_score = await chzzk_session_registry.get_and_reset_keyword(broadcast_stream_id)
+        logger.info("Keyword retrieved for publish | streamId=%s keywords=%s",
+                    broadcast_stream_id, keyword_score.keywords)
+
+        # Publish to Redis
+        session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
+        if session is None:
+            logger.warning("Keyword publish skipped - session not found | streamId=%s", broadcast_stream_id)
+            return
+
+        payload = {
+            "channelId": session.channel_id,
+            "broadcastStreamId": broadcast_stream_id,
+            "keywords": keyword_score.keywords,
+        }
+        await chat_publish_service.publish(session.channel_name or "", payload)
+        logger.info(
+            "Keyword published to Redis | channel=%s streamId=%s keywords=%s",
+            session.channel_name,
+            broadcast_stream_id,
+            keyword_score.keywords,
+        )
 
     async def _flush_after_window(self, broadcast_stream_id: str) -> None:
         await asyncio.sleep(settings.chat_filter_window_sec)

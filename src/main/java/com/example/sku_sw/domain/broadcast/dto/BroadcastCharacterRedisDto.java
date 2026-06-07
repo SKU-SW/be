@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.dto;
 
+import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.character.enums.Gender;
 import com.example.sku_sw.domain.character.enums.PresetType;
 import java.util.List;
@@ -23,4 +24,6 @@ public class BroadcastCharacterRedisDto {
     private List<BroadcastCharacterImageRedisDto> characterImages;
     private PresetType characterPresetType;
     private Boolean isTalking;
+    private AiCharacterTendency tendency;
+    private Boolean tendencyAutoUpdate;
 }
