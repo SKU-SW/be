@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.chat.service;
 
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
+import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
@@ -138,8 +139,11 @@ public class ChzzkChatMessageService {
 
     /**
      * FastApi로부터 전달받은 채팅 통계 메시지를 파싱하고,
-     * 새로운 BroadcastStats를 생성하여 저장한다.
+     * 새로운 BroadcastStats를 생성하여 저장한 뒤,
+     * Redis BroadcastCharacter의 tendency를 업데이트한다.
      * - 항상 새로운 BroadcastStats를 생성한다.
+     * - 긍정/중립/부정 비율 중 가장 높은 값을 tendency로 설정한다.
+     * - tendencyAutoUpdate가 true인 경우에만 Redis가 원자적으로 업데이트된다.
      * @param payload : FastApi가 전달한 JSON 형식의 채팅 통계 메시지
      */
     @Transactional
@@ -183,6 +187,30 @@ public class ChzzkChatMessageService {
 
             log.info("[ChzzkChatMessageService] processChatStatsMessage() - Created new stats | broadcastStreamId: {}, positive: {}, neutral: {}, negative: {}",
                     broadcastStreamId, positiveChatCount, neutralChatCount, negativeChatCount);
+
+            /*
+                5. Redis BroadcastCharacter의 tendency 업데이트
+                - 이번 통계 데이터의 긍정/중립/부정 비율을 계산하여 가장 높은 tendency를 결정한다.
+                - tendencyAutoUpdate가 true인 경우에만 Lua 스크립트로 원자적 업데이트한다.
+             */
+            int totalChatCount = positiveChatCount + neutralChatCount + negativeChatCount;
+            if (totalChatCount > 0) {
+                double positiveRatio = (double) positiveChatCount / totalChatCount;
+                double neutralRatio = (double) neutralChatCount / totalChatCount;
+                double negativeRatio = (double) negativeChatCount / totalChatCount;
+
+                AiCharacterTendency tendency = AiCharacterTendency.NEUTRAL;
+                if (positiveRatio >= neutralRatio && positiveRatio >= negativeRatio) {
+                    tendency = AiCharacterTendency.POSITIVE;
+                } else if (negativeRatio > neutralRatio) {
+                    tendency = AiCharacterTendency.NEGATIVE;
+                }
+
+                broadcastRedisUtil.updateBroadcastCharacterTendencyIfAutoUpdateEnabled(broadcastStreamId, tendency);
+
+                log.info("[ChzzkChatMessageService] processChatStatsMessage() - Tendency updated | broadcastStreamId: {}, positiveRatio: {}, neutralRatio: {}, negativeRatio: {}, tendency: {}",
+                        broadcastStreamId, positiveRatio, neutralRatio, negativeRatio, tendency);
+            }
         } catch (JsonProcessingException e) {
             log.error("[ChzzkChatMessageService] processChatStatsMessage() - Failed to parse payload | payload: {}", payload, e);
         }

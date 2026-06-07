@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionRequestedEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
@@ -21,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -35,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.AdditionalMatchers.aryEq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -69,10 +72,12 @@ class GeminiLiveWebSocketHandlerTest {
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiResponseService,
-                broadcastGeminiToolCallService,
                 applicationEventPublisher,
+                broadcastGeminiToolCallService,
                 DIALOGUE_MODEL,
-                SYSTEM_PROMPT
+                SYSTEM_PROMPT,
+                null,
+                null
         );
     }
 
@@ -81,7 +86,9 @@ class GeminiLiveWebSocketHandlerTest {
     void Gemini_setup_메시지_전송_성공() throws Exception {
         // given
         WebSocketSession session = org.mockito.Mockito.mock(WebSocketSession.class);
+        Map<String, Object> attributes = new HashMap<>();
         given(session.getId()).willReturn("gemini-1");
+        given(session.getAttributes()).willReturn(attributes);
 
         // when
         geminiLiveWebSocketHandler.afterConnectionEstablished(session);
@@ -108,6 +115,111 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.has("outputAudioTranscription")).isTrue();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
         assertThat(geminiLiveWebSocketHandler.getSetupFailureDiagnostics()).contains("lastSentSetupPayload=");
+    }
+
+    @Test
+    @DisplayName("Gemini sessionResumptionUpdate 수신 성공 - bundle에 resumption metadata를 저장한다")
+    void Gemini_sessionResumptionUpdate_수신_성공() throws Exception {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+
+        String payload = """
+                {
+                  "sessionResumptionUpdate": {
+                    "newHandle": "resume-1",
+                    "resumable": true
+                  }
+                }
+                """;
+
+        // when
+        geminiLiveWebSocketHandler.handleTextMessage(geminiSession, new TextMessage(payload));
+
+        // then
+        assertThat(bundle.getLatestGeminiResumptionHandle()).isEqualTo("resume-1");
+        assertThat(bundle.isLatestGeminiResumable()).isTrue();
+        assertThat(bundle.getLatestGeminiResumptionUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Gemini remote close 시 resumption 성공하면 cleanup을 실행하지 않는다")
+    void Gemini_remote_close_resumption_성공_cleanup_미실행() {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        bundle.incrementRequestFlight();
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+        doAnswer(invocation -> {
+            BroadcastGeminiResumptionRequestedEvent event = invocation.getArgument(0);
+            event.getResumed().set(true);
+            return null;
+        }).when(applicationEventPublisher).publishEvent(any(BroadcastGeminiResumptionRequestedEvent.class));
+
+        // when
+        geminiLiveWebSocketHandler.afterConnectionClosed(geminiSession, CloseStatus.SERVER_ERROR);
+
+        // then
+        verify(applicationEventPublisher, times(1)).publishEvent(any(BroadcastGeminiResumptionRequestedEvent.class));
+        assertThat(bundle.getRequestFlightCountValue()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Gemini remote close 시 resumption 실패하면 기존 cleanup을 실행한다")
+    void Gemini_remote_close_resumption_실패_cleanup_실행() {
+        // given
+        WebSocketSession geminiSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        bundle.markRefreshRequested();
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+
+        doAnswer(invocation -> {
+            BroadcastGeminiResumptionRequestedEvent event = invocation.getArgument(0);
+            event.getFallbackExecuted().set(true);
+            event.getFallbackCleanup().run();
+            return false;
+        }).when(applicationEventPublisher).publishEvent(any(BroadcastGeminiResumptionRequestedEvent.class));
+
+        // when
+        geminiLiveWebSocketHandler.afterConnectionClosed(geminiSession, CloseStatus.SERVER_ERROR);
+
+        // then
+        verify(applicationEventPublisher, times(1)).publishEvent(any(BroadcastGeminiResumptionRequestedEvent.class));
+        verify(applicationEventPublisher, times(1)).publishEvent(any(BroadcastGeminiRefreshRequestedEvent.class));
     }
 
     @Test

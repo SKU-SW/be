@@ -126,8 +126,13 @@ public class BroadcastGeminiRequestService {
                     Stop the current response only and wait for the next real streamer utterance.
                     """);
             clientContentNode.put("turnComplete", true);
+            String requestPayload = objectMapper.writeValueAsString(requestNode);
+            BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+            if (bundle != null && bundle.getGeminiHandler() != null) {
+                bundle.getGeminiHandler().recordOutboundMessage("INTERRUPT_REQUEST", requestPayload);
+            }
 
-            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+            geminiSession.sendMessage(new TextMessage(requestPayload));
 
             log.info("[BroadcastGeminiService] sendInterruptRequest() - END | streamId: {}, generation: {}",
                     broadcastStreamId, generation);
@@ -173,9 +178,13 @@ public class BroadcastGeminiRequestService {
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
             realtimeInputNode.put("text", text);
+            String requestPayload = objectMapper.writeValueAsString(requestNode);
 
             WebSocketSession geminiSession = bundle.getGeminiSession();
-            geminiSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(requestNode)));
+            if (bundle.getGeminiHandler() != null) {
+                bundle.getGeminiHandler().recordOutboundMessage("REALTIME_INPUT", requestPayload);
+            }
+            geminiSession.sendMessage(new TextMessage(requestPayload));
         } catch (Exception e) {
             bundle.decrementRequestFlight();
             log.error("[BroadcastGeminiRequestService] sendRealtimeText() - Failed | streamId: {}, generation: {}, characterId: {}, error: {}",

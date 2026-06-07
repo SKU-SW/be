@@ -5,6 +5,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueRefreshSnapshotD
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -192,9 +193,16 @@ public class BroadcastGeminiRefreshService {
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
         if (bundle == null) {
-            geminiUtil.closeGeminiSessionQuietly(newGeminiSession);
-            log.warn("[BroadcastGeminiRefreshService] handleRefreshSuccess() - Bundle not found | streamId: {}, generation: {}",
-                    broadcastStreamId, generation);
+            geminiUtil.closeGeminiSessionQuietly(
+                    newGeminiSession,
+                    newHandler,
+                    CloseStatus.NORMAL.withReason(GeminiSessionCloseReason.REFRESH_NEW_SESSION_DISCARDED.getDescription()),
+                    GeminiSessionCloseReason.REFRESH_NEW_SESSION_DISCARDED
+            );
+            log.warn("[BroadcastGeminiRefreshService] handleRefreshSuccess() - Bundle not found | streamId: {}, generation: {}, diagnostics: {}",
+                    broadcastStreamId,
+                    generation,
+                    newHandler != null ? newHandler.getTerminationDiagnostics(newGeminiSession, "REFRESH_NEW_SESSION_DISCARDED", null) : "handler_not_found");
             return;
         }
 
@@ -210,11 +218,17 @@ public class BroadcastGeminiRefreshService {
              3. 신규 Gemini 세션과 핸들러를 bundle에 등록하고 READY 상태로 전환한다.
             - 이후 backlog를 순서대로 replay하고, 마지막에 이전 Gemini 세션을 종료한다.
          */
+        GeminiLiveWebSocketHandler oldHandler = bundle.getGeminiHandler();
         registerNewGeminiSessionToSessionBundleAndClearRefreshingStatus(bundle, newGeminiSession, newHandler);
         replayDialogues(broadcastStreamId, generation, replayCandidates, "handleRefreshSuccess");
 
         if (oldGeminiSession != null && oldGeminiSession != newGeminiSession) {
-            geminiUtil.closeGeminiSessionQuietly(oldGeminiSession);
+            geminiUtil.closeGeminiSessionQuietly(
+                    oldGeminiSession,
+                    oldHandler,
+                    CloseStatus.NORMAL.withReason(GeminiSessionCloseReason.REFRESH_REPLACED_OLD_SESSION.getDescription()),
+                    GeminiSessionCloseReason.REFRESH_REPLACED_OLD_SESSION
+            );
         }
 
         broadcastGeminiBootstrapService.sendStatusMessage(

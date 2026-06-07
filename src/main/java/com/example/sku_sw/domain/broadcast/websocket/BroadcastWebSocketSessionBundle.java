@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,8 +31,13 @@ public class BroadcastWebSocketSessionBundle {
     private final AtomicBoolean geminiSessionRefreshInProgress = new AtomicBoolean(false); // 제미나이 세션 Refresh 과정이 진행되고 있는 상태인지 여부
     @Builder.Default
     private final AtomicInteger geminiSessionRefreshRetryCount = new AtomicInteger(0); // 제미나이 세션 Refresh 재시도 횟수
+    @Builder.Default
+    private final AtomicBoolean geminiSessionResumptionInProgress = new AtomicBoolean(false); // 제미나이 세션 Resumption 재연결 진행 여부
     private volatile Long geminiSessionRefreshSnapshotRedisCursorId; // 제미나이 세션 refresh 시 snapshot의 마지막 요소 redis cursor ID
     private volatile GeminiLiveWebSocketHandler geminiHandler; // Gemini Live WebSocket 핸들러 (인터럽트 등 접근용)
+    private volatile String latestGeminiResumptionHandle; // 가장 최근에 수신한 Gemini session resumption handle
+    private volatile boolean latestGeminiResumable; // 가장 최근 세션이 resumable 상태인지 여부
+    private volatile Instant latestGeminiResumptionUpdatedAt; // 가장 최근 resumption update 수신 시각
 
     /**
      * 클라이언트 세션 존재 여부를 확인한다.
@@ -182,6 +188,29 @@ public class BroadcastWebSocketSessionBundle {
     }
 
     /**
+     * resumption 진행 중 여부를 반환한다.
+     * @return : resumption 진행 중 여부
+     */
+    public boolean getGeminiSessionResumptionInProgress() {
+        return geminiSessionResumptionInProgress.get();
+    }
+
+    /**
+     * resumption 진행 플래그를 설정한다.
+     * @return : 최초 설정 여부
+     */
+    public boolean markResumptionInProgress() {
+        return geminiSessionResumptionInProgress.compareAndSet(false, true);
+    }
+
+    /**
+     * resumption 진행 플래그를 해제한다.
+     */
+    public void clearResumptionInProgress() {
+        geminiSessionResumptionInProgress.set(false);
+    }
+
+    /**
      * 현재 request-flight 요청 수를 반환한다.
      * @return : request-flight 요청 수
      */
@@ -251,6 +280,18 @@ public class BroadcastWebSocketSessionBundle {
     }
 
     /**
+     * Gemini session resumption 메타데이터를 갱신한다.
+     * @param resumptionHandle : 새 resumption handle
+     * @param resumable : resumable 여부
+     * @param updatedAt : 갱신 시각
+     */
+    public void updateGeminiSessionResumptionMetadata(String resumptionHandle, boolean resumable, Instant updatedAt) {
+        this.latestGeminiResumptionHandle = (resumptionHandle == null || resumptionHandle.isBlank()) ? null : resumptionHandle;
+        this.latestGeminiResumable = resumable;
+        this.latestGeminiResumptionUpdatedAt = updatedAt;
+    }
+
+    /**
      * Gemini 세션을 등록한다.
      * @param geminiSession : 등록할 Gemini 세션
      * @return : 기존 Gemini 세션
@@ -269,6 +310,9 @@ public class BroadcastWebSocketSessionBundle {
         WebSocketSession oldGeminiSession = this.geminiSession;
         this.geminiSession = geminiSession;
         this.geminiHandler = geminiHandler;
+        this.latestGeminiResumptionHandle = null;
+        this.latestGeminiResumable = false;
+        this.latestGeminiResumptionUpdatedAt = null;
         return oldGeminiSession;
     }
 

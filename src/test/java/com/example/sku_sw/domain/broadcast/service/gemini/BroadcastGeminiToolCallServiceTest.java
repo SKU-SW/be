@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.character.enums.Emotion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,10 +34,13 @@ class BroadcastGeminiToolCallServiceTest {
     @Mock
     private WebSocketSession geminiSession;
 
+    @Mock
+    private BroadcastWebSocketSessionRegistry sessionRegistry;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        broadcastGeminiToolCallService = new BroadcastGeminiToolCallService(objectMapper, broadcastRedisUtil);
+        broadcastGeminiToolCallService = new BroadcastGeminiToolCallService(objectMapper, broadcastRedisUtil, sessionRegistry);
     }
 
     @Test

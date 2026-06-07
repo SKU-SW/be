@@ -1,6 +1,7 @@
 package com.example.sku_sw.domain.broadcast.websocket;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -480,7 +481,31 @@ public class BroadcastWebSocketSessionRegistry {
     ) {
         bundle.updateStatus(WebSocketSessionBundleStatus.CLOSING);
         closeSessionQuietly(bundle.getClientSession(), closeStatus, caller, "Client", broadcastStreamId);
+        markGeminiLocalClose(bundle, closeStatus, caller);
         closeSessionQuietly(bundle.getGeminiSession(), closeStatus, caller, "Gemini", broadcastStreamId);
+    }
+
+    private void markGeminiLocalClose(BroadcastWebSocketSessionBundle bundle, CloseStatus closeStatus, String caller) {
+        if (bundle == null || bundle.getGeminiHandler() == null || bundle.getGeminiSession() == null) {
+            return;
+        }
+        bundle.getGeminiHandler().markLocalClose(closeStatus, resolveGeminiCloseReason(caller));
+    }
+
+    private GeminiSessionCloseReason resolveGeminiCloseReason(String caller) {
+        if ("afterConnectionEstablished".equals(caller)) {
+            return GeminiSessionCloseReason.REPLACED_BY_NEW_CONNECTION;
+        }
+        if ("disconnect".equals(caller)) {
+            return GeminiSessionCloseReason.SESSION_REGISTRY_DISCONNECT;
+        }
+        if ("afterConnectionClosed".equals(caller)
+                || "handleTransportError".equals(caller)
+                || "pingActiveSessions".equals(caller)
+                || "hasSessionBundle".equals(caller)) {
+            return GeminiSessionCloseReason.CLIENT_SESSION_CLOSED;
+        }
+        return GeminiSessionCloseReason.SESSION_REGISTRY_CLEANUP;
     }
 
     /**

@@ -2,6 +2,8 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
+import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionRequestedEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiToolCallService;
@@ -22,6 +24,8 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 
@@ -42,12 +46,25 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private final String dialogueModel;
     private final String systemPrompt;
     private final String voiceName;
+    private final String resumptionHandle;
     private final CompletableFuture<Void> setupCompleteFuture = new CompletableFuture<>();
 
     private volatile String lastSentSetupPayload;
+    private volatile String lastSentPayload;
     private volatile String lastReceivedPayload;
     private volatile String lastGeminiErrorPayload;
     private volatile CloseStatus lastCloseStatus;
+    private volatile CloseStatus lastLocalCloseStatus;
+    private volatile GeminiSessionCloseReason lastLocalCloseReason;
+    private volatile Instant connectedAt;
+    private volatile Instant lastReceivedAt;
+    private volatile Instant lastSentAt;
+    private volatile Instant lastServerContentAt;
+    private volatile Instant lastGeminiErrorAt;
+    private volatile Instant lastLocalCloseRequestedAt;
+    private volatile String lastReceivedFrameType;
+    private volatile String lastParsedEventType;
+    private volatile String lastSentEventType;
 
     private GeminiTurnAccumulator turnAccumulator;
     private long turnSequence = 0L;
@@ -60,7 +77,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             ApplicationEventPublisher applicationEventPublisher,
             String dialogueModel,
             String systemPrompt,
-            String voiceName
+            String voiceName,
+            String resumptionHandle
     ) {
         this.objectMapper = objectMapper;
         this.sessionRegistry = sessionRegistry;
@@ -70,6 +88,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         this.dialogueModel = dialogueModel;
         this.systemPrompt = systemPrompt;
         this.voiceName = voiceName;
+        this.resumptionHandle = resumptionHandle;
     }
 
     /**
@@ -80,6 +99,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        connectedAt = Instant.now();
         ObjectNode payload = objectMapper.createObjectNode();
         ObjectNode setupNode = payload.putObject("setup");
         setupNode.put("model", "models/" + dialogueModel);
@@ -109,8 +129,14 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             prebuiltVoiceConfigNode.put("voiceName", voiceName);
         }
 
+        if (resumptionHandle != null && !resumptionHandle.isBlank()) {
+            ObjectNode sessionResumptionNode = setupNode.putObject("sessionResumption");
+            sessionResumptionNode.put("handle", resumptionHandle);
+        }
+
         String setupPayload = objectMapper.writeValueAsString(payload);
         lastSentSetupPayload = setupPayload;
+        recordOutboundMessage("SETUP", setupPayload);
         session.sendMessage(new TextMessage(setupPayload));
 
         log.info("[GeminiLiveWebSocketHandler] afterConnectionEstablished() - Setup message sent | sessionId: {}, payload: {}",
@@ -134,6 +160,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private void handleIncomingPayload(WebSocketSession session, String payload, String frameType) throws Exception {
         log.debug("[GeminiLiveWebSocketHandler] handleIncomingPayload() - Received {} frame | sessionId: {}, payload: {}",
                 frameType, session.getId(), payload);
+        lastReceivedAt = Instant.now();
+        lastReceivedFrameType = frameType;
         lastReceivedPayload = payload;
 
         // 0. Json Tree 생성
@@ -144,6 +172,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             - 별도의 작업을 수행하지 않고, setup 완료 여부를 결정하는 CompleteFuture 객체를 종료시킨다.
          */
         if (rootNode.has("setupComplete")) {
+            lastParsedEventType = "SETUP_COMPLETE";
             setupCompleteFuture.complete(null);
             log.info("[GeminiLiveWebSocketHandler] handleTextMessage() - Setup complete | sessionId: {}", session.getId());
             return;
@@ -151,6 +180,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
 
         // 2. 에러가 반환되었을 경우 처리
         if (rootNode.has("error")) {
+            lastParsedEventType = "GEMINI_ERROR";
+            lastGeminiErrorAt = Instant.now();
             lastGeminiErrorPayload = payload;
             if (!setupCompleteFuture.isDone()) {
                 setupCompleteFuture.completeExceptionally(new IllegalStateException(rootNode.get("error").toString()));
@@ -166,6 +197,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             - 서버에서 handle을 저장/재사용하지 않으므로 동작상 무해하지만, 로그 노이즈를 줄이기 위해 조기 종료한다.
          */
         if (rootNode.has("sessionResumptionUpdate")) {
+            lastParsedEventType = "SESSION_RESUMPTION_UPDATE";
+            handleSessionResumptionUpdate(session, rootNode.get("sessionResumptionUpdate"));
             return;
         }
 
@@ -177,6 +210,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         JsonNode toolCallNode = rootNode.get("toolCall");
         if (toolCallNode != null) {
+            lastParsedEventType = "TOOL_CALL";
             if (handleToolCall(session, toolCallNode)) {
                 return;
             }
@@ -190,10 +224,13 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         JsonNode serverContentNode = rootNode.get("serverContent");
         if (serverContentNode == null) {
+            lastParsedEventType = "NON_SERVER_CONTENT";
             log.debug("[GeminiLiveWebSocketHandler] handleTextMessage() - Non-serverContent message | sessionId: {}, payload: {}",
                     session.getId(), payload);
             return;
         }
+        lastParsedEventType = "SERVER_CONTENT";
+        lastServerContentAt = Instant.now();
 
         /*
             ５-1. Gemini가 인터럽트를 승인(interrupted:true)한 경우 처리
@@ -201,6 +238,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         JsonNode interruptedNode = serverContentNode.get("interrupted");
         if (interruptedNode != null && interruptedNode.asBoolean(false)) {
+            lastParsedEventType = "SERVER_CONTENT_INTERRUPTED";
             handleInterruptedAcknowledged(session);
             return;
         }
@@ -234,6 +272,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         JsonNode turnCompleteNode = serverContentNode.get("turnComplete");
         if (turnCompleteNode != null && turnCompleteNode.asBoolean(false)) {
+            lastParsedEventType = "SERVER_CONTENT_TURN_COMPLETE";
             if (accumulator.isInterruptingOrInterrupted()) {
                 log.debug("[GeminiLiveWebSocketHandler] handleIncomingPayload() - turnComplete ignored (interrupt in progress) | sessionId: {}, turnNumber: {}",
                         session.getId(), accumulator.getTurnNumber());
@@ -422,6 +461,9 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private String resolveBroadcastStreamId(WebSocketSession geminiSession) {
+        if (geminiSession == null || geminiSession.getAttributes() == null) {
+            return null;
+        }
         Object broadcastStreamIdAttribute = geminiSession.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
         if (broadcastStreamIdAttribute == null) {
             return null;
@@ -591,7 +633,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         handleTerminatedGeminiTurn(session);
 
         log.error("[GeminiLiveWebSocketHandler] handleTransportError() - Transport error | sessionId: {}, diagnostics: {}",
-                session.getId(), getSetupFailureDiagnostics(), exception);
+                session.getId(), getTerminationDiagnostics(session, "TRANSPORT_ERROR", exception), exception);
     }
 
     @Override
@@ -600,13 +642,34 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         if (!setupCompleteFuture.isDone()) {
             setupCompleteFuture.completeExceptionally(new IllegalStateException("Gemini setup not completed before close. status=" + status));
             log.error("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed before setupComplete | sessionId: {}, diagnostics: {}",
-                    session.getId(), getSetupFailureDiagnostics());
+                    session.getId(), getTerminationDiagnostics(session, "CLOSED_BEFORE_SETUP_COMPLETE", null));
         }
+
+        if (lastLocalCloseReason != null) {
+            cleanupClosedGeminiSession(session);
+            log.info("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed by local request | sessionId: {}, status: {}, diagnostics: {}",
+                    session.getId(), status, getTerminationDiagnostics(session, "LOCAL_CLOSE", null));
+            return;
+        }
+
+        BroadcastGeminiResumptionRequestedEvent event = BroadcastGeminiResumptionRequestedEvent.builder()
+                .closedSession(session)
+                .closeStatus(status)
+                .fallbackCleanup(() -> cleanupClosedGeminiSession(session))
+                .build();
+        applicationEventPublisher.publishEvent(event);
+
+        log.warn("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed by remote/unknown cause | sessionId: {}, status: {}, diagnostics: {}",
+                session.getId(), status, getTerminationDiagnostics(session, "REMOTE_OR_UNKNOWN_CLOSE", null));
+    }
+
+    public boolean hasActiveAccumulator() {
+        return turnAccumulator != null;
+    }
+
+    private void cleanupClosedGeminiSession(WebSocketSession session) {
         clearAccumulator();
         handleTerminatedGeminiTurn(session);
-
-        log.info("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed | sessionId: {}, status: {}",
-                session.getId(), status);
     }
 
     private void handleTerminatedGeminiTurn(WebSocketSession session) {
@@ -659,12 +722,79 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return setupCompleteFuture;
     }
 
+    /**
+     * Gemini WebSocket outbound 메시지 전송 시각과 payload를 기록한다.
+     * @param eventType : outbound 이벤트 타입
+     * @param payload : outbound payload
+     */
+    public void recordOutboundMessage(String eventType, String payload) {
+        lastSentAt = Instant.now();
+        lastSentEventType = eventType;
+        lastSentPayload = payload;
+    }
+
+    /**
+     * Gemini keepalive ping 전송 시각을 session attribute에 기록한다.
+     */
+    public void markLocalClose(CloseStatus closeStatus, GeminiSessionCloseReason closeReason) {
+        lastLocalCloseRequestedAt = Instant.now();
+        lastLocalCloseStatus = closeStatus;
+        lastLocalCloseReason = closeReason;
+    }
+
     public String getSetupFailureDiagnostics() {
+        return getTerminationDiagnostics(null, "SETUP_FAILURE_DIAGNOSTICS", null);
+    }
+
+    /**
+     * Gemini 세션 종료/실패 시점의 진단 정보를 문자열로 반환한다.
+     * @param session : Gemini WebSocket 세션
+     * @param terminationTrigger : 종료 트리거
+     * @param throwable : 예외(없으면 null)
+     * @return : 종료 진단 문자열
+     */
+    public String getTerminationDiagnostics(WebSocketSession session, String terminationTrigger, Throwable throwable) {
+        BroadcastWebSocketSessionBundle bundle = resolveBundle(session);
+        Long generation = resolveGeneration(session, bundle);
+        String sessionId = session != null ? session.getId() : null;
+        String streamId = resolveBroadcastStreamId(session);
+        String clientSessionId = resolveClientSessionId(bundle);
+        Instant now = Instant.now();
+
         return String.format(
-                "lastCloseStatus=%s, lastReceivedPayload=%s, lastGeminiErrorPayload=%s, lastSentSetupPayload=%s",
+                "trigger=%s, streamId=%s, generation=%s, sessionId=%s, clientSessionId=%s, isCurrentGeminiSession=%s, bundleStatus=%s, requestFlightCount=%s, refreshRequested=%s, refreshInProgress=%s, refreshRetryCount=%s, connectedAt=%s, lastReceivedAt=%s, lastSentAt=%s, lastServerContentAt=%s, lastGeminiErrorAt=%s, lastLocalCloseRequestedAt=%s, sessionAgeMs=%s, idleSinceReceiveMs=%s, idleSinceSendMs=%s, terminationPhase=%s, lastReceivedFrameType=%s, lastParsedEventType=%s, lastSentEventType=%s, lastCloseStatus=%s, lastLocalCloseStatus=%s, lastLocalCloseReason=%s, throwableType=%s, throwableMessage=%s, lastReceivedPayload=%s, lastGeminiErrorPayload=%s, lastSentPayload=%s, lastSentSetupPayload=%s",
+                terminationTrigger,
+                streamId,
+                generation,
+                sessionId,
+                clientSessionId,
+                isCurrentGeminiSession(bundle, session),
+                bundle != null ? bundle.getStatus() : null,
+                bundle != null ? bundle.getRequestFlightCountValue() : null,
+                bundle != null ? bundle.isGeminiSessionRefreshRequested() : null,
+                bundle != null ? bundle.getGeminiSessionRefreshInProgress() : null,
+                bundle != null ? bundle.getRefreshRetryCountValue() : null,
+                connectedAt,
+                lastReceivedAt,
+                lastSentAt,
+                lastServerContentAt,
+                lastGeminiErrorAt,
+                lastLocalCloseRequestedAt,
+                calculateDurationMillis(connectedAt, now),
+                calculateDurationMillis(lastReceivedAt, now),
+                calculateDurationMillis(lastSentAt, now),
+                resolveTerminationPhase(bundle),
+                lastReceivedFrameType,
+                lastParsedEventType,
+                lastSentEventType,
                 lastCloseStatus,
+                lastLocalCloseStatus,
+                lastLocalCloseReason,
+                throwable != null ? throwable.getClass().getName() : null,
+                throwable != null ? throwable.getMessage() : null,
                 abbreviate(lastReceivedPayload),
                 abbreviate(lastGeminiErrorPayload),
+                abbreviate(lastSentPayload),
                 abbreviate(lastSentSetupPayload)
         );
     }
@@ -690,6 +820,95 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         return value.substring(0, maxLength) + "...(truncated)";
+    }
+
+    private BroadcastWebSocketSessionBundle resolveBundle(WebSocketSession session) {
+        String broadcastStreamId = resolveBroadcastStreamId(session);
+        if (broadcastStreamId == null) {
+            return null;
+        }
+        return sessionRegistry.getSessionBundle(broadcastStreamId);
+    }
+
+    private Long resolveGeneration(WebSocketSession session, BroadcastWebSocketSessionBundle bundle) {
+        if (bundle != null) {
+            return bundle.getGeneration();
+        }
+        if (session == null || session.getAttributes() == null) {
+            return null;
+        }
+
+        Object generationValue = session.getAttributes().get(WebSocketAttributes.SESSION_GENERATION.getValue());
+        if (generationValue instanceof Long longValue) {
+            return longValue;
+        }
+        if (generationValue instanceof Number number) {
+            return number.longValue();
+        }
+        if (generationValue instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String resolveClientSessionId(BroadcastWebSocketSessionBundle bundle) {
+        if (bundle == null || bundle.getClientSession() == null) {
+            return null;
+        }
+        return bundle.getClientSession().getId();
+    }
+
+    private boolean isCurrentGeminiSession(BroadcastWebSocketSessionBundle bundle, WebSocketSession session) {
+        return bundle != null && session != null && bundle.getGeminiSession() == session;
+    }
+
+    private String resolveTerminationPhase(BroadcastWebSocketSessionBundle bundle) {
+        if (!setupCompleteFuture.isDone()) {
+            return "SETUP";
+        }
+        if (bundle == null || bundle.getStatus() == null) {
+            return "UNKNOWN";
+        }
+        return bundle.getStatus().name();
+    }
+
+    private Long calculateDurationMillis(Instant start, Instant end) {
+        if (start == null || end == null) {
+            return null;
+        }
+        return Duration.between(start, end).toMillis();
+    }
+
+    private void handleSessionResumptionUpdate(WebSocketSession session, JsonNode sessionResumptionUpdateNode) {
+        String broadcastStreamId = resolveBroadcastStreamId(session);
+        if (broadcastStreamId == null || sessionResumptionUpdateNode == null) {
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null || bundle.getGeminiSession() != session) {
+            return;
+        }
+
+        String newHandle = null;
+        JsonNode newHandleNode = sessionResumptionUpdateNode.get("newHandle");
+        if (newHandleNode != null && !newHandleNode.isNull()) {
+            newHandle = newHandleNode.asText();
+        }
+
+        boolean resumable = sessionResumptionUpdateNode.path("resumable").asBoolean(false);
+        bundle.updateGeminiSessionResumptionMetadata(newHandle, resumable, Instant.now());
+
+        log.info("[GeminiLiveWebSocketHandler] handleSessionResumptionUpdate() - Resumption metadata updated | streamId: {}, generation: {}, sessionId: {}, resumable: {}, handle: {}",
+                broadcastStreamId,
+                bundle.getGeneration(),
+                session.getId(),
+                resumable,
+                newHandle);
     }
 
     public record CompletedGeminiTurn(

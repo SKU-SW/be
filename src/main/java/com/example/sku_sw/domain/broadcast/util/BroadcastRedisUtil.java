@@ -231,6 +231,7 @@ public class BroadcastRedisUtil {
      * @param newTendency : 설정할 새로운 성향
      */
     public void updateBroadcastCharacterTendencyIfAutoUpdateEnabled(String broadcastStreamId, AiCharacterTendency newTendency) {
+        log.debug("[BroadcastRedisUtil] updateBroadcastCharacterTendencyIfAutoUpdateEnabled() - START : BroadcastCharacter Tendency Auto Update | broadcastStreamId: {}", broadcastStreamId);
         String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
 
         String luaScript =

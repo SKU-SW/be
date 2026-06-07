@@ -642,6 +642,9 @@ public class BroadcastService {
                 .characterImages(characterImages)
                 .characterPresetType(character.getCharacterPersona().getPresetType())
                 .isTalking(false)
+                .tendency(AiCharacterTendency.NEUTRAL)
+                .tendencyAutoUpdate(true)
+                .broadcastKeywords(null)
                 .build();
 
         log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - END | characterId: {}", character.getId());

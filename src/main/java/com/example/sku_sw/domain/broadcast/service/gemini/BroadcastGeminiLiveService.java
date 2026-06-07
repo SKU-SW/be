@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandlerFactory;
 import com.example.sku_sw.global.exception.CustomException;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
@@ -17,6 +19,8 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -56,15 +60,42 @@ public class BroadcastGeminiLiveService {
      *
      * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
      */
-    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(String broadcastStreamId, String systemPrompt, String voiceName) {
-        log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - START | streamId: {}", broadcastStreamId);
+    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(
+            String broadcastStreamId,
+            long generation,
+            String systemPrompt,
+            String voiceName
+    ) {
+        return connectGeminiApiWebSocketAsync(broadcastStreamId, generation, systemPrompt, voiceName, null);
+    }
+
+    /**
+     * Gemini Live API WebSocket 비동기 연결을 생성한다.
+     * - 필요 시 sessionResumption.handle을 포함해 setupComplete까지 대기한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param systemPrompt : setup용 시스템 프롬프트
+     * @param voiceName : voice name
+     * @param resumptionHandle : session resumption handle (없으면 fresh connect)
+     * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
+     */
+    public CompletableFuture<WebSocketSession> connectGeminiApiWebSocketAsync(
+            String broadcastStreamId,
+            long generation,
+            String systemPrompt,
+            String voiceName,
+            String resumptionHandle
+    ) {
+        log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+        Instant connectStartedAt = Instant.now();
 
         /*
             1. StandardWebSocketClient.execute()로 Gemini Live API로 WebSocket 연동 요청을 보낸다.
             - 해당 함수 호출 직후 executeFuture 객체를 바로 반환받는다.
          */
         URI geminiUri = createGeminiLiveWebSocketUri();
-        GeminiLiveWebSocketHandler liveWebSocketHandler = geminiLiveWebSocketHandlerFactory.create(systemPrompt, voiceName);
+        GeminiLiveWebSocketHandler liveWebSocketHandler = geminiLiveWebSocketHandlerFactory.create(systemPrompt, voiceName, resumptionHandle);
         CompletableFuture<WebSocketSession> executeFuture = webSocketClient.execute(
                 liveWebSocketHandler,
                 new WebSocketHttpHeaders(),
@@ -80,6 +111,7 @@ public class BroadcastGeminiLiveService {
          */
         CompletableFuture<WebSocketSession> readyFuture = executeFuture.thenCompose(geminiSession -> {
             geminiSession.getAttributes().put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), broadcastStreamId);
+            geminiSession.getAttributes().put(WebSocketAttributes.SESSION_GENERATION.getValue(), generation);
             // GeminiLiveWebSocketHandler 인스턴스를 임시 맵에 저장 (bundle 등록 시 consumePendingHandler로 사용)
             pendingGeminiHandlers.put(geminiSession.getId(), liveWebSocketHandler);
             CompletableFuture<Void> setupCompleteFuture = liveWebSocketHandler.getSetupCompleteFuture();
@@ -87,10 +119,20 @@ public class BroadcastGeminiLiveService {
             return setupCompleteFuture.orTimeout(liveSetupTimeoutMs, TimeUnit.MILLISECONDS)
                     .thenApply(ignored -> geminiSession)
                     .exceptionally(throwable -> {
-                        log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Setup failed | streamId: {}, diagnostics: {}",
-                                broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
+                        log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Setup failed | streamId: {}, generation: {}, elapsedMs: {}, rootCause: {}, diagnostics: {}",
+                                broadcastStreamId,
+                                generation,
+                                Duration.between(connectStartedAt, Instant.now()).toMillis(),
+                                resolveRootCauseMessage(throwable),
+                                liveWebSocketHandler.getTerminationDiagnostics(geminiSession, "CONNECT_SETUP_FAILED", throwable),
+                                throwable);
                         pendingGeminiHandlers.remove(geminiSession.getId());
-                        geminiUtil.closeGeminiSessionQuietly(geminiSession);
+                        geminiUtil.closeGeminiSessionQuietly(
+                                geminiSession,
+                                liveWebSocketHandler,
+                                CloseStatus.SERVER_ERROR.withReason(GeminiSessionCloseReason.SETUP_FAILED.getDescription()),
+                                GeminiSessionCloseReason.SETUP_FAILED
+                        );
                         throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
                     });
         });
@@ -104,14 +146,49 @@ public class BroadcastGeminiLiveService {
          */
         return readyFuture.whenComplete((geminiSession, throwable) -> {
             if (geminiSession != null) {
-                log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - END | streamId: {}, sessionId: {}",
-                        broadcastStreamId, geminiSession.getId());
+                log.info("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - END | streamId: {}, generation: {}, sessionId: {}, elapsedMs: {}",
+                        broadcastStreamId,
+                        generation,
+                        geminiSession.getId(),
+                        Duration.between(connectStartedAt, Instant.now()).toMillis());
                 return;
             }
 
-            log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Failed | streamId: {}, diagnostics: {}",
-                    broadcastStreamId, liveWebSocketHandler.getSetupFailureDiagnostics(), throwable);
+            log.error("[BroadcastGeminiLiveService] connectGeminiApiWebSocketAsync() - Failed | streamId: {}, generation: {}, elapsedMs: {}, rootCause: {}, diagnostics: {}",
+                    broadcastStreamId,
+                    generation,
+                    Duration.between(connectStartedAt, Instant.now()).toMillis(),
+                    resolveRootCauseMessage(throwable),
+                    liveWebSocketHandler.getSetupFailureDiagnostics(),
+                    throwable);
         });
+    }
+
+    /**
+     * session resumption handle을 사용해 Gemini 세션 재연결을 시도한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param resumptionHandle : session resumption handle
+     * @return : setupComplete까지 완료된 Gemini WebSocket 세션 Future
+     */
+    public CompletableFuture<WebSocketSession> resumeGeminiApiWebSocketAsync(
+            String broadcastStreamId,
+            long generation,
+            String resumptionHandle
+    ) {
+        return connectGeminiApiWebSocketAsync(broadcastStreamId, generation, null, null, resumptionHandle);
+    }
+
+    private String resolveRootCauseMessage(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current.getClass().getSimpleName() + ": " + current.getMessage();
     }
 
     /**

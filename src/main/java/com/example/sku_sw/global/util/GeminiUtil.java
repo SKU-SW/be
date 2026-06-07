@@ -1,5 +1,7 @@
 package com.example.sku_sw.global.util;
 
+import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
+import com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiGenerateContentReqDto;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiGenerateContentResDto;
 import com.example.sku_sw.global.util.dto.gemini.common.GeminiRequestContentDto;
@@ -129,16 +131,30 @@ public class GeminiUtil {
     /**
      * Gemini WebSocket 세션을 조용히 종료하는 함수
      * @param geminiSession : 종료할 Gemini WebSocket 세션
+     * @param geminiHandler : 종료 추적용 Gemini 핸들러
+     * @param closeStatus : 종료 상태
+     * @param closeReason : 로컬 종료 사유
      */
-    public void closeGeminiSessionQuietly(WebSocketSession geminiSession) {
+    public void closeGeminiSessionQuietly(
+            WebSocketSession geminiSession,
+            GeminiLiveWebSocketHandler geminiHandler,
+            CloseStatus closeStatus,
+            GeminiSessionCloseReason closeReason
+    ) {
         if (geminiSession == null || !geminiSession.isOpen()) {
             return;
         }
 
         try {
-            geminiSession.close(CloseStatus.SERVER_ERROR.withReason("Gemini setup failed"));
+            if (geminiHandler != null) {
+                geminiHandler.markLocalClose(closeStatus, closeReason);
+            }
+            geminiSession.close(closeStatus);
+            log.info("[GeminiUtil] closeGeminiSessionQuietly() - Gemini session close requested | sessionId: {}, closeStatus: {}, closeReason: {}",
+                    geminiSession.getId(), closeStatus, closeReason);
         } catch (IOException e) {
-            log.warn("[GeminiUtil] closeGeminiSessionQuietly() - Failed to close Gemini session | error: {}", e.getMessage());
+            log.warn("[GeminiUtil] closeGeminiSessionQuietly() - Failed to close Gemini session | sessionId: {}, closeStatus: {}, closeReason: {}, error: {}",
+                    geminiSession.getId(), closeStatus, closeReason, e.getMessage());
         }
     }
 
