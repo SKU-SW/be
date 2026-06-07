@@ -95,15 +95,21 @@ public class ChatRedisSubscriber {
         try {
             JsonNode jsonNode = objectMapper.readTree(payload);
 
-            if (jsonNode.has("positiveChatCount")) {
+            if (jsonNode.has("keywords")) {
                 /*
-                    2-1. 통계 데이터인 경우
+                    2-1. 키워드 데이터인 경우
+                    - 키워드 처리 메서드 호출
+                 */
+                chzzkChatMessageService.processChatKeywordsMessage(payload);
+            } else if (jsonNode.has("positiveChatCount")) {
+                /*
+                    2-2. 통계 데이터인 경우
                     - 채팅 통계 처리 메서드 호출
                  */
                 chzzkChatMessageService.processChatStatsMessage(payload);
             } else {
                 /*
-                    2-2. 채팅 데이터인 경우
+                    2-3. 채팅 데이터인 경우
                     - 기존 채팅 메시지 처리 메서드 호출
                  */
                 chzzkChatMessageService.processChatMessage(payload);

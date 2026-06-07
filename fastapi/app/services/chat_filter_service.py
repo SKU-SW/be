@@ -56,6 +56,7 @@ class SentimentBufferState:
     flush_task: asyncio.Task | None = None
     flush_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     publish_task: asyncio.Task | None = None
+    keyword_publish_task: asyncio.Task | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,8 @@ class ChatFilterService:
                 state.flush_task.cancel()
             if state.publish_task is not None and not state.publish_task.done():
                 state.publish_task.cancel()
+            if state.keyword_publish_task is not None and not state.keyword_publish_task.done():
+                state.keyword_publish_task.cancel()
         self.sentiment_states.clear()
 
     # ----------------------------------------------------------------
@@ -171,6 +174,8 @@ class ChatFilterService:
                 sentiment_state.flush_task.cancel()
             if sentiment_state.publish_task is not None and not sentiment_state.publish_task.done():
                 sentiment_state.publish_task.cancel()
+            if sentiment_state.keyword_publish_task is not None and not sentiment_state.keyword_publish_task.done():
+                sentiment_state.keyword_publish_task.cancel()
 
     # ----------------------------------------------------------------
     # Internal — buffer & flush
@@ -210,8 +215,11 @@ class ChatFilterService:
 
         logger.info("Sentiment flush triggered | streamId=%s chatCount=%d", broadcast_stream_id, len(chats))
 
-        # Call Gemini sentiment analysis
-        result = await gemini_filter_service.analyze_sentiment(chats)
+        # Fetch broadcast context for keyword extraction
+        context = await broadcast_context_service.get_context(broadcast_stream_id)
+
+        # Call Gemini sentiment analysis with context
+        result = await gemini_filter_service.analyze_sentiment(chats, context=context)
 
         if result is None:
             logger.warning("Sentiment analysis returned no result | streamId=%s chats=%d", broadcast_stream_id, len(chats))
@@ -224,12 +232,14 @@ class ChatFilterService:
             result.neutral_chat_count,
             result.negative_chat_count,
         )
+        await chzzk_session_registry.accumulate_keyword(broadcast_stream_id, result.keyword)
         logger.info(
-            "Sentiment accumulated | streamId=%s positive=%d neutral=%d negative=%d",
+            "Sentiment accumulated | streamId=%s positive=%d neutral=%d negative=%d keyword=%s",
             broadcast_stream_id,
             result.positive_chat_count,
             result.neutral_chat_count,
             result.negative_chat_count,
+            result.keyword,
         )
 
         # Start 60-second publish timer if not running
@@ -238,6 +248,13 @@ class ChatFilterService:
                 self._sentiment_publish_periodically(broadcast_stream_id)
             )
             logger.info("Sentiment publish timer started | streamId=%s (will publish in 60s)", broadcast_stream_id)
+
+        # Start 30-second keyword publish timer if not running
+        if state.keyword_publish_task is None or state.keyword_publish_task.done():
+            state.keyword_publish_task = asyncio.create_task(
+                self._keyword_publish_periodically(broadcast_stream_id)
+            )
+            logger.info("Keyword publish timer started | streamId=%s (will publish in 30s)", broadcast_stream_id)
 
     async def _sentiment_publish_periodically(self, broadcast_stream_id: str) -> None:
         logger.info("Sentiment publish timer waiting 60s | streamId=%s", broadcast_stream_id)
@@ -269,6 +286,34 @@ class ChatFilterService:
             sentiment.positive_chat_count,
             sentiment.neutral_chat_count,
             sentiment.negative_chat_count,
+        )
+
+    async def _keyword_publish_periodically(self, broadcast_stream_id: str) -> None:
+        logger.info("Keyword publish timer waiting 30s | streamId=%s", broadcast_stream_id)
+        await asyncio.sleep(30.0)
+
+        # Get accumulated keywords and reset
+        keyword_score = await chzzk_session_registry.get_and_reset_keyword(broadcast_stream_id)
+        logger.info("Keyword retrieved for publish | streamId=%s keywords=%s",
+                    broadcast_stream_id, keyword_score.keywords)
+
+        # Publish to Redis
+        session = chzzk_session_registry.active_sessions.get(broadcast_stream_id)
+        if session is None:
+            logger.warning("Keyword publish skipped - session not found | streamId=%s", broadcast_stream_id)
+            return
+
+        payload = {
+            "channelId": session.channel_id,
+            "broadcastStreamId": broadcast_stream_id,
+            "keywords": keyword_score.keywords,
+        }
+        await chat_publish_service.publish(session.channel_name or "", payload)
+        logger.info(
+            "Keyword published to Redis | channel=%s streamId=%s keywords=%s",
+            session.channel_name,
+            broadcast_stream_id,
+            keyword_score.keywords,
         )
 
     async def _flush_after_window(self, broadcast_stream_id: str) -> None:

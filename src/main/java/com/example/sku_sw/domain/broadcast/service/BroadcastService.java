@@ -644,7 +644,6 @@ public class BroadcastService {
                 .isTalking(false)
                 .tendency(AiCharacterTendency.NEUTRAL)
                 .tendencyAutoUpdate(true)
-                .broadcastKeywords(null)
                 .build();
 
         log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - END | characterId: {}", character.getId());

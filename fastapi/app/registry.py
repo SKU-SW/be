@@ -40,6 +40,11 @@ class SentimentScore:
     negative_chat_count: int = 0
 
 
+@dataclass(slots=True)
+class KeywordScore:
+    keywords: list[str] = field(default_factory=list)
+
+
 class ChzzkSessionRegistry:
     def __init__(self) -> None:
         self.pending_sessions: dict[str, PendingChzzkSessionConnect] = {}
@@ -51,6 +56,9 @@ class ChzzkSessionRegistry:
         self._sentiment_scores: dict[str, SentimentScore] = {}
         self._sentiment_locks: dict[str, asyncio.Lock] = {}
         self._sentiment_locks_guard = asyncio.Lock()
+        self._keyword_scores: dict[str, KeywordScore] = {}
+        self._keyword_locks: dict[str, asyncio.Lock] = {}
+        self._keyword_locks_guard = asyncio.Lock()
 
     @asynccontextmanager
     async def stream_lock(self, broadcast_stream_id: str) -> AsyncIterator[None]:
@@ -97,6 +105,8 @@ class ChzzkSessionRegistry:
         session = self.active_sessions.pop(broadcast_stream_id, None)
         self._sentiment_scores.pop(broadcast_stream_id, None)
         self._sentiment_locks.pop(broadcast_stream_id, None)
+        self._keyword_scores.pop(broadcast_stream_id, None)
+        self._keyword_locks.pop(broadcast_stream_id, None)
         return session
 
     async def accumulate_sentiment(
@@ -109,6 +119,17 @@ class ChzzkSessionRegistry:
             score.positive_chat_count += positive
             score.neutral_chat_count += neutral
             score.negative_chat_count += negative
+
+    async def accumulate_keyword(
+        self, broadcast_stream_id: str, keyword: str
+    ) -> None:
+        if not keyword:
+            return
+        async with self._keyword_locks_guard:
+            lock = self._keyword_locks.setdefault(broadcast_stream_id, asyncio.Lock())
+        async with lock:
+            score = self._keyword_scores.setdefault(broadcast_stream_id, KeywordScore())
+            score.keywords.append(keyword)
 
     def get_sentiment(self, broadcast_stream_id: str) -> SentimentScore | None:
         return self._sentiment_scores.get(broadcast_stream_id)
@@ -128,6 +149,17 @@ class ChzzkSessionRegistry:
             score.positive_chat_count = 0
             score.neutral_chat_count = 0
             score.negative_chat_count = 0
+            return result
+
+    async def get_and_reset_keyword(self, broadcast_stream_id: str) -> KeywordScore:
+        async with self._keyword_locks_guard:
+            lock = self._keyword_locks.setdefault(broadcast_stream_id, asyncio.Lock())
+        async with lock:
+            score = self._keyword_scores.get(broadcast_stream_id)
+            if score is None:
+                return KeywordScore()
+            result = KeywordScore(keywords=list(score.keywords))
+            score.keywords.clear()
             return result
 
     def save_inflight_socket(self, broadcast_stream_id: str, socket_client: socketio.AsyncClient) -> None:
@@ -155,6 +187,8 @@ class ChzzkSessionRegistry:
         self.pending_sessions.clear()
         self._sentiment_scores.clear()
         self._sentiment_locks.clear()
+        self._keyword_scores.clear()
+        self._keyword_locks.clear()
 
         for active_session in active_sessions:
             try:

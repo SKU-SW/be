@@ -1,9 +1,11 @@
 package com.example.sku_sw.domain.chat.service;
 
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
+import com.example.sku_sw.domain.broadcast.entity.BroadcastKeywords;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -17,6 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -36,6 +40,7 @@ public class ChzzkChatMessageService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastStatsRepository broadcastStatsRepository;
+    private final BroadcastKeywordsRepository broadcastKeywordsRepository;
 
     /**
      * FastApi로부터 전달받은 Chzzk 채팅 메시지를 파싱하고,
@@ -216,5 +221,68 @@ public class ChzzkChatMessageService {
         }
 
         log.info("[ChzzkChatMessageService] processChatStatsMessage() - END");
+    }
+
+    /**
+     * FastApi로부터 전달받은 키워드 메시지를 파싱하고,
+     * 정규화된 BroadcastKeywords를 생성하여 저장한다.
+     * - 30초마다 키워드 배열이 전달되며, 각 키워드를 개별 레코드로 저장한다.
+     * - 정규화 결과 빈 키워드는 저장하지 않는다.
+     * @param payload : FastApi가 전달한 JSON 형식의 키워드 메시지
+     */
+    @Transactional
+    public void processChatKeywordsMessage(String payload) {
+        log.info("[ChzzkChatMessageService] processChatKeywordsMessage() - START | payload: {}", payload);
+
+        try {
+            /*
+                1. JSON 파싱
+                - 전달받은 payload에서 broadcastStreamId, keywords를 추출한다.
+             */
+            JsonNode jsonNode = objectMapper.readTree(payload);
+            String broadcastStreamId = jsonNode.get("broadcastStreamId").asText();
+            JsonNode keywordsNode = jsonNode.get("keywords");
+
+            /*
+                2. Broadcast 조회
+                - broadcastStreamId로 방송을 조회하고, 존재하지 않으면 로그만 남기고 종료한다.
+             */
+            Broadcast broadcast = broadcastRepository.findByStreamId(broadcastStreamId).orElse(null);
+            if (broadcast == null) {
+                log.warn("[ChzzkChatMessageService] processChatKeywordsMessage() - Broadcast not found | broadcastStreamId: {}", broadcastStreamId);
+                log.info("[ChzzkChatMessageService] processChatKeywordsMessage() - END");
+                return;
+            }
+
+            /*
+                3. 키워드 목록 생성
+                - keywords 배열을 순회하며 정규화된 BroadcastKeywords를 생성한다.
+                - 정규화 결과 null인 키워드는 제외한다.
+             */
+            List<BroadcastKeywords> keywordEntities = new ArrayList<>();
+            if (keywordsNode != null && keywordsNode.isArray()) {
+                for (JsonNode keywordNode : keywordsNode) {
+                    String rawKeyword = keywordNode.asText();
+                    BroadcastKeywords keywordEntity = BroadcastKeywords.create(rawKeyword, broadcast);
+                    if (keywordEntity != null) {
+                        keywordEntities.add(keywordEntity);
+                    }
+                }
+            }
+
+            /*
+                4. BroadcastKeywords 저장
+             */
+            if (!keywordEntities.isEmpty()) {
+                broadcastKeywordsRepository.saveAll(keywordEntities);
+            }
+
+            log.info("[ChzzkChatMessageService] processChatKeywordsMessage() - Saved keywords | broadcastStreamId: {}, total: {}, saved: {}",
+                    broadcastStreamId, keywordsNode != null ? keywordsNode.size() : 0, keywordEntities.size());
+        } catch (JsonProcessingException e) {
+            log.error("[ChzzkChatMessageService] processChatKeywordsMessage() - Failed to parse payload | payload: {}", payload, e);
+        }
+
+        log.info("[ChzzkChatMessageService] processChatKeywordsMessage() - END");
     }
 }

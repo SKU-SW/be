@@ -26,5 +26,4 @@ public class BroadcastCharacterRedisDto {
     private Boolean isTalking;
     private AiCharacterTendency tendency;
     private Boolean tendencyAutoUpdate;
-    private List<BroadcastKeywordRedisDto> broadcastKeywords;
 }

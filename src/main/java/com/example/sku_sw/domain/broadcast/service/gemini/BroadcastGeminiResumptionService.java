@@ -72,6 +72,7 @@ public class BroadcastGeminiResumptionService {
                 3. resumption handle을 사용해 새 Gemini 세션 연결을 시도한다.
                 - 연결 중에는 bundle 상태를 GEMINI_CONNECTING으로 전환한다.
                 - setupComplete까지 완료된 새 Gemini 세션과 handler를 확보한다.
+                - BroadcastGeminiLiveService에서 임시로 갖고 있는 GeminiWebSocketHandler를 remove해서 가져온다.
              */
             bundle.updateStatus(WebSocketSessionBundleStatus.GEMINI_CONNECTING);
             WebSocketSession resumedGeminiSession = broadcastGeminiLiveService
@@ -98,7 +99,7 @@ public class BroadcastGeminiResumptionService {
                         broadcastStreamId, generation);
                 return false;
             }
-
+            // 동일 bundle이면 새 Gemini 세션/handler로 교체하고 READY 상태로 복구
             currentBundle.registerGeminiSession(resumedGeminiSession, resumedHandler);
             currentBundle.clearResumptionInProgress();
             currentBundle.updateStatus(WebSocketSessionBundleStatus.READY);
