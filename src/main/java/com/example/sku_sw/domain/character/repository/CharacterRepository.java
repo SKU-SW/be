@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 
 public interface CharacterRepository extends JpaRepository<Character, Long> {
+
     /**
      * 선택된 캐릭터가 있다면 page가 1인 경우에만 최상단에 선택된 캐릭터 정보를 위치시켜 조회하는 함수
      * @param userId : 조회할 사용자 ID
@@ -18,7 +19,8 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
      * @return : 캐릭터 목록 Slice
      */
     @Query("SELECT c FROM Character c " +
-            "JOIN FETCH c.characterImage " +
+            "LEFT JOIN FETCH c.characterImage " +
+            "LEFT JOIN FETCH c.characterVrm " +
             "JOIN FETCH c.characterPersona " +
             "WHERE c.user.id = :userId " +
             "ORDER BY CASE " +
@@ -34,7 +36,8 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
     @Query("select c " +
             "from Character c " +
             "join fetch c.characterPersona " +
-            "join fetch c.characterImage " +
+            "left join fetch c.characterImage " +
+            "left join fetch c.characterVrm " +
             "where c.id=:characterId and c.user.id=:userId")
     Optional<Character> findByIdAndUserId(@Param("characterId") Long characterId, @Param("userId") Long userId);
 
@@ -47,7 +50,8 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
     @Query("select distinct c " +
             "from Character c " +
             "join fetch c.characterPersona " +
-            "join fetch c.characterImage ci " +
+            "left join fetch c.characterImage ci " +
+            "left join fetch c.characterVrm cv " +
             "left join fetch c.triggerWords tw " +
             "where c.id=:characterId and c.user.id=:userId")
     Optional<Character> findBroadcastRedisCharacterByIdAndUserId(@Param("characterId") Long characterId, @Param("userId") Long userId);

@@ -7,5 +7,6 @@ import lombok.Builder;
 @Builder
 public record CharacterSettingsResDto(
     List<CharacterImageResDto> characterImages,
-    List<PresetType> presetTypes
+    List<CharacterVrmResDto> vrmPresets,
+    List<PresetType> personaPresetTypes
 ) {}

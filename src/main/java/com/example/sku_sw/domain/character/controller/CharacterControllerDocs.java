@@ -37,11 +37,16 @@ public interface CharacterControllerDocs {
             사용자가 설정한 정보를 바탕으로 새로운 AI 캐릭터를 생성합니다.
             
             [ 입력 데이터 ]
-            1. `characterName`: 캐릭터 이름
-            2. `triggerWords`: 호출어 리스트 -> **json에서 호출어를 []로 리스트로 감싸서 호출해야합니다**
-            3. `gender`: 성별 (MALE | FEMALE)
-            4. `characterImageId`: 캐릭터 이미지 PK (현재 선택된 Gender와 동일한 성별의 이미지 PK를 선택해야합니다)
-            5. `characterPersona`: 캐릭터 페르소나
+            1. `characterAppearanceType`: 캐릭터 외형 타입 (TWO_D | THREE_D)
+                - `TWO_D`: 2D 이미지 캐릭터 (CharacterImage 사용)
+                - `THREE_D`: 3D VRM 캐릭터 (CharacterVrm 사용)
+            2. `characterName`: 캐릭터 이름
+            3. `triggerWords`: 호출어 리스트 -> **json에서 호출어를 []로 리스트로 감싸서 호출해야합니다**
+            4. `gender`: 성별 (MALE | FEMALE)
+            5. `targetId`: 캐릭터 외형 PK
+                - `TWO_D`인 경우: CharacterImage ID (현재 선택된 Gender와 동일한 성별의 이미지 PK를 선택해야합니다)
+                - `THREE_D`인 경우: CharacterVrm ID (현재 선택된 Gender와 동일한 성별의 VRM PK를 선택해야합니다)
+            6. `characterPersona`: 캐릭터 페르소나
                 1) `presetType`: 캐릭터 프리셋 타입
                 - FRIENDLY_CHATTER | HIGH_TENSION | PLAYFUL_TEASER | PROFESSIONAL_MANAGER | ROLEPLAY_EXPERT
             
@@ -145,13 +150,21 @@ public interface CharacterControllerDocs {
             AI 캐릭터 생성 및 수정 페이지에서 각 블록(이미지, 페르소나 등)에 필요한 선택 가능한 설정 옵션 정보를 조회한다.
             
             [ Response Body ]
-            - `characterImages`: 선택 가능한 캐릭터 이미지 목록
+            - `characterImages`: 선택 가능한 2D 캐릭터 이미지 목록
                 [각 이미지별 정보]
                 - `imageId`: 이미지 PK
                 - `gender`: 성별 (`MALE`|`FEMALE`)
                 - `name`: 이미지 캐릭터 이름
                 - `imageUrl`: 이미지 URL
-            - `presetTypes`: 선택 가능한 프리셋 타입 목록
+            - `vrmPresets`: 선택 가능한 3D 캐릭터 VRM 파일 목록
+                [각 VRM별 정보]
+                - `characterVrmId`: CharacterVrm 엔티티 PK
+                - `presetId`: VRM 프리셋 ID
+                - `gender`: VRM 프리셋 성별 (`MALE`|`FEMALE`)
+                - `name`: VRM 프리셋 이름
+                - `thumbnailUrl`: 설정에서 보일 프리셋 썸네일 이미지 URL
+                - `vrmUrl`: 실제 VRM 파일 접근용 URL
+            - `personaPresetTypes`: 선택 가능한 페르소나 프리셋 타입 목록
                 `FRIENDLY_CHATTER`|`HIGH_TENSION`|`PLAYFUL_TEASER`|`PROFESSIONAL_MANAGER`|`ROLEPLAY_EXPERT`
             """)
     @ApiResponses(value = {
@@ -168,13 +181,18 @@ public interface CharacterControllerDocs {
             - `characterId`: 수정할 AI 캐릭터의 PK
             
             [Request Body]
+            - `characterAppearanceType`: 캐릭터 외형 타입 (TWO_D | THREE_D)
+                - `TWO_D`: 2D 이미지 캐릭터 (CharacterImage 사용)
+                - `THREE_D`: 3D VRM 캐릭터 (CharacterVrm 사용)
             - `characterName`: 설정할 AI 캐릭터 이름
             - `triggerWords`: AI 캐릭터를 호출할 호출어 리스트 (최대 3개) -> **json에서 호출어를 []로 리스트로 감싸서 호출해야합니다
-             - `gender`: AI 캐릭터 성별 (`MALE` | `FEMALE`)
-             - `characterImageId`: 캐릭터 외형 이미지 PK
-             - `characterPersona`: AI 캐릭터 페르소나 정보
-                 - `presetType`: AI 캐릭터 프리셋 타입
-                 `FRIENDLY_CHATTER` | `HIGH_TENSION` | `PLAYFUL_TEASER` | `PROFESSIONAL_MANAGER` |  `ROLEPLAY_EXPERT`
+            - `gender`: AI 캐릭터 성별 (`MALE` | `FEMALE`)
+            - `targetId`: 캐릭터 외형 PK
+                - `TWO_D`인 경우: CharacterImage ID
+                - `THREE_D`인 경우: CharacterVrm ID
+            - `characterPersona`: AI 캐릭터 페르소나 정보
+                - `presetType`: AI 캐릭터 프리셋 타입
+                `FRIENDLY_CHATTER` | `HIGH_TENSION` | `PLAYFUL_TEASER` | `PROFESSIONAL_MANAGER` | `ROLEPLAY_EXPERT`
             """)
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "캐릭터 수정 완료", content = @Content(schema = @Schema(implementation = CharacterDetailResDto.class)))
