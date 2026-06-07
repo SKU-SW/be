@@ -16,7 +16,10 @@ public record BroadcastChatStatsResDto(
     AiCharacterTendency aiPartnerTendency,
 
     @Schema(description = "감정 흐름 통계")
-    List<SentimentFlowItemResDto> sentimentFlow
+    List<SentimentFlowItemResDto> sentimentFlow,
+
+    @Schema(description = "상위 키워드 (1~10위)")
+    List<String> topKeywords
 ) {
     @Schema(description = "여론 현황 상세")
     @Builder

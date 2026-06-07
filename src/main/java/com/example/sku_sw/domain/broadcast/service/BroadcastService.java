@@ -27,6 +27,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
 import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
@@ -81,6 +82,7 @@ public class BroadcastService {
     private final FastApiUtil fastApiUtil;
     private final BroadcastStatsRepository broadcastStatsRepository;
     private final ChatRedisUtil chatRedisUtil;
+    private final BroadcastKeywordsRepository broadcastKeywordsRepository;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
 
@@ -525,18 +527,14 @@ public class BroadcastService {
 
         /*
             5. AI 파트너 성향 판별
-            - 가장 높은 비율의 성향을 선택 (긍정 > 중립 > 부정 우선순위)
-         */
-        AiCharacterTendency tendency = AiCharacterTendency.NEUTRAL;
-        if (positiveRatio >= neutralRatio && positiveRatio >= negativeRatio) {
-            tendency = AiCharacterTendency.POSITIVE;
-        } else if (negativeRatio > neutralRatio) {
-            tendency = AiCharacterTendency.NEGATIVE;
-        }
+            - Redis의 BroadcastCharacterRedisDto에서 tendency를 가져온다.
+          */
+        BroadcastCharacterRedisDto broadcastCharacterRedisDto = broadcastRedisUtil.getBroadcastCharacterDto(activeBroadcast.getStreamId());
+        AiCharacterTendency tendency = broadcastCharacterRedisDto.getTendency();
 
         /*
             6. ResponseDto 생성 (여론 현황)
-         */
+          */
         BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = BroadcastChatStatsResDto.PublicOpinionResDto.builder()
                 .positiveChatCount(positiveSum)
                 .neutralChatCount(neutralSum)
@@ -597,16 +595,22 @@ public class BroadcastService {
         }
 
         /*
-            8. 최종 응답 DTO 생성
+            9. 상위 10개 키워드 조회
+         */
+        List<String> topKeywords = broadcastKeywordsRepository.findTop10KeywordsByBroadcast(activeBroadcast);
+
+        /*
+            10. 최종 응답 DTO 생성
          */
         BroadcastChatStatsResDto result = BroadcastChatStatsResDto.builder()
                 .publicOpinion(publicOpinion)
                 .aiPartnerTendency(tendency)
                 .sentimentFlow(sentimentFlow)
+                .topKeywords(topKeywords)
                 .build();
 
-        log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}, flowSize: {}",
-                activeBroadcast.getStreamId(), totalSum, tendency, sentimentFlow.size());
+        log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}, flowSize: {}, topKeywordsSize: {}",
+                activeBroadcast.getStreamId(), totalSum, tendency, sentimentFlow.size(), topKeywords.size());
         return result;
     }
 

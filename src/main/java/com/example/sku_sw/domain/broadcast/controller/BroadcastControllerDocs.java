@@ -151,21 +151,34 @@ public interface BroadcastControllerDocs {
             - `Authorization: Bearer <Access Token>` 필요
             
             [Query String]
-            - `statsCriteria`: 구간 간격 (분): 1 | 5 | 10 (기본값: 1)
-            - `timeRange`: 조회 범위: 1=1시간, 3=3시간, 0=전체 (기본값: 1)
+            - `statsCriteria`: 감정 흐름 통계 구간 간격 (분): `1` | `5` | `10` (기본값: 1)
+            - `timeRange`: 감정 흐름 통계 조회 범위: `1`=1시간 | `3`=3시간 | `0`=전체 (기본값: 1)
             
             [Request Body]
             - 없음
             
             [Response Body]
-            - `publicOpinion`: 여론 현황 (긍정/중립/부정 채팅 수 및 비율)
-            - `aiPartnerTendency`: AI 파트너 응답 성향 (POSITIVE/NEUTRAL/NEGATIVE)
-            - `sentimentFlow`: 감정 흐름 통계 (구간별 긍정/중립/부정 비율)
+            - `publicOpinion`: 여론 현황 (최근 10분 기준)
+              - `positiveChatCount`: 긍정 채팅 수
+              - `neutralChatCount`: 중립 채팅 수
+              - `negativeChatCount`: 부정 채팅 수
+              - `totalChatCount`: 전체 채팅 수
+              - `positiveRatio`: 긍정 비율 (%)
+              - `neutralRatio`: 중립 비율 (%)
+              - `negativeRatio`: 부정 비율 (%)
+            - `aiPartnerTendency`: AI 파트너 응답 성향 (`POSITIVE` | `NEUTRAL` | `NEGATIVE`)
+            - `sentimentFlow`: 감정 흐름 통계 (구간별 긍정/중립/부정 비율 목록)
+              - `timeLabel`: 구간 시작 시각 (`HH:mm`)
+              - `positiveRatio`: 해당 구간 긍정 비율 (%)
+              - `neutralRatio`: 해당 구간 중립 비율 (%)
+              - `negativeRatio`: 해당 구간 부정 비율 (%)
+            - `topKeywords`: 상위 키워드 목록 (1위~10위, 등장 횟수 기준 내림차순)
             
             [조회 방식]
             - 여론 현황: 최근 10분 동안의 BroadcastStats 데이터를 기반으로 통계를 계산합니다.
             - 감정 흐름: statsCriteria 간격으로 그룹핑하여 구간별 비율을 계산합니다.
             - AI 파트너 성향은 가장 높은 비율의 여론으로 판별됩니다.
+            - 상위 키워드는 오늘 방송 전체 BroadcastKeywords 데이터 중 등장 횟수가 가장 많은 10개를 반환합니다.
             
             [예외]
             - 진행 중인 방송이 없으면 404 예외가 발생합니다.
