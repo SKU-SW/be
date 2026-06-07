@@ -14,6 +14,7 @@ public enum CharacterErrorCode implements BaseErrorCode {
     CHARACTER_IMAGE_TYPE_GENDER_MISMATCH(HttpStatus.BAD_REQUEST, "캐릭터 성별과 캐릭터 이미지의 성별이 일치하지 않습니다."),
     CHARACTER_VRM_NOT_FOUND(HttpStatus.NOT_FOUND, "캐릭터 VRM을 찾을 수 없습니다."),
     CHARACTER_VRM_TYPE_GENDER_MISMATCH(HttpStatus.BAD_REQUEST, "캐릭터 성별과 캐릭터 VRM의 성별이 일치하지 않습니다."),
+    INVALID_CHARACTER_APPEARANCE_TYPE(HttpStatus.BAD_REQUEST, "유효하지 않은 캐릭터 외형 타입입니다."),
     TRIGGER_WORD_DUPLICATE(HttpStatus.BAD_REQUEST, "호출어에 중복이 있습니다."),
     TRIGGER_WORD_EXCEED_MAX(HttpStatus.BAD_REQUEST, "호출어는 최대 3개까지 설정 가능합니다."),
     TRIGGER_WORD_EMPTY(HttpStatus.BAD_REQUEST, "호출어는 최소 1개 이상 설정해야 합니다."),

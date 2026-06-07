@@ -35,9 +35,13 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.character.entity.Character;
+import com.example.sku_sw.domain.character.entity.CharacterImage;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
 import com.example.sku_sw.domain.character.entity.CharacterTriggerWord;
+import com.example.sku_sw.domain.character.entity.CharacterVrm;
+import com.example.sku_sw.domain.character.enums.CharacterAppearanceType;
 import com.example.sku_sw.domain.character.enums.CharacterErrorCode;
+import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
@@ -628,21 +632,52 @@ public class BroadcastService {
                 .map(CharacterTriggerWord::getWord)
                 .toList();
 
-        List<BroadcastCharacterImageRedisDto> characterImages = character.getCharacterImage().getImageDetails()
-                .stream()
-                .sorted(Comparator.comparingLong(CharacterImageDetail::getId))
-                .map(imageDetail -> BroadcastCharacterImageRedisDto.builder()
-                        .emotion(imageDetail.getEmotion())
-                        .imageUrl(imageDetail.getImageUrl())
-                        .build())
-                .toList();
+        List<BroadcastCharacterImageRedisDto> characterImages;
+        String characterImagePreset;
+
+        /*
+            1. 캐릭터 외형 타입별 Redis 이미지 데이터 생성
+            - 2D인 경우 CharacterImage / CharacterImageDetail 기반으로 emotion별 이미지를 구성한다.
+            - 3D인 경우 CharacterVrm 기반으로 Emotion 전체 개수만큼 imageUrl=null 데이터를 구성한다.
+         */
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.TWO_D) {
+            CharacterImage characterImage = character.getCharacterImage();
+            if (characterImage == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND);
+            }
+
+            characterImages = characterImage.getImageDetails()
+                    .stream()
+                    .sorted(Comparator.comparingLong(CharacterImageDetail::getId))
+                    .map(imageDetail -> BroadcastCharacterImageRedisDto.builder()
+                            .emotion(imageDetail.getEmotion())
+                            .imageUrl(imageDetail.getImageUrl())
+                            .build())
+                    .toList();
+            characterImagePreset = characterImage.getPreset();
+        } else if (character.getCharacterAppearanceType() == CharacterAppearanceType.THREE_D) {
+            CharacterVrm characterVrm = character.getCharacterVrm();
+            if (characterVrm == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_VRM_NOT_FOUND);
+            }
+
+            characterImages = java.util.Arrays.stream(Emotion.values())
+                    .map(emotion -> BroadcastCharacterImageRedisDto.builder()
+                            .emotion(emotion)
+                            .imageUrl(null)
+                            .build())
+                    .toList();
+            characterImagePreset = characterVrm.getPresetId();
+        } else {
+            throw new CustomException(CharacterErrorCode.INVALID_CHARACTER_APPEARANCE_TYPE);
+        }
 
         BroadcastCharacterRedisDto result = BroadcastCharacterRedisDto.builder()
                 .characterId(character.getId())
                 .characterName(character.getName())
                 .characterGender(character.getGender())
                 .characterTriggerWords(characterTriggerWords)
-                .characterImagePreset(character.getCharacterImage().getPreset())
+                .characterImagePreset(characterImagePreset)
                 .characterImages(characterImages)
                 .characterPresetType(character.getCharacterPersona().getPresetType())
                 .isTalking(false)
@@ -914,11 +949,29 @@ public class BroadcastService {
      * @return : 대표 이미지 URL
      */
     private String extractCharacterImageUrl(Character character) {
-        return character.getCharacterImage().getImageDetails().stream()
-                .sorted(Comparator.comparingLong(CharacterImageDetail::getId))
-                .map(CharacterImageDetail::getImageUrl)
-                .findFirst()
-                .orElse("");
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.TWO_D) {
+            CharacterImage characterImage = character.getCharacterImage();
+            if (characterImage == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND);
+            }
+
+            return characterImage.getImageDetails().stream()
+                    .sorted(Comparator.comparingLong(CharacterImageDetail::getId))
+                    .map(CharacterImageDetail::getImageUrl)
+                    .findFirst()
+                    .orElse("");
+        }
+
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.THREE_D) {
+            CharacterVrm characterVrm = character.getCharacterVrm();
+            if (characterVrm == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_VRM_NOT_FOUND);
+            }
+
+            return characterVrm.getThumbnailUrl();
+        }
+
+        throw new CustomException(CharacterErrorCode.INVALID_CHARACTER_APPEARANCE_TYPE);
     }
 
     /**

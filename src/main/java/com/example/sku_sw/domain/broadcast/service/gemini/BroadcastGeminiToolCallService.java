@@ -62,7 +62,8 @@ public class BroadcastGeminiToolCallService {
         functionDeclarationNode.put(FIELD_NAME, FUNCTION_SET_TALKING_STATE);
         functionDeclarationNode.put(
                 "description",
-                "Set the broadcast character talking state when the streamer was not speaking to the AI."
+                "Use only when the latest streamer utterance is not directed at the AI and the AI should stay silent. " +
+                "Call with isTalking=false. Do not generate any spoken or text response along with this function call."
         );
 
         /*
@@ -75,7 +76,7 @@ public class BroadcastGeminiToolCallService {
         ObjectNode propertiesNode = parametersNode.putObject("properties");
         ObjectNode isTalkingNode = propertiesNode.putObject(ARG_IS_TALKING);
         isTalkingNode.put("type", "boolean");
-        isTalkingNode.put("description", "Whether the AI character should remain in talking mode.");
+        isTalkingNode.put("description", "Must be false when the streamer utterance is not directed at the AI. Set to false to indicate the AI should stay silent.");
 
         ArrayNode requiredNode = parametersNode.putArray("required");
         requiredNode.add(ARG_IS_TALKING);
@@ -100,7 +101,9 @@ public class BroadcastGeminiToolCallService {
         functionDeclarationNode.put(FIELD_NAME, FUNCTION_SET_RESPONSE_EMOTION);
         functionDeclarationNode.put(
                 "description",
-                "Set the current response emotion before generating the spoken answer."
+                "Call before any spoken or text answer. " +
+                "Do not include normal text with this function call. " +
+                "Generate the answer only after receiving the function response from the backend."
         );
 
         /*
@@ -113,7 +116,7 @@ public class BroadcastGeminiToolCallService {
         ObjectNode propertiesNode = parametersNode.putObject("properties");
         ObjectNode emotionNode = propertiesNode.putObject(ARG_EMOTION);
         emotionNode.put("type", "string");
-        emotionNode.put("description", "Emotion enum for the current spoken answer.");
+        emotionNode.put("description", "Emotion enum for the current spoken answer. Use TALKING when no specific emotion is clear.");
         ArrayNode emotionEnumNode = emotionNode.putArray("enum");
         Arrays.stream(Emotion.values())
                 .map(Enum::name)
