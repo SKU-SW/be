@@ -192,9 +192,10 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         /*
-            3. Gemini가 발신한 sessionResumptionUpdate는 무시 처리한다.
-            - setup payload에 sessionResumption 필드를 포함하지 않았음에도 native-audio 모델은 주기적으로 발신한다.
-            - 서버에서 handle을 저장/재사용하지 않으므로 동작상 무해하지만, 로그 노이즈를 줄이기 위해 조기 종료한다.
+            3. sessionResumptionUpdate를 Gemini WebSocket이 포함된 Session Bundle에 Update
+            - Gemini Live WebSocket session은 일정 시간 이상 WebSocket으로 데이터를 보내지 않으면 자동으로 세션을 종료한다
+            - 이때, gemini가 보내는 resumptionUpdate 이벤트의 값을 통해 기존 세션에 다시 연결할 수 있다.
+            - 각 WebSocket Session이 포함되는 Session Bundle 해당 resumptionUpdate 이벤트 값을 저장해놓는다.
          */
         if (rootNode.has("sessionResumptionUpdate")) {
             lastParsedEventType = "SESSION_RESUMPTION_UPDATE";
@@ -883,6 +884,11 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         return Duration.between(start, end).toMillis();
     }
 
+    /**
+     * Gemini로부터 Session Resumption Update 이벤트가 왔을 때, 해당 데이터를 파싱해 해당 Gemini Session이 포함된 Session Bundle에 저장한다.
+     * @param session
+     * @param sessionResumptionUpdateNode
+     */
     private void handleSessionResumptionUpdate(WebSocketSession session, JsonNode sessionResumptionUpdateNode) {
         String broadcastStreamId = resolveBroadcastStreamId(session);
         if (broadcastStreamId == null || sessionResumptionUpdateNode == null) {
@@ -894,12 +900,20 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
+        /*
+            1. Json newHandle 필드
+            - 새롭게 Gemini Session을 생성할 때, 해당 값을 Setup에 지정해주면 남아있는 기존 세션에 다시 연결할 수 있다.
+         */
         String newHandle = null;
         JsonNode newHandleNode = sessionResumptionUpdateNode.get("newHandle");
         if (newHandleNode != null && !newHandleNode.isNull()) {
             newHandle = newHandleNode.asText();
         }
 
+        /*
+            2. Json resumable 필드
+            - 해당 Session이 재연결이 가능한지 여부를 담고 있는 Boolean 필드
+         */
         boolean resumable = sessionResumptionUpdateNode.path("resumable").asBoolean(false);
         bundle.updateGeminiSessionResumptionMetadata(newHandle, resumable, Instant.now());
 

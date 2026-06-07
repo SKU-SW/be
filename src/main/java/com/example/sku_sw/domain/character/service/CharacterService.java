@@ -6,8 +6,10 @@ import com.example.sku_sw.domain.character.dto.CharacterListResDto;
 import com.example.sku_sw.domain.character.dto.CharacterSelectResDto;
 import com.example.sku_sw.domain.character.dto.CharacterSettingsResDto;
 import com.example.sku_sw.domain.character.dto.CharacterUpdateReqDto;
+import com.example.sku_sw.domain.character.dto.CharacterVrmResDto;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.entity.CharacterImage;
+import com.example.sku_sw.domain.character.entity.CharacterVrm;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
 import com.example.sku_sw.domain.character.entity.CharacterPersona;
 import com.example.sku_sw.domain.character.entity.CharacterTriggerWord;
@@ -18,9 +20,11 @@ import com.example.sku_sw.domain.character.repository.CharacterImageRepository;
 import com.example.sku_sw.domain.character.repository.CharacterPersonaRepository;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.character.repository.CharacterTriggerWordRepository;
+import com.example.sku_sw.domain.character.repository.CharacterVrmRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
+import com.example.sku_sw.global.util.S3Util;
 import com.example.sku_sw.global.response.SliceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,71 +52,88 @@ public class CharacterService {
     private final CharacterImageDetailRepository characterImageDetailRepository;
     private final UserRepository userRepository;
     private final CharacterMapper characterMapper;
+    private final CharacterVrmRepository characterVrmRepository;
+    private final S3Util s3Util;
 
     /**
      * 캐릭터 생성
      * - 사용자가 새로운 캐릭터를 생성한다.
+     * - 외형 타입(2D/3D)에 따라 CharacterImage 또는 CharacterVrm을 조회한다.
      * - 성별 검증, 호출어 정규화, 페르소나 설정 등을 처리한다.
      * @param userId : 캐릭터를 생성하는 사용자 ID
      * @param req : 캐릭터 생성 요청 DTO
-     * @return : 생성된 캐릭터 상세 정보
      */
     @Transactional
     public void createCharacter(Long userId, CharacterCreateReqDto req) {
         log.info("[CharacterService] createCharacter() - START | userId: {}, characterName: {}", userId, req.characterName());
+
         /*
             1. 사용자 조회
-            - userId로 사용자를 조회하고, 존재하지 않으면 CHARACTER_NOT_FOUND 예외를 발생시킨다.
+            - userId로 사용자를 조회하고, 존재하지 않으면 USER_NOT_FOUND 예외를 발생시킨다.
         */
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.USER_NOT_FOUND));
 
         /*
-             2. CharacterImage 조회 및 성별 검증
-            - characterImageId로 캐릭터 이미지를 조회하고, 존재하지 않으면 CHARACTER_IMAGE_NOT_FOUND 예외를 발생시킨다.
-            - 조회한 캐릭터 이미지의 성별과 캐릭터의 성별이 일치하는지 검증한다.
+            2. 외형 타입에 따라 CharacterImage 또는 CharacterVrm 조회 및 성별 검증
+            - TWO_D: CharacterImage를 조회하고 성별을 검증한다.
+            - THREE_D: CharacterVrm을 조회하고 성별을 검증한다.
         */
-        CharacterImage characterImage = characterImageRepository.findById(req.characterImageId())
-                .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND));
-        if(characterImage.getGender() != req.gender()){
-            throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_TYPE_GENDER_MISMATCH);
+        CharacterImage characterImage = null;
+        CharacterVrm characterVrm = null;
+
+        if (req.characterAppearanceType() == CharacterAppearanceType.TWO_D) {
+            characterImage = characterImageRepository.findById(req.targetId())
+                    .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND));
+            if (characterImage.getGender() != req.gender()) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_TYPE_GENDER_MISMATCH);
+            }
+        } else {
+            characterVrm = characterVrmRepository.findById(req.targetId())
+                    .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_VRM_NOT_FOUND));
+            if (characterVrm.getGender() != req.gender()) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_VRM_TYPE_GENDER_MISMATCH);
+            }
         }
 
         /*
-            4. 호출어 정규화
+            3. 호출어 정규화
             - trim, 중복 제거, 오름차순 정렬, 최대 3개 검증, 최소 1개 검증
         */
         List<String> normalizedTriggerWords = normalizeTriggerWords(req.triggerWords());
 
         /*
-            5. Character 엔티티 생성 (persona 없이 먼저 생성)
+            4. Character 엔티티 생성 (persona 없이 먼저 생성)
             - Builder 패턴을 사용하여 Character 엔티티를 생성한다.
+            - 외형 타입에 따라 characterImage 또는 characterVrm 중 하나만 설정된다.
         */
         Character character = Character.builder()
                 .user(user)
                 .name(req.characterName())
                 .gender(req.gender())
+                .characterAppearanceType(req.characterAppearanceType())
                 .characterImage(characterImage)
+                .characterVrm(characterVrm)
                 .build();
 
         /*
-            6. Character 저장 (ID 할당을 위해 먼저 저장)
+            5. Character 저장 (ID 할당을 위해 먼저 저장)
             - CharacterPersona는 Character의 ID가 필요하므로 먼저 저장한다.
         */
         character = characterRepository.save(character);
 
         /*
-            7. CharacterPersona 생성 및 저장 (별도 저장 필요)
+            6. CharacterPersona 생성 및 저장 (별도 저장 필요)
             - OneToOne 관계에서 CharacterPersona는 owning side이므로 별도 저장이 필요하다.
         */
         CharacterPersona persona = CharacterPersona.builder()
                 .character(character)
                 .presetType(req.characterPersona().presetType())
                 .build();
-        persona = characterPersonaRepository.save(persona);
+        characterPersonaRepository.save(persona);
 
         /*
-            8. CharacterTriggerWord 엔티티 리스트 생성 및 추가
+            7. CharacterTriggerWord 엔티티 리스트 생성 및 추가
             - 정규화된 호출어를 기반으로 CharacterTriggerWord 엔티티 리스트를 생성한다.
             - sortOrder는 0부터 시작한다.
         */
@@ -167,10 +188,15 @@ public class CharacterService {
             3. Slice 조회 결과 mapping
          */
         SliceResponse<CharacterListResDto> result = SliceResponse.of(slice, character -> {
-            // 1. 이미지 URL 추출 (이때 Hibernate가 배치 사이즈만큼 IN 쿼리로 한 번에 가져옴)
+            // 1. 외형 URL 추출 (2D: 캐릭터 이미지, 3D: VRM 썸네일)
             String imageUrl = "";
-            if (!character.getCharacterImage().getImageDetails().isEmpty()) {
-                imageUrl = character.getCharacterImage().getImageDetails().get(0).getImageUrl();
+            if (character.getCharacterAppearanceType() == CharacterAppearanceType.TWO_D
+                    && character.getCharacterImage() != null
+                    && !character.getCharacterImage().getImageDetails().isEmpty()) {
+                imageUrl = s3Util.createFullCharacterImageUrl(character.getCharacterImage().getImageDetails().get(0).getImageUrl());
+            } else if (character.getCharacterAppearanceType() == CharacterAppearanceType.THREE_D
+                    && character.getCharacterVrm() != null) {
+                imageUrl = s3Util.createFullCharacterImageUrl(character.getCharacterVrm().getThumbnailUrl());
             }
 
             // 2. TriggerWords 추출 (이때도 Hibernate가 배치 사이즈만큼 IN 쿼리로 한 번에 가져옴)
@@ -189,7 +215,7 @@ public class CharacterService {
                     .characterImageUrl(imageUrl)
                     .triggerWords(triggerWords)
                     .presetType(character.getCharacterPersona().getPresetType())
-                     .isSelected(isSelected) // DTO에 isSelected 필드가 있다면 세팅해 주세요
+                    .isSelected(isSelected) // DTO에 isSelected 필드가 있다면 세팅해 주세요
                     .build();
         });
 
@@ -237,9 +263,17 @@ public class CharacterService {
 
         /*
             4. 캐릭터 대표 이미지 URL 조회
-            - CharacterImageDetail에서 첫 번째 이미지 URL을 가져온다.
+            - 2D: CharacterImageDetail에서 첫 번째 이미지 URL을 가져온다.
+            - 3D: CharacterVrm의 썸네일 URL을 가져온다.
         */
-        String characterImageUrl = getCharacterImageUrl(character.getCharacterImage().getId());
+        String characterImageUrl = "";
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.TWO_D
+                && character.getCharacterImage() != null) {
+            characterImageUrl = s3Util.createFullCharacterImageUrl(getCharacterImageUrl(character.getCharacterImage().getId()));
+        } else if (character.getCharacterAppearanceType() == CharacterAppearanceType.THREE_D
+                && character.getCharacterVrm() != null) {
+            characterImageUrl = s3Util.createFullCharacterImageUrl(character.getCharacterVrm().getThumbnailUrl());
+        }
 
         /*
             5. ResponseDto Mapping
@@ -259,7 +293,7 @@ public class CharacterService {
     /**
      * 캐릭터 생성 설정 조회
      * - 캐릭터 생성에 필요한 모든 설정 정보를 조회한다.
-     * - VoiceType, CharacterImage, PresetType, SpeechStyle, Personality 목록을 반환한다.
+     * - CharacterImage, CharacterVrm, PresetType 목록을 반환한다.
      * @return : 캐릭터 생성 설정 정보
      */
     @Transactional(readOnly = true)
@@ -273,17 +307,37 @@ public class CharacterService {
         List<CharacterImage> characterImages = characterImageRepository.findAllWithImageDetails();
 
         /*
-             2. CharacterSettingsResDto 생성
-             - characterImages, presetTypes를 설정한다.
+             2. CharacterVrm 목록 조회
+             - 모든 CharacterVrm을 조회한다.
+         */
+        List<CharacterVrm> characterVrms = characterVrmRepository.findAll();
+
+        /*
+             3. CharacterSettingsResDto 생성
+             - characterImages, vrmPresets, personaPresetTypes를 설정한다.
          */
         CharacterSettingsResDto result = CharacterSettingsResDto.builder()
                 .characterImages(characterImages.stream()
                         .map(image -> {
-                            String imageUrl = image.getImageDetails().getFirst().getImageUrl();
+                            String imageUrl = s3Util.createFullCharacterImageUrl(image.getImageDetails().getFirst().getImageUrl());
                             return characterMapper.toCharacterImageResDto(image, imageUrl);
                         })
                         .collect(Collectors.toList()))
-                .presetTypes(Arrays.asList(PresetType.values()))
+                .vrmPresets(characterVrms.stream()
+                        .map(vrm -> {
+                            String thumbnailUrl = s3Util.createFullCharacterImageUrl(vrm.getThumbnailUrl());
+                            String vrmUrl = s3Util.createFullCharacterImageUrl(vrm.getVrmUrl());
+                            return CharacterVrmResDto.builder()
+                                    .characterVrmId(vrm.getId())
+                                    .presetId(vrm.getPresetId())
+                                    .gender(vrm.getGender())
+                                    .name(vrm.getName())
+                                    .thumbnailUrl(thumbnailUrl)
+                                    .vrmUrl(vrmUrl)
+                                    .build();
+                        })
+                        .collect(Collectors.toList()))
+                .personaPresetTypes(Arrays.asList(PresetType.values()))
                 .build();
 
         log.info("[CharacterService] getSettings() - END");
@@ -293,10 +347,10 @@ public class CharacterService {
     /**
      * 캐릭터 수정
      * - 기존 캐릭터의 정보를 전체 수정한다.
+     * - 외형 타입(2D/3D)에 따라 CharacterImage 또는 CharacterVrm을 조회한다.
      * @param userId : 수정하는 사용자 ID
      * @param characterId : 수정할 캐릭터 ID
      * @param req : 캐릭터 수정 요청 DTO
-     * @return : 수정된 캐릭터 상세 정보
      */
     @Transactional
     public void updateCharacter(Long userId, Long characterId, CharacterUpdateReqDto req) {
@@ -311,37 +365,47 @@ public class CharacterService {
                 .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_NOT_FOUND));
 
         /*
-             2. CharacterImage 조회 및 성별 검증
-            - characterImageId로 캐릭터 이미지를 조회하고, 존재하지 않으면 CHARACTER_IMAGE_NOT_FOUND 예외를 발생시킨다.
-            - 캐릭터의 성별과 캐릭터 이미지의 성별이 일치하는지 검증한다.
+            2. 외형 타입에 따라 CharacterImage 또는 CharacterVrm 조회 및 성별 검증
+            - TWO_D: CharacterImage를 조회하고 성별을 검증한다.
+            - THREE_D: CharacterVrm을 조회하고 성별을 검증한다.
         */
-        CharacterImage characterImage = characterImageRepository.findById(req.characterImageId()).orElseThrow(
-                ()-> new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND)
-        );
-        if(characterImage.getGender() != req.gender()) {
-            throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_TYPE_GENDER_MISMATCH);
+        CharacterImage characterImage = null;
+        CharacterVrm characterVrm = null;
+
+        if (req.characterAppearanceType() == CharacterAppearanceType.TWO_D) {
+            characterImage = characterImageRepository.findById(req.targetId())
+                    .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND));
+            if (characterImage.getGender() != req.gender()) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_TYPE_GENDER_MISMATCH);
+            }
+        } else {
+            characterVrm = characterVrmRepository.findById(req.targetId())
+                    .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_VRM_NOT_FOUND));
+            if (characterVrm.getGender() != req.gender()) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_VRM_TYPE_GENDER_MISMATCH);
+            }
         }
 
         /*
-            4. 호출어 정규화
+            3. 호출어 정규화
             - trim, 중복 제거, 오름차순 정렬, 최대 3개 검증, 최소 1개 검증
         */
         List<String> normalizedTriggerWords = normalizeTriggerWords(req.triggerWords());
 
         /*
-            5. 기존 CharacterPersona 데이터 수정
+            4. 기존 CharacterPersona 데이터 수정
             - characterRepository.findByIdAndUserId()에서 CharacterPersona fetch join으로 조회 완료
             - 기존에 존재하던 캐릭터 페르소나 인스턴스의 정보를 수정한다.
         */
         character.getCharacterPersona().updateCharacterPersona(req.characterPersona().presetType());
 
         /*
-            6. 기존 TriggerWords 일괄 삭제
+            5. 기존 TriggerWords 일괄 삭제
         */
         characterTriggerWordRepository.deleteByCharacterId(characterId);
-        
+
         /*
-            7. 새로운 CharacterTriggerWord 생성
+            6. 새로운 CharacterTriggerWord 생성
             - 정규화된 호출어를 기반으로 CharacterTriggerWord 엔티티 리스트를 생성한다.
         */
         List<CharacterTriggerWord> newTriggerWords = new ArrayList<>();
@@ -355,10 +419,10 @@ public class CharacterService {
         character.getTriggerWords().addAll(newTriggerWords);
 
         /*
-            8. Character 정보 업데이트
-            - name, gender, voiceType, characterImage를 업데이트한다.
+            7. Character 정보 업데이트
+            - name, gender, characterImage, characterVrm을 업데이트한다.
         */
-        character.updateCharacter(req.characterName(), req.gender(), characterImage);
+        character.updateCharacter(req.characterName(), req.gender(), characterImage, characterVrm);
 
         log.info("[CharacterService] updateCharacter() - END | characterId: {}", characterId);
     }

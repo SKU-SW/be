@@ -5,7 +5,9 @@ import com.example.sku_sw.domain.character.dto.CharacterImageResDto;
 import com.example.sku_sw.domain.character.dto.CharacterListResDto;
 import com.example.sku_sw.domain.character.dto.CharacterPersonaResDto;
 import com.example.sku_sw.domain.character.dto.CharacterSelectResDto;
+import com.example.sku_sw.domain.character.dto.CharacterVrmResDto;
 import com.example.sku_sw.domain.character.entity.Character;
+import com.example.sku_sw.domain.character.entity.CharacterVrm;
 import com.example.sku_sw.domain.character.entity.CharacterImage;
 import com.example.sku_sw.domain.character.entity.CharacterPersona;
 import java.util.List;
@@ -74,4 +76,12 @@ public interface CharacterMapper {
      * @return : 변환된 CharacterSelectResDto
      */
     CharacterSelectResDto toSelectResDto(Long selectedCharacterId, Long deselectedCharacterId);
+
+    /**
+     * CharacterVrm Entity -> CharacterVrmResDto 변환
+     * @param characterVrm : 변환할 CharacterVrm Entity
+     * @return : 변환된 CharacterVrmResDto
+     */
+    @Mapping(target = "characterVrmId", source = "characterVrm.id")
+    CharacterVrmResDto toCharacterVrmResDto(CharacterVrm characterVrm);
 }
