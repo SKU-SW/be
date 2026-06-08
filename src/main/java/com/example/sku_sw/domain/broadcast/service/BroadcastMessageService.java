@@ -87,6 +87,14 @@ public class BroadcastMessageService {
         }
         Boolean isTalking = character.getIsTalking();
 
+        /*
+            4. Gemini Session으로 메시지를 보내기 위한 검증
+            - 입력된 데이터에 Trigger Word가 없는데 isTalking 상태가 아닌 경우
+            - Gemini Seesion이 열려있지 않은 경우
+            - Gemini Session이 Refresh 요청 중인 상태인 경우
+            - WebSocket Session Bundle이 준비되어있지 않은 경우
+            를 제외한다.
+         */
         if (!hasTriggerWord && (isTalking == null || !isTalking)) {
             log.info("[BroadcastMessageService] handleClientMessage() - No trigger word and not talking, skipping | streamId: {}", broadcastStreamId);
             log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: skip", broadcastStreamId);
@@ -107,7 +115,6 @@ public class BroadcastMessageService {
             return;
         }
 
-
         if (!bundle.isWebSocketSessionBundleReady()) {
             log.info("[BroadcastMessageService] handleClientMessage() - Gemini Session Bundle is Not Ready | streamId: {}, generation: {}",
                     broadcastStreamId, generation);
@@ -115,11 +122,13 @@ public class BroadcastMessageService {
             return;
         }
 
+        /*
+            5. Trigger Word가 감지된 경우, Redis에 해당 AI 캐릭터가 talking 중인 것으로 설정 및 데이터 Gemini로 전송  
+         */
         if (hasTriggerWord) {
             log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}", broadcastStreamId);
             broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
         }
-
         sendPendingDialoguesToGemini(broadcastStreamId, generation, character);
 
         log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: gemini_called", broadcastStreamId);

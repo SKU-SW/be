@@ -80,9 +80,10 @@ public class Character extends BaseTimeEntity {
      * @param characterImage : 수정할 2D 캐릭터 이미지 (3D인 경우 null)
      * @param characterVrm : 수정할 3D 캐릭터 VRM (2D인 경우 null)
      */
-    public void updateCharacter(String name, Gender gender, CharacterImage characterImage, CharacterVrm characterVrm) {
+    public void updateCharacter(String name, Gender gender, CharacterAppearanceType characterAppearanceType, CharacterImage characterImage, CharacterVrm characterVrm) {
         this.name = name;
         this.gender = gender;
+        this.characterAppearanceType = characterAppearanceType;
         this.characterImage = characterImage;
         this.characterVrm = characterVrm;
     }
