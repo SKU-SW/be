@@ -5,6 +5,8 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateReqDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateResDto;
 import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.GlobalResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,8 +18,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
@@ -260,6 +265,44 @@ public interface BroadcastControllerDocs {
 
             @Parameter(description = "시청자 채팅 조회 여부", required = true)
             @RequestParam Boolean viewerDialogue
+    );
+
+    @Operation(summary = "AI 캐릭터 편승 태도 수정", description = """
+            현재 로그인한 스트리머의 진행 중인 방송에서 AI 캐릭터의 편승 태도를 수정하는 API입니다.
+
+            [Request Header]
+            - `Authorization: Bearer <Access Token>` 필요
+
+            [Request Body]
+            - `version`: 편승 태도 버전 (`AUTO` | `MANUAL`)
+              - `AUTO`: 채팅 여론에 따라 자동으로 편승 태도 판별 (tendency는 NEUTRAL로 리셋되며 자동 판별 재개)
+              - `MANUAL`: 스트리머가 지정한 편승 태도로 고정 (tendency 필수)
+            - `tendency`: 편승 태도 값 (`POSITIVE` | `NEUTRAL` | `NEGATIVE`)
+              - `MANUAL` 모드에서만 적용됨. `AUTO` 모드에서는 무시
+
+            [Response Body]
+            - `prevVersion`: 이전 편승 태도 버전 (`AUTO` | `MANUAL`)
+            - `prevTendency`: 이전 편승 태도 값 (`POSITIVE` | `NEUTRAL` | `NEGATIVE`)
+
+            [예외]
+            - 진행 중인 방송이 없으면 404 예외가 발생합니다.
+            """)
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "AI 캐릭터 편승 태도 수정 성공",
+                    content = @Content(schema = @Schema(implementation = BroadcastTendencyUpdateResDto.class))
+            ),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 파라미터", content = @Content),
+            @ApiResponse(responseCode = "401", description = "인증 실패 / 토큰 만료", content = @Content),
+            @ApiResponse(responseCode = "403", description = "접근 권한 없음", content = @Content),
+            @ApiResponse(responseCode = "404", description = "진행 중인 방송 없음", content = @Content),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content)
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/character/tendency")
+    ResponseEntity<GlobalResponse<BroadcastTendencyUpdateResDto>> updateCharacterTendency(
+            @RequestBody @Valid BroadcastTendencyUpdateReqDto reqDto
     );
 
 }

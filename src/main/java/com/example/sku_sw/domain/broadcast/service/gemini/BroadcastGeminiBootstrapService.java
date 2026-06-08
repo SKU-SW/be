@@ -42,6 +42,7 @@ public class BroadcastGeminiBootstrapService {
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final GeminiUtil geminiUtil;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastPromptBuilder broadcastPromptBuilder;
@@ -195,6 +196,18 @@ public class BroadcastGeminiBootstrapService {
          */
         sessionRegistry.updateBundleStatusIfCurrent(broadcastStreamId, generation, WebSocketSessionBundleStatus.READY);
         sendStatusMessage(clientSession, WebSocketSessionBundleStatus.READY.name(), "WebSocket 연결 성공");
+
+        /*
+            4. 초기 연결 직후 first resumption event를 전송한다.
+            - 사용자 입력이 없어도 첫 sessionResumptionUpdate를 확보할 수 있도록 bootstrap control 요청을 전송한다.
+            - 실패하더라도 bootstrap 자체는 유지하고 로깅만 수행한다.
+         */
+        try {
+            broadcastGeminiRequestService.getFirstResumptionEvent(broadcastStreamId, generation);
+        } catch (Exception e) {
+            log.warn("[BroadcastGeminiBootstrapService] handleBootstrapSuccess() - First resumption event request failed | streamId: {}, generation: {}, error: {}",
+                    broadcastStreamId, generation, e.getMessage());
+        }
 
         log.info("[BroadcastGeminiBootstrapService] handleBootstrapSuccess() - END | streamId: {}, generation: {}",
                 broadcastStreamId, generation);

@@ -72,8 +72,8 @@ class GeminiLiveWebSocketHandlerTest {
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiResponseService,
-                applicationEventPublisher,
                 broadcastGeminiToolCallService,
+                applicationEventPublisher,
                 DIALOGUE_MODEL,
                 SYSTEM_PROMPT,
                 null,
@@ -106,6 +106,8 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("systemInstruction").get("parts").get(0).get("text").asText()).isEqualTo(SYSTEM_PROMPT);
         assertThat(setupNode.get("tools")).hasSize(1);
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(2);
+        assertThat(setupNode.has("sessionResumption")).isTrue();
+        assertThat(setupNode.get("historyConfig").get("initialHistoryInClientContent").asBoolean()).isTrue();
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0).get("name").asText()).isEqualTo("set_talking_state");
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
                 .get("parameters").get("properties").get("isTalking").get("type").asText()).isEqualTo("boolean");
@@ -152,6 +154,52 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(bundle.getLatestGeminiResumptionHandle()).isEqualTo("resume-1");
         assertThat(bundle.isLatestGeminiResumable()).isTrue();
         assertThat(bundle.getLatestGeminiResumptionUpdatedAt()).isNotNull();
+        assertThat(geminiLiveWebSocketHandler.isGeminiSessionFirstResumptionEnd()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Gemini first resumption 진행 중 serverContent 수신 시 일반 응답 처리 없이 request-flight만 감소한다")
+    void Gemini_first_resumption_진행중_serverContent_억제() throws Exception {
+        // given
+        WebSocketSession geminiSession = mock(WebSocketSession.class);
+        WebSocketSession clientSession = mock(WebSocketSession.class);
+        given(geminiSession.getId()).willReturn("gemini-1");
+        given(geminiSession.isOpen()).willReturn(true);
+
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
+        given(geminiSession.getAttributes()).willReturn(attributes);
+
+        BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
+                .clientSession(clientSession)
+                .generation(1L)
+                .status(WebSocketSessionBundleStatus.READY)
+                .build();
+        bundle.registerGeminiSession(geminiSession);
+        bundle.incrementRequestFlight();
+        given(sessionRegistry.getSessionBundle("stream-1")).willReturn(bundle);
+
+        geminiLiveWebSocketHandler.markFirstResumptionEventStarted();
+
+        String payload = """
+                {
+                  "serverContent": {
+                    "outputTranscription": {
+                      "text": "숨김 응답"
+                    },
+                    "turnComplete": true
+                  }
+                }
+                """;
+
+        // when
+        geminiLiveWebSocketHandler.handleTextMessage(geminiSession, new TextMessage(payload));
+
+        // then
+        verify(broadcastGeminiResponseService, never()).forwardStreamingChunk(any(), any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any(), any());
+        verify(broadcastGeminiResponseService, times(1)).handleGeminiTurnFinished("stream-1", 1L, bundle);
+        assertThat(geminiLiveWebSocketHandler.isGeminiSessionFirstResumptionEventInProgress()).isFalse();
     }
 
     @Test

@@ -5,6 +5,8 @@ import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
 import com.example.sku_sw.domain.auth.service.AuthService;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateReqDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterImageRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
@@ -23,6 +25,7 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.enums.TendencyVersion;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
@@ -1189,6 +1192,55 @@ public class BroadcastService {
                     dialogue.getCreatedAt()
             );
         }
+    }
+
+    /**
+     * AI 캐릭터 편승 태도를 수정하는 함수
+     * - version=AUTO: tendencyAutoUpdate를 true로 설정, tendency를 NEUTRAL로 리셋 (자동 판별 모드 전환)
+     * - version=MANUAL: tendencyAutoUpdate를 false로 설정, tendency를 지정된 값으로 고정
+     * @param userId : 요청 사용자 ID
+     * @param reqDto : 편승 태도 수정 요청 DTO
+     * @return : 이전 상태 정보를 담은 응답 DTO
+     */
+    public BroadcastTendencyUpdateResDto updateCharacterTendency(Long userId, BroadcastTendencyUpdateReqDto reqDto) {
+        log.info("[BroadcastService] updateCharacterTendency() - START | userId: {}, version: {}, tendency: {}",
+                userId, reqDto.version(), reqDto.tendency());
+
+        /*
+            1. 활성 방송 조회
+            - userId 기준 진행 중인 방송이 없으면 ACTIVE_BROADCAST_NOT_FOUND 예외를 발생시킨다.
+         */
+        Broadcast activeBroadcast = broadcastRepository.findActiveByUserId(userId, BroadcastStatus.BROADCASTING)
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.ACTIVE_BROADCAST_NOT_FOUND));
+
+        /*
+            2. version에 따라 Redis 원자 업데이트 수행
+            - AUTO: tendencyAutoUpdate=true, tendency=NEUTRAL로 리셋
+            - MANUAL: tendencyAutoUpdate=false, tendency=reqDto.tendency()로 고정
+         */
+        String[] prevValues;
+        if (reqDto.version() == TendencyVersion.AUTO) {
+            prevValues = broadcastRedisUtil.updateBroadcastCharacterTendencyAuto(activeBroadcast.getStreamId());
+        } else {
+            prevValues = broadcastRedisUtil.updateBroadcastCharacterTendencyManually(
+                    activeBroadcast.getStreamId(), reqDto.tendency());
+        }
+
+        /*
+            3. ResponseDto 생성
+            - Lua 스크립트에서 반환된 이전 상태 값을 DTO로 매핑한다.
+         */
+        TendencyVersion prevVersion = "true".equals(prevValues[1]) ? TendencyVersion.AUTO : TendencyVersion.MANUAL;
+        AiCharacterTendency prevTendency = AiCharacterTendency.valueOf(prevValues[0]);
+
+        BroadcastTendencyUpdateResDto result = BroadcastTendencyUpdateResDto.builder()
+                .prevVersion(prevVersion)
+                .prevTendency(prevTendency)
+                .build();
+
+        log.info("[BroadcastService] updateCharacterTendency() - END | prevVersion: {}, prevTendency: {}",
+                result.prevVersion(), result.prevTendency());
+        return result;
     }
 
 }

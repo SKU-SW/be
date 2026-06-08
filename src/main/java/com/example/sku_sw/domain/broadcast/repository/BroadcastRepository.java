@@ -94,7 +94,8 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
     @Query("select b " +
             "from Broadcast b " +
             "join fetch b.character c " +
-            "join fetch c.characterImage ci " +
+            "left join fetch c.characterImage ci " +
+            "left join fetch c.characterVrm cv " +
             "join fetch c.characterPersona cp " +
             "where c.user.id = :userId " +
             "and b.status = :status")

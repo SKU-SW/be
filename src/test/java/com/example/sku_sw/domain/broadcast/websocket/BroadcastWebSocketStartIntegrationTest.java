@@ -14,6 +14,8 @@ import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveSer
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
+import com.example.sku_sw.domain.chat.util.FastApiUtil;
 import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -89,6 +91,12 @@ class BroadcastWebSocketStartIntegrationTest {
     @Mock
     private BroadcastPromptBuilder broadcastPromptBuilder;
 
+    @Mock
+    private ChatRedisUtil chatRedisUtil;
+
+    @Mock
+    private FastApiUtil fastApiUtil;
+
     private ObjectMapper objectMapper;
     private BroadcastWebSocketSessionRegistry sessionRegistry;
     private BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
@@ -105,6 +113,7 @@ class BroadcastWebSocketStartIntegrationTest {
                 objectMapper,
                 sessionRegistry,
                 broadcastGeminiLiveService,
+                broadcastGeminiRequestService,
                 geminiUtil,
                 broadcastRedisUtil,
                 broadcastPromptBuilder
@@ -121,7 +130,9 @@ class BroadcastWebSocketStartIntegrationTest {
                 broadcastRepository,
                 transactionTemplate,
                 broadcastGeminiRequestService,
-                applicationEventPublisher
+                applicationEventPublisher,
+                chatRedisUtil,
+                fastApiUtil
         );
     }
 

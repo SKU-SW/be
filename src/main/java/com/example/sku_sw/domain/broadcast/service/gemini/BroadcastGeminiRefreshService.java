@@ -217,10 +217,19 @@ public class BroadcastGeminiRefreshService {
         /*
              3. 신규 Gemini 세션과 핸들러를 bundle에 등록하고 READY 상태로 전환한다.
             - 이후 backlog를 순서대로 replay하고, 마지막에 이전 Gemini 세션을 종료한다.
+            - 만약 Redis에 replay해야할 데이터가 없는 경우, 새롭게 생성된 Gemini Session에 First Resumption Event를 보내 응답을 받아온다.
          */
         GeminiLiveWebSocketHandler oldHandler = bundle.getGeminiHandler();
         registerNewGeminiSessionToSessionBundleAndClearRefreshingStatus(bundle, newGeminiSession, newHandler);
         replayDialogues(broadcastStreamId, generation, replayCandidates, "handleRefreshSuccess");
+        if (replayCandidates == null || replayCandidates.isEmpty()) {
+            try {
+                broadcastGeminiRequestService.getFirstResumptionEvent(broadcastStreamId, generation);
+            } catch (Exception e) {
+                log.warn("[BroadcastGeminiRefreshService] handleRefreshSuccess() - First resumption event request failed | streamId: {}, generation: {}, error: {}",
+                        broadcastStreamId, generation, e.getMessage());
+            }
+        }
 
         if (oldGeminiSession != null && oldGeminiSession != newGeminiSession) {
             geminiUtil.closeGeminiSessionQuietly(

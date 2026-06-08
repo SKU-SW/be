@@ -5,6 +5,8 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateReqDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateResDto;
 import com.example.sku_sw.domain.broadcast.service.BroadcastService;
 import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.example.sku_sw.global.response.GlobalResponse;
@@ -65,5 +67,14 @@ public class BroadcastController implements BroadcastControllerDocs {
                 viewerDialogue
         );
         return ResponseEntity.ok(GlobalResponse.success("방송 대화 데이터 조회 성공", response));
+    }
+
+    @Override
+    public ResponseEntity<GlobalResponse<BroadcastTendencyUpdateResDto>> updateCharacterTendency(
+            BroadcastTendencyUpdateReqDto reqDto
+    ) {
+        Long userId = SecurityUtil.getCurrentUserId();
+        BroadcastTendencyUpdateResDto response = broadcastService.updateCharacterTendency(userId, reqDto);
+        return ResponseEntity.ok(GlobalResponse.success("AI 캐릭터 편승 태도 수정 완료", response));
     }
 }
