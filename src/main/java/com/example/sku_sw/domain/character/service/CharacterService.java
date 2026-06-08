@@ -422,7 +422,7 @@ public class CharacterService {
             7. Character 정보 업데이트
             - name, gender, characterImage, characterVrm을 업데이트한다.
         */
-        character.updateCharacter(req.characterName(), req.gender(), characterImage, characterVrm);
+        character.updateCharacter(req.characterName(), req.gender(), req.characterAppearanceType(), characterImage, characterVrm);
 
         log.info("[CharacterService] updateCharacter() - END | characterId: {}", characterId);
     }
