@@ -1,10 +1,13 @@
 package com.example.sku_sw.domain.chat.service;
 
+import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
+import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastKeywords;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
@@ -41,14 +44,16 @@ public class ChzzkChatMessageService {
     private final BroadcastRepository broadcastRepository;
     private final BroadcastStatsRepository broadcastStatsRepository;
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
+    private final BroadcastDialogueRepository broadcastDialogueRepository;
 
     /**
      * FastApi로부터 전달받은 Chzzk 채팅 메시지를 파싱하고,
-     * Redis 저장만 수행한다.
+     * Redis 및 BroadcastDialogue에 저장한다.
      * - 스트리머 채팅은 DialogueSubject.STREAMER로 저장한다.
      * - 일반 채팅은 Gemini 문맥 누적용 접두어를 포함한 문자열로 저장한다.
      * @param payload : FastApi가 전달한 JSON 형식의 채팅 메시지
      */
+    @Transactional
     public void processChatMessage(String payload) {
         log.info("[ChzzkChatMessageService] processChatMessage() - START | payload: {}", payload);
 
@@ -67,8 +72,27 @@ public class ChzzkChatMessageService {
               */
             DialogueSubject dialogueSubject = resolveDialogueSubject(message);
             String redisContent = buildRedisContent(message);
+            BroadcastInfoRedisDto broadcastInfoRedisDto = broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
 
-            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
+            /*
+                3. 채팅 데이터 BroadcastDialogue에 저장
+                - Redis 저장 시 반환된 cursorId를 활용한다.
+                - broadcastStreamId로 Broadcast 엔티티를 조회한 뒤,
+                  subject에 따라 createViewer() 또는 createStreamer()로 엔티티를 생성하여 저장한다.
+             */
+            Broadcast broadcast = broadcastRepository.findByStreamId(message.broadcastStreamId()).orElse(null);
+            if (broadcast != null) {
+                Long cursorId = broadcastInfoRedisDto.cursorId();
+                BroadcastDialogue dialogue = (dialogueSubject == DialogueSubject.STREAMER)
+                        ? BroadcastDialogue.createStreamer(cursorId, redisContent, broadcast)
+                        : BroadcastDialogue.createViewer(cursorId, redisContent, broadcast);
+                broadcastDialogueRepository.save(dialogue);
+                log.info("[ChzzkChatMessageService] processChatMessage() - Saved to BroadcastDialogue | cursorId: {}, subject: {}",
+                        cursorId, dialogueSubject);
+            } else {
+                log.warn("[ChzzkChatMessageService] processChatMessage() - Broadcast not found for DB save | streamId: {}",
+                        message.broadcastStreamId());
+            }
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());

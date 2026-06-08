@@ -77,4 +77,24 @@ public class BroadcastDialogue {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "broadcast_id", nullable = false)
     private Broadcast broadcast;
+
+    public static BroadcastDialogue createViewer(Long cursorId, String content, Broadcast broadcast) {
+        return BroadcastDialogue.builder()
+                .cursorId(cursorId)
+                .subject(DialogueSubject.VIEWER)
+                .content(content)
+                .createdAt(LocalDateTime.now())
+                .broadcast(broadcast)
+                .build();
+    }
+
+    public static BroadcastDialogue createStreamer(Long cursorId, String content, Broadcast broadcast) {
+        return BroadcastDialogue.builder()
+                .cursorId(cursorId)
+                .subject(DialogueSubject.STREAMER)
+                .content(content)
+                .createdAt(LocalDateTime.now())
+                .broadcast(broadcast)
+                .build();
+    }
 }

@@ -257,6 +257,88 @@ public class BroadcastRedisUtil {
     }
 
     /**
+     * Redis의 방송 캐릭터를 AUTO 모드로 원자 전환하는 함수
+     * - tendencyAutoUpdate를 true로 설정한다.
+     * - tendency를 NEUTRAL로 리셋한다.
+     * - Lua 스크립트를 사용하여 원자성을 보장한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : 업데이트 이전의 {tendency, tendencyAutoUpdate} (실패 시 null)
+     */
+    public String[] updateBroadcastCharacterTendencyAuto(String broadcastStreamId) {
+        log.info("[BroadcastRedisUtil] updateBroadcastCharacterTendencyAuto() - START | streamId: {}", broadcastStreamId);
+        String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
+
+        String luaScript =
+            "local jsonStr = redis.call('GET', KEYS[1]) " +
+            "if jsonStr == false then return nil end " +
+            "local prevTendency = string.match(jsonStr, '\"tendency\":\"([A-Z]+)\"') " +
+            "local prevAutoUpdate = string.find(jsonStr, '\"tendencyAutoUpdate\":true') ~= nil and 'true' or 'false' " +
+            "local updated = string.gsub(jsonStr, '\"tendencyAutoUpdate\":%a+', '\"tendencyAutoUpdate\":true') " +
+            "updated = string.gsub(updated, '\"tendency\":\"[A-Z]+\"', '\"tendency\":\"NEUTRAL\"') " +
+            "redis.call('SET', KEYS[1], updated) " +
+            "return {prevTendency, prevAutoUpdate}";
+
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setResultType(List.class);
+        script.setScriptText(luaScript);
+
+        List<?> result = redisTemplate.execute(script, Collections.singletonList(key));
+
+        if (result == null || result.isEmpty()) {
+            log.warn("[BroadcastRedisUtil] updateBroadcastCharacterTendencyAuto() - Failed | streamId: {}", broadcastStreamId);
+            return null;
+        }
+
+        String[] prevValues = new String[]{result.get(0).toString(), result.get(1).toString()};
+        log.info("[BroadcastRedisUtil] updateBroadcastCharacterTendencyAuto() - END | streamId: {}, prevTendency: {}, prevAutoUpdate: {}",
+                broadcastStreamId, prevValues[0], prevValues[1]);
+        return prevValues;
+    }
+
+    /**
+     * Redis의 방송 캐릭터를 MANUAL 모드로 원자 전환하는 함수
+     * - tendencyAutoUpdate를 false로 설정한다.
+     * - tendency를 지정된 값으로 고정한다.
+     * - Lua 스크립트를 사용하여 원자성을 보장한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param newTendency : 고정할 편승 태도 값
+     * @return : 업데이트 이전의 {tendency, tendencyAutoUpdate} (실패 시 null)
+     */
+    public String[] updateBroadcastCharacterTendencyManually(
+            String broadcastStreamId,
+            AiCharacterTendency newTendency
+    ) {
+        log.info("[BroadcastRedisUtil] updateBroadcastCharacterTendencyManually() - START | streamId: {}, tendency: {}", broadcastStreamId, newTendency);
+        String key = BROADCAST_CHARACTER_KEY_PREFIX + broadcastStreamId;
+
+        String luaScript =
+            "local jsonStr = redis.call('GET', KEYS[1]) " +
+            "if jsonStr == false then return nil end " +
+            "local prevTendency = string.match(jsonStr, '\"tendency\":\"([A-Z]+)\"') " +
+            "local prevAutoUpdate = string.find(jsonStr, '\"tendencyAutoUpdate\":true') ~= nil and 'true' or 'false' " +
+            "local updated = string.gsub(jsonStr, '\"tendencyAutoUpdate\":%a+', '\"tendencyAutoUpdate\":false') " +
+            "updated = string.gsub(updated, '\"tendency\":\"[A-Z]+\"', '\"tendency\":\"' .. ARGV[1] .. '\"') " +
+            "redis.call('SET', KEYS[1], updated) " +
+            "return {prevTendency, prevAutoUpdate}";
+
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setResultType(List.class);
+        script.setScriptText(luaScript);
+
+        List<?> result = redisTemplate.execute(script, Collections.singletonList(key), newTendency.name());
+
+        if (result == null || result.isEmpty()) {
+            log.warn("[BroadcastRedisUtil] updateBroadcastCharacterTendencyManually() - Failed | streamId: {}", broadcastStreamId);
+            return null;
+        }
+
+        String[] prevValues = new String[]{result.get(0).toString(), result.get(1).toString()};
+        log.info("[BroadcastRedisUtil] updateBroadcastCharacterTendencyManually() - END | streamId: {}, tendency: {}, prevTendency: {}, prevAutoUpdate: {}",
+                broadcastStreamId, newTendency, prevValues[0], prevValues[1]);
+        return prevValues;
+    }
+
+    /**
      * 방송 시작 시 summary slot을 초기화하는 함수
      * - 0번 인덱스에 기본 summary DTO를 저장한다.
      * @param broadcastStreamId : 방송 스트림 ID

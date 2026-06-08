@@ -16,8 +16,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
@@ -198,5 +200,36 @@ class BroadcastGeminiRefreshServiceTest {
 
         // then
         verify(bundle, never()).markRefreshInProgress();
+    }
+
+    @Test
+    @DisplayName("handleRefreshSuccess - replay 대상이 없으면 first resumption event를 요청한다")
+    void handleRefreshSuccess_replay_없음_first_resumption_event_요청() {
+        // given
+        String streamId = "stream-1";
+        long generation = 1L;
+        Long snapshotCursorId = 10L;
+        WebSocketSession oldGeminiSession = mock(WebSocketSession.class);
+        WebSocketSession newGeminiSession = mock(WebSocketSession.class);
+        given(newGeminiSession.getId()).willReturn("new-session");
+
+        BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
+        given(sessionRegistry.getSessionBundleIfCurrent(streamId, generation)).willReturn(bundle);
+        given(bundle.getGeminiHandler()).willReturn(null);
+        given(bundle.getClientSession()).willReturn(mock(WebSocketSession.class));
+        given(broadcastGeminiLiveService.consumePendingHandler("new-session")).willReturn(null);
+        given(broadcastRedisUtil.getActiveDialoguesAfterCursor(streamId, snapshotCursorId)).willReturn(List.of());
+
+        // when
+        refreshService.handleRefreshSuccess(streamId, generation, oldGeminiSession, newGeminiSession, snapshotCursorId);
+
+        // then
+        verify(bundle, times(1)).registerGeminiSession(newGeminiSession, null);
+        verify(bundle, times(1)).updateStatus(WebSocketSessionBundleStatus.READY);
+        verify(bundle, times(1)).clearRefreshRequested();
+        verify(bundle, times(1)).clearRefreshInProgress();
+        verify(bundle, times(1)).resetRefreshRetryCount();
+        verify(bundle, times(1)).clearRefreshSnapshotCursorId();
+        verify(broadcastGeminiRequestService, times(1)).getFirstResumptionEvent(streamId, generation);
     }
 }

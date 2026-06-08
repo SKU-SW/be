@@ -4,15 +4,20 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
+import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+
+import java.time.Instant;
 
 /**
  * Gemini Live WebSocket 메시지 전송 서비스
@@ -25,6 +30,18 @@ public class BroadcastGeminiRequestService {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
+    private final TaskScheduler taskScheduler;
+
+    @Value("${gemini.api.live-first-resumption-timeout-ms:3000}")
+    private Long liveFirstResumptionTimeoutMs;
+
+    private static final String FIRST_RESUMPTION_EVENT_TEXT = """
+            [SYSTEM_CONTROL:FIRST_RESUMPTION_EVENT]
+            This is backend-only initial history for session resumption activation.
+            Do not answer this message.
+            Do not call any tools for this message.
+            Treat this as hidden bootstrap control data only.
+            """;
 
     /**
      * 클라이언트 메시지를 Gemini Live WebSocket 세션으로 전송한다.
@@ -94,6 +111,125 @@ public class BroadcastGeminiRequestService {
     }
 
     /**
+     * 방송 시작 직후 Gemini 세션의 첫 resumption update 생성을 유도하는 bootstrap 요청을 전송한다.
+     * - 일반 사용자 메시지 흐름을 거치지 않고 raw clientContent payload를 직접 전송한다.
+     * - Gemini handler에 first resumption event 진행 상태를 기록한다.
+     * - 일정 시간 내 sessionResumptionUpdate가 오지 않으면 timeout 정리를 수행한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     */
+    public void getFirstResumptionEvent(String broadcastStreamId, long generation) {
+        log.info("[BroadcastGeminiRequestService] getFirstResumptionEvent() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        /*
+            1. 현재 generation의 Session Bundle과 Gemini Handler를 검증한다.
+            - bundle이 없거나 Gemini 전송 가능 상태가 아니면 예외를 발생시킨다.
+            - Gemini Handler가 없으면 first resumption state를 기록할 수 없으므로 예외를 발생시킨다.
+         */
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+        if (bundle == null || !bundle.canSendToGemini()) {
+            throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
+        }
+        if (bundle.getGeminiHandler() == null || bundle.getGeminiSession() == null) {
+            throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
+        }
+
+        try {
+            /*
+                2. first resumption event 진행 상태를 기록하고 request-flight를 증가시킨다.
+                - 이후 raw clientContent payload를 직접 Gemini 세션에 전송한다.
+             */
+            bundle.getGeminiHandler().markFirstResumptionEventStarted();
+            bundle.incrementRequestFlight();
+
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode clientContentNode = requestNode.putObject("clientContent");
+            ArrayNode turnsNode = clientContentNode.putArray("turns");
+            ObjectNode turnNode = turnsNode.addObject();
+            turnNode.put("role", "user");
+            ArrayNode partsNode = turnNode.putArray("parts");
+            partsNode.addObject().put("text", FIRST_RESUMPTION_EVENT_TEXT);
+            clientContentNode.put("turnComplete", true);
+
+            String requestPayload = objectMapper.writeValueAsString(requestNode);
+            bundle.getGeminiHandler().recordOutboundMessage("FIRST_RESUMPTION_EVENT", requestPayload);
+            bundle.getGeminiSession().sendMessage(new TextMessage(requestPayload));
+
+            /*
+                3. sessionResumptionUpdate 미수신 상황에 대비해 timeout 정리를 예약한다.
+                - timeout 시 아직 first resumption event가 진행 중이면 상태와 request-flight를 정리한다.
+             */
+            taskScheduler.schedule(
+                    () -> handleFirstResumptionEventTimeout(broadcastStreamId, generation, bundle),
+                    Instant.now().plusMillis(liveFirstResumptionTimeoutMs)
+            );
+        } catch (Exception e) {
+            clearFirstResumptionEventState(bundle, true);
+            log.error("[BroadcastGeminiRequestService] getFirstResumptionEvent() - Failed | streamId: {}, generation: {}, error: {}",
+                    broadcastStreamId, generation, e.getMessage(), e);
+            throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
+        }
+
+        log.info("[BroadcastGeminiRequestService] getFirstResumptionEvent() - END | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+    }
+
+    /**
+     * 시청자 채팅 메시지를 Gemini 세션의 초기 컨텍스트로 전달한다.
+     * - 모델 응답을 생성하지 않도록 clientContent/turnComplete:false 형식으로 전송한다.
+     * - request-flight는 증가시키지 않는다.
+     * @param message : CHZZK 채팅 메시지 DTO
+     */
+    public void sendViewerChatRequest(ChzzkChatMessageDto message) {
+        log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - START | streamId: {}",
+                message != null ? message.broadcastStreamId() : null);
+
+        /*
+            1. 방송 스트림에 연결된 현재 Session Bundle을 확인한다.
+            - Gemini 전송이 불가능한 상태면 로깅 후 종료한다.
+         */
+        if (message == null || message.broadcastStreamId() == null) {
+            log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | action: message_invalid");
+            return;
+        }
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(message.broadcastStreamId());
+        if (bundle == null || !bundle.canSendToGemini() || bundle.getGeminiSession() == null) {
+            log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | streamId: {}, action: skip",
+                    message.broadcastStreamId());
+            return;
+        }
+
+        try {
+            /*
+                2. 시청자/스트리머 메시지를 clientContent payload로 구성해 Gemini에 전송한다.
+                - turnComplete:false로 유지하여 모델 응답 생성 없이 컨텍스트만 적재한다.
+             */
+            ObjectNode requestNode = objectMapper.createObjectNode();
+            ObjectNode clientContentNode = requestNode.putObject("clientContent");
+            ArrayNode turnsNode = clientContentNode.putArray("turns");
+            ObjectNode turnNode = turnsNode.addObject();
+            turnNode.put("role", "user");
+            ArrayNode partsNode = turnNode.putArray("parts");
+            partsNode.addObject().put("text", buildViewerChatText(message));
+            clientContentNode.put("turnComplete", false);
+
+            String requestPayload = objectMapper.writeValueAsString(requestNode);
+            if (bundle.getGeminiHandler() != null) {
+                bundle.getGeminiHandler().recordOutboundMessage("VIEWER_CHAT_REQUEST", requestPayload);
+            }
+            bundle.getGeminiSession().sendMessage(new TextMessage(requestPayload));
+        } catch (Exception e) {
+            log.error("[BroadcastGeminiRequestService] sendViewerChatRequest() - Failed | streamId: {}, error: {}",
+                    message.broadcastStreamId(), e.getMessage(), e);
+        }
+
+        log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | streamId: {}",
+                message.broadcastStreamId());
+    }
+
+    /**
      * 현재 Gemini WebSocket 세션으로 인터럽트 요청을 전송한다.
      * - Gemini Live API의 clientContent turnComplete 메시지를 전송하여 현재 응답 생성을 중단하도록 요청한다.
      * - request-flight는 인터럽트 요청 시 증가시키지 않는다. (Gemini가 interrupted:true 응답 시 감소)
@@ -151,6 +287,58 @@ public class BroadcastGeminiRequestService {
      */
     private String formatStreamerMessage(String clientMessage) {
         return "(스트리머)" + clientMessage;
+    }
+
+    private String buildViewerChatText(ChzzkChatMessageDto message) {
+        if (message.userRoleCode() != null && message.userRoleCode().equalsIgnoreCase("streamer")) {
+            return formatStreamerMessage(message.content());
+        }
+        return String.format("(시청자, %s)%s", message.nickname(), message.content());
+    }
+
+    private void handleFirstResumptionEventTimeout(
+            String broadcastStreamId,
+            long generation,
+            BroadcastWebSocketSessionBundle requestOwnerBundle
+    ) {
+        log.info("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - START | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+
+        /*
+            1. timeout 시점에도 동일 generation의 bundle/handler가 유지되는지 확인한다.
+            - 현재 bundle이 아니거나 first resumption event가 이미 종료된 경우 정리 없이 종료한다.
+         */
+        BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+        if (currentBundle == null
+                || currentBundle != requestOwnerBundle
+                || currentBundle.getGeminiHandler() == null
+                || currentBundle.getGeminiHandler().isGeminiSessionFirstResumptionEnd()) {
+            log.info("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - END | streamId: {}, action: skip",
+                    broadcastStreamId);
+            return;
+        }
+
+        /*
+            2. 아직 first resumption event가 진행 중이면 상태와 request-flight를 정리한다.
+            - 이후 일반 메시지 처리는 정상적으로 진행될 수 있도록 in-progress 플래그를 해제한다.
+         */
+        clearFirstResumptionEventState(currentBundle, true);
+        log.warn("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - Timeout cleanup applied | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+        log.info("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - END | streamId: {}, generation: {}",
+                broadcastStreamId, generation);
+    }
+
+    private void clearFirstResumptionEventState(BroadcastWebSocketSessionBundle bundle, boolean decrementRequestFlight) {
+        if (bundle == null || bundle.getGeminiHandler() == null) {
+            return;
+        }
+
+        bundle.getGeminiHandler().clearFirstResumptionEventInProgress();
+        bundle.getGeminiHandler().clearAccumulator();
+        if (decrementRequestFlight && bundle.getRequestFlightCountValue() > 0) {
+            bundle.decrementRequestFlight();
+        }
     }
 
     /**

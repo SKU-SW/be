@@ -65,6 +65,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
     private volatile String lastReceivedFrameType;
     private volatile String lastParsedEventType;
     private volatile String lastSentEventType;
+    private volatile boolean geminiSessionFirstResumptionEventInProgress;
+    private volatile boolean geminiSessionFirstResumptionEnd;
 
     private GeminiTurnAccumulator turnAccumulator;
     private long turnSequence = 0L;
@@ -129,9 +131,13 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             prebuiltVoiceConfigNode.put("voiceName", voiceName);
         }
 
+        // sessionResumption 이벤트가 오도록 설정
+        ObjectNode sessionResumptionNode = setupNode.putObject("sessionResumption");
         if (resumptionHandle != null && !resumptionHandle.isBlank()) {
-            ObjectNode sessionResumptionNode = setupNode.putObject("sessionResumption");
             sessionResumptionNode.put("handle", resumptionHandle);
+        } else {
+            ObjectNode historyConfigNode = setupNode.putObject("historyConfig");
+            historyConfigNode.put("initialHistoryInClientContent", true);
         }
 
         String setupPayload = objectMapper.writeValueAsString(payload);
@@ -211,6 +217,13 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         JsonNode toolCallNode = rootNode.get("toolCall");
         if (toolCallNode != null) {
+            // 만약 Gemini Session First Resumption이 현재 진행 중인 경우, Tool Call 처리를 수행하지 않는다.
+            if (geminiSessionFirstResumptionEventInProgress) {
+                lastParsedEventType = "TOOL_CALL_SUPPRESSED_FIRST_RESUMPTION";
+                log.info("[GeminiLiveWebSocketHandler] handleIncomingPayload() - Tool call suppressed during first resumption event | sessionId: {}",
+                        session.getId());
+                return;
+            }
             lastParsedEventType = "TOOL_CALL";
             if (handleToolCall(session, toolCallNode)) {
                 return;
@@ -230,6 +243,13 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                     session.getId(), payload);
             return;
         }
+        // 만약 Gemini Session First Resumption이 현재 진행 중인 경우, 
+        if (geminiSessionFirstResumptionEventInProgress) {
+            lastParsedEventType = "SERVER_CONTENT_SUPPRESSED_FIRST_RESUMPTION";
+            handleSuppressedFirstResumptionServerContent(session, serverContentNode);
+            return;
+        }
+
         lastParsedEventType = "SERVER_CONTENT";
         lastServerContentAt = Instant.now();
 
@@ -461,6 +481,54 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         );
     }
 
+    /**
+     * First Resumption 진행 중에 ServerContent 이벤트가 온 경우의 처리 함수
+     * @param geminiSession
+     * @param serverContentNode
+     */
+    private void handleSuppressedFirstResumptionServerContent(WebSocketSession geminiSession, JsonNode serverContentNode) {
+        log.info("[GeminiLiveWebSocketHandler] handleSuppressedFirstResumptionServerContent() - START | sessionId: {}",
+                geminiSession.getId());
+
+        /*
+            1. first resumption event 진행 중 수신한 serverContent는 일반 응답처럼 처리하지 않는다.
+            - 클라이언트 스트리밍, Redis 저장, turnComplete metadata 전송을 모두 생략한다.
+         */
+        JsonNode interruptedNode = serverContentNode.get("interrupted");
+        if (interruptedNode != null && interruptedNode.asBoolean(false)) {
+            finishFirstResumptionEvent(geminiSession, "SUPPRESSED_INTERRUPTED");
+            log.info("[GeminiLiveWebSocketHandler] handleSuppressedFirstResumptionServerContent() - END | sessionId: {}, action: interrupted",
+                    geminiSession.getId());
+            return;
+        }
+
+        JsonNode turnCompleteNode = serverContentNode.get("turnComplete");
+        if (turnCompleteNode != null && turnCompleteNode.asBoolean(false)) {
+            finishFirstResumptionEvent(geminiSession, "SUPPRESSED_TURN_COMPLETE");
+            log.info("[GeminiLiveWebSocketHandler] handleSuppressedFirstResumptionServerContent() - END | sessionId: {}, action: turn_complete",
+                    geminiSession.getId());
+            return;
+        }
+
+        log.info("[GeminiLiveWebSocketHandler] handleSuppressedFirstResumptionServerContent() - END | sessionId: {}, action: chunk_suppressed",
+                geminiSession.getId());
+    }
+
+    private void finishFirstResumptionEvent(WebSocketSession geminiSession, String reason) {
+        BroadcastWebSocketSessionBundle bundle = resolveBundle(geminiSession);
+        if (bundle != null && bundle.getGeminiSession() == geminiSession && bundle.getRequestFlightCountValue() > 0) {
+            broadcastGeminiResponseService.handleGeminiTurnFinished(
+                    resolveBroadcastStreamId(geminiSession),
+                    bundle.getGeneration(),
+                    bundle
+            );
+        }
+        clearAccumulator();
+        clearFirstResumptionEventInProgress();
+        log.info("[GeminiLiveWebSocketHandler] finishFirstResumptionEvent() - Finished | sessionId: {}, reason: {}, end: {}",
+                geminiSession != null ? geminiSession.getId() : null, reason, geminiSessionFirstResumptionEnd);
+    }
+
     private String resolveBroadcastStreamId(WebSocketSession geminiSession) {
         if (geminiSession == null || geminiSession.getAttributes() == null) {
             return null;
@@ -630,6 +698,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         if (!setupCompleteFuture.isDone()) {
             setupCompleteFuture.completeExceptionally(exception);
         }
+        clearFirstResumptionEventInProgress();
         clearAccumulator();
         handleTerminatedGeminiTurn(session);
 
@@ -645,6 +714,8 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
             log.error("[GeminiLiveWebSocketHandler] afterConnectionClosed() - Session closed before setupComplete | sessionId: {}, diagnostics: {}",
                     session.getId(), getTerminationDiagnostics(session, "CLOSED_BEFORE_SETUP_COMPLETE", null));
         }
+
+        clearFirstResumptionEventInProgress();
 
         if (lastLocalCloseReason != null) {
             cleanupClosedGeminiSession(session);
@@ -916,6 +987,12 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
          */
         boolean resumable = sessionResumptionUpdateNode.path("resumable").asBoolean(false);
         bundle.updateGeminiSessionResumptionMetadata(newHandle, resumable, Instant.now());
+        if (!geminiSessionFirstResumptionEnd) {
+            geminiSessionFirstResumptionEnd = true;
+            if (geminiSessionFirstResumptionEventInProgress) {
+                finishFirstResumptionEvent(session, "FIRST_SESSION_RESUMPTION_UPDATE");
+            }
+        }
 
         log.info("[GeminiLiveWebSocketHandler] handleSessionResumptionUpdate() - Resumption metadata updated | streamId: {}, generation: {}, sessionId: {}, resumable: {}, handle: {}",
                 broadcastStreamId,
@@ -923,6 +1000,23 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
                 session.getId(),
                 resumable,
                 newHandle);
+    }
+
+    public void markFirstResumptionEventStarted() {
+        geminiSessionFirstResumptionEventInProgress = true;
+        geminiSessionFirstResumptionEnd = false;
+    }
+
+    public void clearFirstResumptionEventInProgress() {
+        geminiSessionFirstResumptionEventInProgress = false;
+    }
+
+    public boolean isGeminiSessionFirstResumptionEventInProgress() {
+        return geminiSessionFirstResumptionEventInProgress;
+    }
+
+    public boolean isGeminiSessionFirstResumptionEnd() {
+        return geminiSessionFirstResumptionEnd;
     }
 
     public record CompletedGeminiTurn(
