@@ -58,24 +58,37 @@ public class BroadcastMessageService {
         if (bundle == null || !bundle.canAcceptClientMessage()) {
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
         }
+        
+        /*
+            2. Redis의 tendency를 통해 message에 답변 지시사항 반영
+            - tendency = POSITIVE인 경우 -> "(긍정적인 방향으로 답변)"
+            - tendency = NEUTRAL인 경우 -> 추가 X
+            - tendency = NEGATIVE인 경우 -> "(부정적인 방향으로 답변)"
+         */
+        String updatedMessage = null;
+        BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
+        switch (character.getTendency()) {
+            case POSITIVE -> updatedMessage = message + "(긍정적인 방향으로 답변)";
+            case NEGATIVE -> updatedMessage = message + "(부정적인 방향으로 답변)";
+            case NEUTRAL -> updatedMessage = message;
+        }
 
         /*
-            2. Session Registry에 해당 방송의 Bundle이 존재한다면, 아래 작업을 수행한다.
+            3. Session Registry에 해당 방송의 Bundle이 존재한다면, 아래 작업을 수행한다.
                 1) Redis에 저장되어있는 현재 방송을 진행 중인 AI 캐릭터의 정보를 가져온다.
                 2) 클라이언트로부터 받은 텍스트 데이터를 Redis의 현재 방송 진행 정보 List에 저장한다.
                 3) Redis에 있는 현재 방송 진행 정보의 Compact(요약)을 시도한다.
          */
-        BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
-        BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, message);
+        BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, updatedMessage);
         log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
-                broadcastStreamId, savedUserInfo.cursorId(), message);
+                broadcastStreamId, savedUserInfo.cursorId(), updatedMessage);
         applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
                 .broadcastStreamId(broadcastStreamId)
                 .triggerType(BroadcastCompactionTriggerType.CLIENT_MESSAGE_STORED)
                 .build());
 
         /*
-            3. 클라이언트 메시지를 정규화한 뒤, 메시지에 AI 캐릭터의 트리거 메시지가 있는지 확인한다.
+            4. 클라이언트 메시지를 정규화한 뒤, 메시지에 AI 캐릭터의 트리거 메시지가 있는지 확인한다.
             - 메시지에 트리거 메시지가 없는 경우, 아무런 동작 하지 않고 종료
             - 메시지에 트리거 메시지가 있는 경우, 해당 캐릭터가 말하고 있다고 설정값 변경. 이후 Gemini WebSocket을 통해 요청을 보낸다.
          */
@@ -88,7 +101,7 @@ public class BroadcastMessageService {
         Boolean isTalking = character.getIsTalking();
 
         /*
-            4. Gemini Session으로 메시지를 보내기 위한 검증
+            5. Gemini Session으로 메시지를 보내기 위한 검증
             - 입력된 데이터에 Trigger Word가 없는데 isTalking 상태가 아닌 경우
             - Gemini Seesion이 열려있지 않은 경우
             - Gemini Session이 Refresh 요청 중인 상태인 경우
@@ -123,7 +136,7 @@ public class BroadcastMessageService {
         }
 
         /*
-            5. Trigger Word가 감지된 경우, Redis에 해당 AI 캐릭터가 talking 중인 것으로 설정 및 데이터 Gemini로 전송  
+            6. Trigger Word가 감지된 경우, Redis에 해당 AI 캐릭터가 talking 중인 것으로 설정 및 데이터 Gemini로 전송
          */
         if (hasTriggerWord) {
             log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}", broadcastStreamId);
