@@ -22,6 +22,7 @@ public class BroadcastGeminiResumptionService {
 
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final GeminiUtil geminiUtil;
 
     /**
@@ -103,6 +104,19 @@ public class BroadcastGeminiResumptionService {
             currentBundle.registerGeminiSession(resumedGeminiSession, resumedHandler);
             currentBundle.clearResumptionInProgress();
             currentBundle.updateStatus(WebSocketSessionBundleStatus.READY);
+
+            /*
+                5. resumption 성공 후 첫 sessionResumptionUpdate 생성을 유도한다.
+                - registerGeminiSession()이 기존 resumption metadata를 초기화하므로,
+                  새 세션에 대한 handle을 확보하기 위해 bootstrap control 요청을 전송한다.
+                - 실패하더라도 resumption 자체는 성공 처리하고 로깅만 수행한다.
+             */
+            try {
+                broadcastGeminiRequestService.getFirstResumptionEvent(broadcastStreamId, generation);
+            } catch (Exception ex) {
+                log.warn("[BroadcastGeminiResumptionService] tryResumeAfterUnexpectedClose() - First resumption event request failed | streamId: {}, generation: {}, error: {}",
+                        broadcastStreamId, generation, ex.getMessage());
+            }
 
             log.info("[BroadcastGeminiResumptionService] tryResumeAfterUnexpectedClose() - END | action: resumed | streamId: {}, generation: {}, newSessionId: {}",
                     broadcastStreamId, generation, resumedGeminiSession.getId());

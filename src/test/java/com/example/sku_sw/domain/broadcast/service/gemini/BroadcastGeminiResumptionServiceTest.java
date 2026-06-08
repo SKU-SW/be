@@ -39,6 +39,9 @@ class BroadcastGeminiResumptionServiceTest {
     private BroadcastGeminiLiveService broadcastGeminiLiveService;
 
     @Mock
+    private BroadcastGeminiRequestService broadcastGeminiRequestService;
+
+    @Mock
     private com.example.sku_sw.global.util.GeminiUtil geminiUtil;
 
     @Mock
@@ -47,7 +50,7 @@ class BroadcastGeminiResumptionServiceTest {
     @BeforeEach
     void setUp() {
         sessionRegistry = new BroadcastWebSocketSessionRegistry();
-        broadcastGeminiResumptionService = new BroadcastGeminiResumptionService(sessionRegistry, broadcastGeminiLiveService, geminiUtil);
+        broadcastGeminiResumptionService = new BroadcastGeminiResumptionService(sessionRegistry, broadcastGeminiLiveService, broadcastGeminiRequestService, geminiUtil);
     }
 
     @Test
@@ -91,6 +94,7 @@ class BroadcastGeminiResumptionServiceTest {
         assertThat(bundle.getGeminiHandler()).isEqualTo(resumedHandler);
         assertThat(bundle.getGeminiSessionResumptionInProgress()).isFalse();
         verify(broadcastGeminiLiveService, times(1)).resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle");
+        verify(broadcastGeminiRequestService, times(1)).getFirstResumptionEvent("stream-1", generation);
     }
 
     @Test
