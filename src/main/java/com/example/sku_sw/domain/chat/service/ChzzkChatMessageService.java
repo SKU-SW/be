@@ -72,27 +72,7 @@ public class ChzzkChatMessageService {
               */
             DialogueSubject dialogueSubject = resolveDialogueSubject(message);
             String redisContent = buildRedisContent(message);
-            BroadcastInfoRedisDto broadcastInfoRedisDto = broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
-
-            /*
-                3. 채팅 데이터 BroadcastDialogue에 저장
-                - Redis 저장 시 반환된 cursorId를 활용한다.
-                - broadcastStreamId로 Broadcast 엔티티를 조회한 뒤,
-                  subject에 따라 createViewer() 또는 createStreamer()로 엔티티를 생성하여 저장한다.
-             */
-            Broadcast broadcast = broadcastRepository.findByStreamId(message.broadcastStreamId()).orElse(null);
-            if (broadcast != null) {
-                Long cursorId = broadcastInfoRedisDto.cursorId();
-                BroadcastDialogue dialogue = (dialogueSubject == DialogueSubject.STREAMER)
-                        ? BroadcastDialogue.createStreamer(cursorId, redisContent, broadcast)
-                        : BroadcastDialogue.createViewer(cursorId, redisContent, broadcast);
-                broadcastDialogueRepository.save(dialogue);
-                log.info("[ChzzkChatMessageService] processChatMessage() - Saved to BroadcastDialogue | cursorId: {}, subject: {}",
-                        cursorId, dialogueSubject);
-            } else {
-                log.warn("[ChzzkChatMessageService] processChatMessage() - Broadcast not found for DB save | streamId: {}",
-                        message.broadcastStreamId());
-            }
+            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());

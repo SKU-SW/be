@@ -1,7 +1,7 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
@@ -50,7 +50,7 @@ public class BroadcastController implements BroadcastControllerDocs {
     }
 
     @Override
-    public ResponseEntity<GlobalResponse<CursorSliceResponse<BroadcastDialogueCursorItemResDto>>> getBroadcastDialoguesByCursor(
+    public ResponseEntity<GlobalResponse<CursorSliceResponse<BroadcastDialogueCursorResDto>>> getBroadcastDialoguesByCursor(
             Integer size,
             Long cursorId,
             Boolean aiCharacterDialogue,
@@ -58,7 +58,7 @@ public class BroadcastController implements BroadcastControllerDocs {
             Boolean viewerDialogue
     ) {
         Long userId = SecurityUtil.getCurrentUserId();
-        CursorSliceResponse<BroadcastDialogueCursorItemResDto> response = broadcastService.getBroadcastDialoguesByCursor(
+        CursorSliceResponse<BroadcastDialogueCursorResDto> response = broadcastService.getBroadcastDialoguesByCursor(
                 userId,
                 size,
                 cursorId,
@@ -77,4 +77,5 @@ public class BroadcastController implements BroadcastControllerDocs {
         BroadcastTendencyUpdateResDto response = broadcastService.updateCharacterTendency(userId, reqDto);
         return ResponseEntity.ok(GlobalResponse.success("AI 캐릭터 편승 태도 수정 완료", response));
     }
+
 }

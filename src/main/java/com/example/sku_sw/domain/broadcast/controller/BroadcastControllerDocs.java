@@ -1,7 +1,7 @@
 package com.example.sku_sw.domain.broadcast.controller;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorResDto;
 import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
@@ -250,7 +250,7 @@ public interface BroadcastControllerDocs {
     })
     @SecurityRequirement(name = "bearerAuth")
     @GetMapping("/info/dialogues")
-    ResponseEntity<GlobalResponse<CursorSliceResponse<BroadcastDialogueCursorItemResDto>>> getBroadcastDialoguesByCursor(
+    ResponseEntity<GlobalResponse<CursorSliceResponse<BroadcastDialogueCursorResDto>>> getBroadcastDialoguesByCursor(
             @Parameter(description = "조회할 방송 대화 데이터 개수", required = true)
             @RequestParam Integer size,
 

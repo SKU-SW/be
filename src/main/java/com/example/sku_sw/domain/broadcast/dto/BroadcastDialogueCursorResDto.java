@@ -6,7 +6,7 @@ import lombok.Builder;
 
 @Schema(description = "현재 방송 대화 커서 조회 항목 응답 DTO")
 @Builder
-public record BroadcastDialogueCursorItemResDto(
+public record BroadcastDialogueCursorResDto(
         @Schema(description = "각 방송 대화 기록 데이터별 고유 cursor 전용 ID", example = "7")
         Long cursorId,
 
