@@ -24,8 +24,8 @@ public record BroadcastDayBroadcastInfoResDto(
         @Schema(description = "최근 5개 방송 대화 목록")
         List<BroadcastDialogueCursorResDto> lastFiveBroadcastDialogues,
 
-        @Schema(description = "방송 분석 결과")
-        Object analysisResult
+        @Schema(description = "방송 분석 결과", implementation = BroadcastAnalysisResDto.class)
+        BroadcastAnalysisResDto analysisResult
 ) {
     public static BroadcastDayBroadcastInfoResDto create(
             String streamId,
@@ -33,7 +33,7 @@ public record BroadcastDayBroadcastInfoResDto(
             String startedAt,
             String terminatedAt,
             List<BroadcastDialogueCursorResDto> lastFiveBroadcastDialogues,
-            Object analysisResult
+            BroadcastAnalysisResDto analysisResult
     ){
         return BroadcastDayBroadcastInfoResDto.builder()
                 .streamId(streamId)

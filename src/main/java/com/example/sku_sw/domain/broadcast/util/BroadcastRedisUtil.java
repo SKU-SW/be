@@ -562,6 +562,23 @@ public class BroadcastRedisUtil {
     }
 
     /**
+     * Redis List에서 summary를 제외한 남은 방송 대화 전체를 조회하는 함수
+     * - 방송 종료 직전 Redis에 남아있는 ACTIVE/INACTIVE 대화를 DB에 저장하기 위해 사용한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : Redis에 남아있는 방송 대화 정보 DTO 목록
+     */
+    public List<BroadcastInfoRedisDto> getRemainingDialogues(String broadcastStreamId) {
+        return getBroadcastInfos(broadcastStreamId).stream()
+                .skip(1)
+                .filter(info -> info.cursorId() != null)
+                .filter(info -> info.subject() != null)
+                .filter(info -> info.subject() != DialogueSubject.SYSTEM_SUMMARY)
+                .filter(info -> info.content() != null && !info.content().isBlank())
+                .filter(info -> info.createdAt() != null)
+                .toList();
+    }
+
+    /**
      * INACTIVE 상태의 방송 대화 존재 여부를 반환하는 함수
      * @param broadcastStreamId : 방송 스트림 ID
      * @return : INACTIVE 존재 여부

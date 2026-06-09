@@ -45,7 +45,7 @@ public class BroadcastConnectionTimeoutService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final TransactionTemplate transactionTemplate;
-    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
     private final ChatRedisUtil chatRedisUtil;
     private final FastApiUtil fastApiUtil;
 
@@ -54,7 +54,7 @@ public class BroadcastConnectionTimeoutService {
             BroadcastRepository broadcastRepository,
             BroadcastRedisUtil broadcastRedisUtil,
             BroadcastWebSocketSessionRegistry sessionRegistry,
-            BroadcastDialogueCompactionService broadcastDialogueCompactionService,
+            BroadcastDialoguePersistenceService broadcastDialoguePersistenceService,
             ChatRedisUtil chatRedisUtil,
             FastApiUtil fastApiUtil,
             PlatformTransactionManager transactionManager
@@ -63,7 +63,7 @@ public class BroadcastConnectionTimeoutService {
         this.broadcastRepository = broadcastRepository;
         this.broadcastRedisUtil = broadcastRedisUtil;
         this.sessionRegistry = sessionRegistry;
-        this.broadcastDialogueCompactionService = broadcastDialogueCompactionService;
+        this.broadcastDialoguePersistenceService = broadcastDialoguePersistenceService;
         this.chatRedisUtil = chatRedisUtil;
         this.fastApiUtil = fastApiUtil;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -180,11 +180,19 @@ public class BroadcastConnectionTimeoutService {
 
             /*
                 4. DB에 있는 값까지 비정상 종료 처리가 된 상태이므로, 무조건 나머지 방송 비정상 종료 처리를 한다.
+                - Redis에 남아있는 BroadcastInfo 대화를 BroadcastDialogue에 저장한다.
                 - BroadcastUser에 데이터가 있다면, fastapi에게 해당 Chat Redis Channel 연결 종료 요청을 보낸다.
                 - 해당 요청이 성공적으로 왔다면 Spring Boot에서 Chat Redis Channel을 punsubscribe 처리한다.
                 - 이후 Redis에 있는 BroadcastCharacter, BroadcastUser, BroadcastInfo 접두사 데이터들을 삭제한다.
                 - 이 과정 중에 WebSocketSessionRegistry에 Session Bundle 객체가 생성되었을 수도 있으니, Session Bundle 객체를 비활성화한다.
              */
+            try {
+                broadcastDialoguePersistenceService.saveRemainingRedisDialogues(broadcastStreamId);
+            } catch (Exception e) {
+                log.error("[BroadcastConnectionTimeoutService] handleTimeout() - Remaining dialogue save failed | streamId: {}, error: {}",
+                        broadcastStreamId, e.getMessage(), e);
+            }
+
             BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
             if (broadcastUserRedisDto != null) {
                 if (broadcastUserRedisDto.getChannelName() != null && !broadcastUserRedisDto.getChannelName().isBlank()) {

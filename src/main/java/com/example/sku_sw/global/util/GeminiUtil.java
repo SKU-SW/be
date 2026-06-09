@@ -37,23 +37,29 @@ public class GeminiUtil {
 
     private final WebClient dialogueWebClient;
     private final WebClient summaryWebClient;
+    private final WebClient analysisWebClient;
     private final String apiKey;
     private final String dialogueModel;
     private final String summaryModel;
+    private final String analysisModel;
 
     public GeminiUtil(
             @Value("${gemini.api.key}") String apiKey,
             @Value("${gemini.api.dialogue-model}") String dialogueModel,
             @Value("${gemini.api.summary-model}") String summaryModel,
+            @Value("${gemini.api.analysis-model}") String analysisModel,
             @Value("${gemini.api.dialogue-model-base-url}") String dialogueModelBaseUrl,
             @Value("${gemini.api.summary-model-base-url}") String summaryModelBaseUrl,
+            @Value("${gemini.api.analysis-model-base-url}") String analysisModelBaseUrl,
             WebClient.Builder webClientBuilder
     ) {
         this.apiKey = apiKey;
         this.dialogueModel = dialogueModel;
         this.summaryModel = summaryModel;
+        this.analysisModel = analysisModel;
         this.dialogueWebClient = webClientBuilder.baseUrl(dialogueModelBaseUrl).build();
         this.summaryWebClient = webClientBuilder.baseUrl(summaryModelBaseUrl).build();
+        this.analysisWebClient = webClientBuilder.baseUrl(analysisModelBaseUrl).build();
     }
     /**
      * Gemini Function Calling API를 호출하는 함수
@@ -119,6 +125,34 @@ public class GeminiUtil {
                         clientResponse.bodyToMono(String.class)
                                 .map(responseBody -> new IllegalStateException(
                                         "Broadcast Summary AI API 호출 실패 - status="
+                                                + clientResponse.statusCode().value()
+                                                + ", body="
+                                                + responseBody
+                                ))
+                )
+                .bodyToMono(GeminiGenerateContentResDto.class)
+                .map(this::extractText);
+    }
+
+    /**
+     * 방송 분석용 Gemini API를 호출하는 함수
+     * @param prompt : 분석 프롬프트
+     * @return : analysis json text Mono
+     */
+    public Mono<String> analyzeBroadcastDialogues(String prompt) {
+        GeminiGenerateContentReqDto request = new GeminiGenerateContentReqDto(
+                List.of(new GeminiRequestContentDto(List.of(new GeminiRequestPartDto(prompt))))
+        );
+
+        return analysisWebClient.post()
+                .uri("/models/{model}:generateContent?key={key}", analysisModel, apiKey)
+                .header("Content-Type", "application/json")
+                .bodyValue(request)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, clientResponse ->
+                        clientResponse.bodyToMono(String.class)
+                                .map(responseBody -> new IllegalStateException(
+                                        "Broadcast Analysis AI API 호출 실패 - status="
                                                 + clientResponse.statusCode().value()
                                                 + ", body="
                                                 + responseBody

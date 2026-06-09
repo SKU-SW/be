@@ -17,6 +17,8 @@ import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.TendencyVersion;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
+import com.example.sku_sw.domain.broadcast.mapper.BroadcastAnalysisMapper;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastAnalysisRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
@@ -77,13 +79,16 @@ public class BroadcastService {
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
-    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
+    private final BroadcastAnalysisService broadcastAnalysisService;
     private final FastApiUtil fastApiUtil;
     private final BroadcastStatsRepository broadcastStatsRepository;
     private final ChatRedisUtil chatRedisUtil;
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
     private final CharacterTriggerWordRepository characterTriggerWordRepository;
     private final CharacterImageDetailRepository characterImageDetailRepository;
+    private final BroadcastAnalysisRepository broadcastAnalysisRepository;
+    private final BroadcastAnalysisMapper broadcastAnalysisMapper;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
     @Value("${spring.cloud.cloudfront.domain}")
@@ -504,29 +509,15 @@ public class BroadcastService {
             2. 최근 10분 통계 조회 (여론 현황용)
             - 현재 시각 기준 10분 전부터의 BroadcastStats를 조회한다.
          */
-        LocalDateTime since10min = LocalDateTime.now().minusMinutes(10);
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime since10min = now.minusMinutes(10);
         List<BroadcastStats> recentStatsList = broadcastStatsRepository.findByBroadcastAndRecordedAtAfter(activeBroadcast, since10min);
 
         /*
-            3. 긍정/중립/부정 채팅 수 합계 계산
+            3. 여론 현황 계산
+            - 감정별 채팅 수와 비율 계산은 공통 함수를 사용한다.
          */
-        int positiveSum = 0;
-        int neutralSum = 0;
-        int negativeSum = 0;
-        for (BroadcastStats stats : recentStatsList) {
-            positiveSum += stats.getPositiveChatCount();
-            neutralSum += stats.getNeutralChatCount();
-            negativeSum += stats.getNegativeChatCount();
-        }
-        int totalSum = positiveSum + neutralSum + negativeSum;
-
-        /*
-            4. 비율 계산
-            - 전체가 0이면 모든 비율은 0.0
-         */
-        double positiveRatio = totalSum > 0 ? (positiveSum * 100.0) / totalSum : 0.0;
-        double neutralRatio = totalSum > 0 ? (neutralSum * 100.0) / totalSum : 0.0;
-        double negativeRatio = totalSum > 0 ? (negativeSum * 100.0) / totalSum : 0.0;
+        BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = calculatePublicOpinion(recentStatsList);
 
         /*
             5. AI 파트너 성향 판별
@@ -536,31 +527,18 @@ public class BroadcastService {
         AiCharacterTendency tendency = broadcastCharacterRedisDto.getTendency();
 
         /*
-            6. ResponseDto 생성 (여론 현황)
-          */
-        BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = BroadcastChatStatsResDto.PublicOpinionResDto.builder()
-                .positiveChatCount(positiveSum)
-                .neutralChatCount(neutralSum)
-                .negativeChatCount(negativeSum)
-                .totalChatCount(totalSum)
-                .positiveRatio(Math.round(positiveRatio * 10.0) / 10.0)
-                .neutralRatio(Math.round(neutralRatio * 10.0) / 10.0)
-                .negativeRatio(Math.round(negativeRatio * 10.0) / 10.0)
-                .build();
-
-        /*
             7. 감정 흐름 통계 계산
             7-1. timeRange에 따른 조회 시작 시각 결정
          */
         LocalDateTime flowSince;
         if (timeRange == 3) {
-            flowSince = LocalDateTime.now().minusHours(3);
+            flowSince = now.minusHours(3);
         } else if (timeRange == 0) {
             flowSince = activeBroadcast.getStartedAt();
         } else {
-            flowSince = LocalDateTime.now().minusHours(1);
+            flowSince = now.minusHours(1);
         }
-        LocalDateTime flowUntil = LocalDateTime.now();
+        LocalDateTime flowUntil = now;
 
         /*
             7-2. 감정 흐름용 통계 조회
@@ -568,34 +546,15 @@ public class BroadcastService {
         List<BroadcastStats> flowStatsList = broadcastStatsRepository.findByBroadcastAndRecordedAtBetween(activeBroadcast, flowSince, flowUntil);
 
         /*
-            7-3. statsCriteria만큼 인접 레코드를 그룹핑하여 구간별 통계 생성
-         */
-        List<BroadcastChatStatsResDto.SentimentFlowItemResDto> sentimentFlow = new ArrayList<>();
-        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
-
-        for (int i = 0; i < flowStatsList.size(); i += statsCriteria) {
-            int end = Math.min(i + statsCriteria, flowStatsList.size());
-            List<BroadcastStats> group = flowStatsList.subList(i, end);
-
-            // 긍정/중립/부정 채팅 개수 종합 계산
-            int posSum = group.stream().mapToInt(BroadcastStats::getPositiveChatCount).sum();
-            int neuSum = group.stream().mapToInt(BroadcastStats::getNeutralChatCount).sum();
-            int negSum = group.stream().mapToInt(BroadcastStats::getNegativeChatCount).sum();
-            int total = posSum + neuSum + negSum;
-
-            double posRatio = total > 0 ? Math.round((posSum * 1000.0) / total) / 10.0 : 0.0;
-            double neuRatio = total > 0 ? Math.round((neuSum * 1000.0) / total) / 10.0 : 0.0;
-            double negRatio = total > 0 ? Math.round((negSum * 1000.0) / total) / 10.0 : 0.0;
-
-            String timeLabel = group.get(0).getRecordedAt().format(timeFormatter);
-
-            sentimentFlow.add(BroadcastChatStatsResDto.SentimentFlowItemResDto.builder()
-                    .timeLabel(timeLabel)
-                    .positiveRatio(posRatio)
-                    .neutralRatio(neuRatio)
-                    .negativeRatio(negRatio)
-                    .build());
-        }
+            7-3. statsCriteria 분 단위로 구간별 통계 생성
+          */
+        List<BroadcastChatStatsResDto.SentimentFlowItemResDto> sentimentFlow = buildSentimentFlow(
+                flowStatsList,
+                flowSince,
+                flowUntil,
+                statsCriteria,
+                false
+        );
 
         /*
             9. 상위 10개 키워드 조회
@@ -613,7 +572,172 @@ public class BroadcastService {
                 .build();
 
         log.info("[BroadcastService] getBroadcastChatStats() - END | streamId: {}, total: {}, tendency: {}, flowSize: {}, topKeywordsSize: {}",
-                activeBroadcast.getStreamId(), totalSum, tendency, sentimentFlow.size(), topKeywords.size());
+                activeBroadcast.getStreamId(), publicOpinion.totalChatCount(), tendency, sentimentFlow.size(), topKeywords.size());
+        return result;
+    }
+
+    /**
+     * 채팅 통계 여론 현황 계산
+     * - BroadcastStats 목록의 긍정/중립/부정 채팅 수를 합산하고 비율을 계산한다.
+     * @param statsList : 여론 현황 계산 대상 통계 목록
+     * @return : 여론 현황 응답 DTO
+     */
+    private BroadcastChatStatsResDto.PublicOpinionResDto calculatePublicOpinion(List<BroadcastStats> statsList) {
+        log.info("[BroadcastService] calculatePublicOpinion() - START | statsSize: {}", statsList.size());
+
+        /*
+            1. 긍정/중립/부정 채팅 수 합계 계산
+            - 통계 목록 전체를 대상으로 감정별 채팅 수를 합산한다.
+         */
+        int positiveSum = statsList.stream().mapToInt(BroadcastStats::getPositiveChatCount).sum();
+        int neutralSum = statsList.stream().mapToInt(BroadcastStats::getNeutralChatCount).sum();
+        int negativeSum = statsList.stream().mapToInt(BroadcastStats::getNegativeChatCount).sum();
+        int totalSum = positiveSum + neutralSum + negativeSum;
+
+        /*
+            2. 여론 현황 DTO 생성
+            - 전체가 0이면 모든 비율은 0.0으로 반환한다.
+         */
+        BroadcastChatStatsResDto.PublicOpinionResDto result = BroadcastChatStatsResDto.PublicOpinionResDto.builder()
+                .positiveChatCount(positiveSum)
+                .neutralChatCount(neutralSum)
+                .negativeChatCount(negativeSum)
+                .totalChatCount(totalSum)
+                .positiveRatio(calculateRoundedRatio(positiveSum, totalSum))
+                .neutralRatio(calculateRoundedRatio(neutralSum, totalSum))
+                .negativeRatio(calculateRoundedRatio(negativeSum, totalSum))
+                .build();
+
+        log.info("[BroadcastService] calculatePublicOpinion() - END | total: {}", totalSum);
+        return result;
+    }
+
+    /**
+     * 비율 소수점 첫째 자리 반올림 계산
+     * - 분모가 0이면 0.0을 반환한다.
+     * @param value : 비율 계산 대상 값
+     * @param total : 전체 값
+     * @return : 소수점 첫째 자리까지 반올림된 비율
+     */
+    private double calculateRoundedRatio(int value, int total) {
+        log.info("[BroadcastService] calculateRoundedRatio() - START | value: {}, total: {}", value, total);
+
+        /*
+            1. 비율 계산
+            - 전체 값이 없는 경우 0.0으로 처리한다.
+         */
+        double result = total > 0 ? Math.round((value * 1000.0) / total) / 10.0 : 0.0;
+
+        log.info("[BroadcastService] calculateRoundedRatio() - END | ratio: {}", result);
+        return result;
+    }
+
+    /**
+     * 최종 채팅 여론 기반 AI 파트너 성향 판별
+     * - 긍정/부정 중 하나가 단독 최다이면 해당 성향을 반환하고, 중립 우세 또는 동률이면 중립을 반환한다.
+     * @param publicOpinion : 성향 판별 기준 여론 현황
+     * @return : AI 파트너 응답 성향
+     */
+    private AiCharacterTendency determineTendencyByPublicOpinion(BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion) {
+        log.info("[BroadcastService] determineTendencyByPublicOpinion() - START | total: {}", publicOpinion.totalChatCount());
+
+        /*
+            1. 감정별 채팅 수 조회
+            - 최종 여론의 감정별 채팅 수를 기준으로 성향을 판별한다.
+         */
+        int positiveCount = publicOpinion.positiveChatCount();
+        int neutralCount = publicOpinion.neutralChatCount();
+        int negativeCount = publicOpinion.negativeChatCount();
+
+        /*
+            2. 단독 최다 감정 판별
+            - 긍정 또는 부정이 단독 최다인 경우에만 해당 성향을 반환한다.
+         */
+        AiCharacterTendency result = AiCharacterTendency.NEUTRAL;
+        if (positiveCount > neutralCount && positiveCount > negativeCount) {
+            result = AiCharacterTendency.POSITIVE;
+        }
+        if (negativeCount > positiveCount && negativeCount > neutralCount) {
+            result = AiCharacterTendency.NEGATIVE;
+        }
+
+        log.info("[BroadcastService] determineTendencyByPublicOpinion() - END | tendency: {}", result);
+        return result;
+    }
+
+    /**
+     * 채팅 감정 흐름 통계 생성
+     * - 지정된 분 단위 시간 구간으로 BroadcastStats를 그룹핑하고 구간별 감정 비율을 계산한다.
+     * @param flowStatsList : 감정 흐름 계산 대상 통계 목록
+     * @param flowSince : 감정 흐름 조회 시작 시각
+     * @param flowUntil : 감정 흐름 조회 종료 시각
+     * @param intervalMinutes : 구간 간격(분)
+     * @param includeEmptyWindows : 통계가 없는 빈 구간 포함 여부
+     * @return : 감정 흐름 응답 DTO 목록
+     */
+    private List<BroadcastChatStatsResDto.SentimentFlowItemResDto> buildSentimentFlow(
+            List<BroadcastStats> flowStatsList,
+            LocalDateTime flowSince,
+            LocalDateTime flowUntil,
+            Integer intervalMinutes,
+            boolean includeEmptyWindows
+    ) {
+        log.info("[BroadcastService] buildSentimentFlow() - START | statsSize: {}, intervalMinutes: {}, includeEmptyWindows: {}",
+                flowStatsList.size(), intervalMinutes, includeEmptyWindows);
+
+        /*
+            1. 구간 계산 기준값 보정
+            - 잘못된 구간 간격은 1분으로 보정한다.
+         */
+        int safeIntervalMinutes = intervalMinutes != null && intervalMinutes > 0 ? intervalMinutes : 1;
+        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
+        List<BroadcastChatStatsResDto.SentimentFlowItemResDto> result = new ArrayList<>();
+
+        /*
+            2. 시간 구간별 감정 통계 생성
+            - flowSince부터 flowUntil까지 intervalMinutes 단위로 통계를 그룹핑한다.
+         */
+        LocalDateTime windowStart = flowSince;
+        int statsIndex = 0;
+        while (windowStart.isBefore(flowUntil)) {
+            LocalDateTime windowEnd = windowStart.plusMinutes(safeIntervalMinutes);
+            int positiveSum = 0;
+            int neutralSum = 0;
+            int negativeSum = 0;
+            boolean hasStats = false;
+
+            while (statsIndex < flowStatsList.size()) {
+                BroadcastStats stats = flowStatsList.get(statsIndex);
+                LocalDateTime recordedAt = stats.getRecordedAt();
+                if (recordedAt.isBefore(windowStart)) {
+                    statsIndex++;
+                    continue;
+                }
+                if (!recordedAt.isBefore(windowEnd)) {
+                    break;
+                }
+
+                positiveSum += stats.getPositiveChatCount();
+                neutralSum += stats.getNeutralChatCount();
+                negativeSum += stats.getNegativeChatCount();
+                hasStats = true;
+                statsIndex++;
+            }
+
+            if (hasStats || includeEmptyWindows) {
+                int total = positiveSum + neutralSum + negativeSum;
+                result.add(BroadcastChatStatsResDto.SentimentFlowItemResDto.builder()
+                        .timeLabel(windowStart.format(timeFormatter))
+                        .positiveRatio(calculateRoundedRatio(positiveSum, total))
+                        .neutralRatio(calculateRoundedRatio(neutralSum, total))
+                        .negativeRatio(calculateRoundedRatio(negativeSum, total))
+                        .build());
+            }
+
+            windowStart = windowEnd;
+        }
+
+        log.info("[BroadcastService] buildSentimentFlow() - END | flowSize: {}", result.size());
         return result;
     }
 
@@ -1130,12 +1254,30 @@ public class BroadcastService {
             @Override
             public void afterCommit() {
                 BroadcastUserRedisDto broadcastUserRedisDto = null;
+                boolean remainingDialoguesSaved = false;
                 try {
-                    // 1. 동기적으로 대화 요약
-                    broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
-                    // 2. Redis에서 방송 User 정보 조회
+                    // 1. Redis에 남아있는 대화 데이터를 DB에 저장
+                    broadcastDialoguePersistenceService.saveRemainingRedisDialogues(broadcastStreamId);
+                    remainingDialoguesSaved = true;
+                } catch (Exception e) {
+                    log.error("[BroadcastService] 방송 종료 잔여 대화 저장 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                }
+
+                if (remainingDialoguesSaved) {
+                    try {
+                        // 2. 동기적으로 방송 데이터 분석
+                        broadcastAnalysisService.analysisBroadcastDialogues(broadcastStreamId);
+                    } catch (Exception e) {
+                        log.error("[BroadcastService] 방송 분석 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                    }
+                } else {
+                    log.warn("[BroadcastService] 잔여 대화 저장 실패로 방송 분석을 건너뜁니다. | streamId: {}", broadcastStreamId);
+                }
+
+                try {
+                    // 3. Redis에서 방송 User 정보 조회
                     broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
-                    // 3. 치지직 Redis 채널 연결 해제 로직
+                    // 4. 치지직 Redis 채널 연결 해제 로직
                     if (StringUtils.hasText(broadcastUserRedisDto.getChannelName())) {
                         fastApiUtil.disconnectChzzkRedisChannel(
                                 buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
@@ -1329,7 +1471,7 @@ public class BroadcastService {
          */
         BroadcastDayCharacterInfoResDto characterInfo = buildBroadcastDayCharacterInfo(broadcast.getCharacter());
         BroadcastDayBroadcastInfoResDto broadcastInfo = buildBroadcastDayBroadcastInfo(broadcast);
-        BroadcastDayChatInfoResDto chatInfo = buildBroadcastDayChatInfo();
+        BroadcastDayChatInfoResDto chatInfo = buildBroadcastDayChatInfo(broadcast);
 
         /*
             3. 최종 응답 DTO 생성
@@ -1421,7 +1563,7 @@ public class BroadcastService {
 
     /**
      * 방송 통계 조회용 방송 정보 구성
-     * - 방송 기본 정보, 최근 5개 대화 목록, 방송 분석 결과 null 값을 조합한다.
+     * - 방송 기본 정보, 최근 5개 대화 목록, 방송 분석 결과를 조합한다.
      * @param broadcast : 방송 엔티티
      * @return : 방송 통계 방송 정보 응답 DTO
      */
@@ -1444,8 +1586,16 @@ public class BroadcastService {
                 .toList();
 
         /*
-            3. 방송 정보 DTO 생성
-            - analysisResult는 이번 구현 범위에서 null로 설정한다.
+            3. 방송 분석 결과 조회 및 DTO 변환
+            - 분석 데이터가 아직 없으면 analysisResult는 null로 반환한다.
+         */
+        BroadcastAnalysisResDto analysisResult = broadcastAnalysisRepository.findByBroadcast_Id(broadcast.getId())
+                .map(broadcastAnalysisMapper::toBroadcastAnalysisResDto)
+                .orElse(null);
+
+        /*
+            4. 방송 정보 DTO 생성
+            - 방송 기본 정보, 최근 대화, 분석 결과를 포함한다.
          */
         BroadcastDayBroadcastInfoResDto result = BroadcastDayBroadcastInfoResDto.create(
                         broadcast.getStreamId(),
@@ -1455,31 +1605,77 @@ public class BroadcastService {
                                 ? broadcast.getTerminatedAt().format(BROADCAST_DATE_TIME_FORMATTER)
                                 : null,
                         lastFiveDialogueDtos,
-                        null
+                        analysisResult
                 );
 
-        log.info("[BroadcastService] buildBroadcastDayBroadcastInfo() - END | broadcastId: {}, dialogueSize: {}",
-                broadcast.getId(), lastFiveDialogueDtos.size());
+        log.info("[BroadcastService] buildBroadcastDayBroadcastInfo() - END | broadcastId: {}, dialogueSize: {}, hasAnalysis: {}",
+                broadcast.getId(), lastFiveDialogueDtos.size(), analysisResult != null);
         return result;
     }
 
     /**
      * 방송 통계 조회용 채팅 정보 구성
-     * - 채팅 분석 결과는 이번 구현 범위에서 null로 설정한다.
+     * - 해당 방송 전체 채팅 통계를 기반으로 여론 현황, AI 파트너 성향, 감정 흐름, 상위 키워드를 구성한다.
+     * @param broadcast : 방송 엔티티
      * @return : 방송 통계 채팅 정보 응답 DTO
      */
-    private BroadcastDayChatInfoResDto buildBroadcastDayChatInfo() {
-        log.info("[BroadcastService] buildBroadcastDayChatInfo() - START");
+    private BroadcastDayChatInfoResDto buildBroadcastDayChatInfo(Broadcast broadcast) {
+        log.info("[BroadcastService] buildBroadcastDayChatInfo() - START | broadcastId: {}", broadcast.getId());
 
         /*
-            1. 채팅 정보 DTO 생성
-            - analysisResult는 이번 구현 범위에서 null로 설정한다.
+            1. 방송 전체 통계 조회 범위 계산
+            - 종료된 방송은 종료 시각까지, 진행 중인 방송은 현재 시각까지 조회한다.
+         */
+        LocalDateTime statsSince = broadcast.getStartedAt();
+        LocalDateTime statsUntil = broadcast.getTerminatedAt() != null ? broadcast.getTerminatedAt() : LocalDateTime.now();
+
+        /*
+            2. 방송 전체 채팅 통계 조회
+            - 하루 방송 통계의 채팅 정보는 특정 방송에 연결된 전체 BroadcastStats를 대상으로 한다.
+         */
+        List<BroadcastStats> broadcastStatsList = broadcastStatsRepository.findByBroadcastAndRecordedAtBetween(
+                broadcast,
+                statsSince,
+                statsUntil
+        );
+
+        /*
+            3. 여론 현황 및 AI 파트너 성향 계산
+            - AI 파트너 성향은 최종 채팅 여론 분석 결과와 동일하게 판별한다.
+         */
+        BroadcastChatStatsResDto.PublicOpinionResDto publicOpinion = calculatePublicOpinion(broadcastStatsList);
+        AiCharacterTendency aiPartnerTendency = determineTendencyByPublicOpinion(publicOpinion);
+
+        /*
+            4. 10분 고정 구간별 감정 흐름 생성
+            - 하루 방송 통계에서는 요청 파라미터 없이 10분 간격으로 고정한다.
+         */
+        List<BroadcastChatStatsResDto.SentimentFlowItemResDto> sentimentFlow = buildSentimentFlow(
+                broadcastStatsList,
+                statsSince,
+                statsUntil,
+                10,
+                true
+        );
+
+        /*
+            5. 전체 방송 데이터 기준 상위 10개 키워드 조회
+         */
+        List<String> topKeywords = broadcastKeywordsRepository.findTop10KeywordsByBroadcast(broadcast);
+
+        /*
+            6. 채팅 정보 DTO 생성
+            - BroadcastDayChatInfoResDto에 채팅 통계 필드를 직접 반환한다.
          */
         BroadcastDayChatInfoResDto result = BroadcastDayChatInfoResDto.builder()
-                .analysisResult(null)
+                .publicOpinion(publicOpinion)
+                .aiPartnerTendency(aiPartnerTendency)
+                .sentimentFlow(sentimentFlow)
+                .topKeywords(topKeywords)
                 .build();
 
-        log.info("[BroadcastService] buildBroadcastDayChatInfo() - END");
+        log.info("[BroadcastService] buildBroadcastDayChatInfo() - END | broadcastId: {}, total: {}, tendency: {}, flowSize: {}, topKeywordsSize: {}",
+                broadcast.getId(), publicOpinion.totalChatCount(), aiPartnerTendency, sentimentFlow.size(), topKeywords.size());
         return result;
     }
 

@@ -1,5 +1,6 @@
 package com.example.sku_sw.domain.broadcast.repository;
 
+import com.example.sku_sw.domain.broadcast.entity.Broadcast;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,13 @@ public interface BroadcastDialogueRepository extends JpaRepository<BroadcastDial
      * @return : 이미 저장된 cursorId 목록
      */
     List<BroadcastDialogue> findByBroadcastIdAndCursorIdIn(Long broadcastId, Collection<Long> cursorIds);
+
+    /**
+     * 특정 방송의 대화 목록을 생성 시간 오름차순으로 조회하는 함수
+     * @param broadcast : 조회할 방송 Entity
+     * @return : 생성 시간 오름차순 대화 목록
+     */
+    List<BroadcastDialogue> findByBroadcastOrderByCreatedAtAsc(Broadcast broadcast);
 
     /**
      * 특정 방송의 최신 대화 목록을 cursorId 내림차순으로 조회하는 함수

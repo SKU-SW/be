@@ -252,6 +252,8 @@ public class BroadcastPromptBuilder {
                 - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면, 어떠한 텍스트나 음성도 생성하지 말고 오직 `set_talking_state(isTalking=false)` Tool Call만 실행해야한다.
                     - 답변해야 하는 경우: 스트리머가 AI 캐릭터에게 직접 말을 거는 경우, AI의 직전 발화에 이어서 반응을 요구하는 경우, 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
                     - 답변하면 안 되는 경우: 혼잣말에 가까운 경우, 채팅창, 게임, 다른 사람에게 한 말인 경우, AI를 부른 것이 아니라 단순 리액션인 경우
+                - AI가 답변해야하는 상황 여부는 아주 비판적으로, 낙관적이지 않게 판단해서 굳이 반응하지 않는게 좋은 상황이면 `set_talking_state(isTalking=false)` Tool Call을 실행해야한다.
+                - 조금이라도 본인에게 이야기하지 않는 상황이라고 판단되면 해당 Tool Call을 실행해야한다.
 
                 ## 11.2 set_response_emotion
                 - AI가 답변해야 하는 상황이라면, 답변 텍스트를 생성하기 전에 `set_response_emotion` Tool Call을 호출하여 감정 상태를 먼저 전달해야 한다.

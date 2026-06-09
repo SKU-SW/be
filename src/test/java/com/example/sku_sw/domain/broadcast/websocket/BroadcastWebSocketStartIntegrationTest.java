@@ -7,7 +7,7 @@ import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
-import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
@@ -26,7 +26,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.CloseStatus;
@@ -68,7 +67,7 @@ class BroadcastWebSocketStartIntegrationTest {
     private BroadcastMessageService broadcastMessageService;
 
     @Mock
-    private BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
 
     @Mock
     private BroadcastRepository broadcastRepository;
@@ -84,9 +83,6 @@ class BroadcastWebSocketStartIntegrationTest {
 
     @Mock
     private BroadcastGeminiRequestService broadcastGeminiRequestService;
-
-    @Mock
-    private ApplicationEventPublisher applicationEventPublisher;
 
     @Mock
     private BroadcastPromptBuilder broadcastPromptBuilder;
@@ -126,11 +122,10 @@ class BroadcastWebSocketStartIntegrationTest {
                 sessionRegistry,
                 broadcastMessageService,
                 broadcastGeminiBootstrapService,
-                broadcastDialogueCompactionService,
+                broadcastDialoguePersistenceService,
                 broadcastRepository,
                 transactionTemplate,
                 broadcastGeminiRequestService,
-                applicationEventPublisher,
                 chatRedisUtil,
                 fastApiUtil
         );

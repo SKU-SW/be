@@ -5,16 +5,14 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastMessageReqDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
-import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
-import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
-import com.example.sku_sw.domain.broadcast.service.BroadcastDialogueCompactionService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
@@ -28,7 +26,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -65,11 +62,10 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastMessageService broadcastMessageService;
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
-    private final BroadcastDialogueCompactionService broadcastDialogueCompactionService;
+    private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
     private final BroadcastRepository broadcastRepository;
     private final TransactionTemplate transactionTemplate;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
-    private final ApplicationEventPublisher applicationEventPublisher;
     private final ChatRedisUtil chatRedisUtil;
     private final FastApiUtil fastApiUtil;
 
@@ -348,7 +344,13 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
                 broadcast.abnormalTerminate();
             });
 
-            broadcastDialogueCompactionService.compactRemainingDialogues(broadcastStreamId);
+            try {
+                broadcastDialoguePersistenceService.saveRemainingRedisDialogues(broadcastStreamId);
+            } catch (Exception e) {
+                log.error("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - Remaining dialogue save failed | streamId: {}, error: {}",
+                        broadcastStreamId, e.getMessage(), e);
+            }
+
             BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
 
             if (broadcastUserRedisDto != null) {
