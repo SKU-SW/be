@@ -27,6 +27,8 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.TendencyVersion;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastMonthInfoResDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastMonthResDto;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
@@ -62,6 +64,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.StringUtils;
 import org.springframework.web.socket.CloseStatus;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -1240,6 +1243,74 @@ public class BroadcastService {
 
         log.info("[BroadcastService] updateCharacterTendency() - END | prevVersion: {}, prevTendency: {}",
                 result.prevVersion(), result.prevTendency());
+        return result;
+    }
+
+    /**
+     * 달별 방송 기록 조회
+     * - 해당 월의 방송 기록을 리스트로 조회한다.
+     * - 각 방송의 방송 시간(broadcastTime)은 startedAt ~ terminatedAt(또는 현재 시각)의 차이로 계산된다.
+     * - 방송 시간의 ms는 반올림되어 HH:MM:SS 형식으로 반환된다.
+     * @param userId : 조회할 사용자 ID
+     * @param year : 조회할 연도
+     * @param month : 조회할 월
+     * @return : BroadcastMonthResDto
+     */
+    @Transactional(readOnly = true)
+    public BroadcastMonthResDto getBroadcastMonth(Long userId, int year, int month) {
+        log.info("[BroadcastService] getBroadcastMonth() - START | userId: {}, year: {}, month: {}", userId, year, month);
+
+        /*
+            1. 해당 월의 방송 목록 조회
+            - userId, year, month로 해당 월의 방송 목록을 조회한다.
+        */
+        List<Broadcast> broadcasts = broadcastRepository.findAllByUserIdAndMonth(userId, year, month);
+
+        /*
+            2. BroadcastMonthInfoResDto 리스트로 변환
+            - 각 방송에 대해 day, broadcastId, characterId, characterName, broadcastStatus, broadcastTime을 매핑한다.
+            - broadcastTime은 Duration으로 계산하며, ms는 반올림하여 HH:MM:SS 형식으로 포맷한다.
+        */
+        List<BroadcastMonthInfoResDto> infoList = broadcasts.stream()
+                .map(broadcast -> {
+                    LocalDateTime endTime = broadcast.getTerminatedAt() != null
+                            ? broadcast.getTerminatedAt()
+                            : LocalDateTime.now();
+                    Duration duration = Duration.between(broadcast.getStartedAt(), endTime);
+
+                    long totalSeconds = duration.getSeconds();
+                    int nanos = duration.getNano();
+                    if (nanos >= 500_000_000) {
+                        totalSeconds++;
+                    }
+
+                    long hours = totalSeconds / 3600;
+                    long minutes = (totalSeconds % 3600) / 60;
+                    long seconds = totalSeconds % 60;
+                    String broadcastTime = String.format("%02d:%02d:%02d", hours, minutes, seconds);
+
+                    return BroadcastMonthInfoResDto.builder()
+                            .day(broadcast.getStartedAt().getDayOfMonth())
+                            .broadcastId(broadcast.getId())
+                            .characterId(broadcast.getCharacter().getId())
+                            .characterName(broadcast.getCharacter().getName())
+                            .broadcastStatus(broadcast.getStatus())
+                            .broadcastTime(broadcastTime)
+                            .build();
+                })
+                .toList();
+
+        /*
+            3. BroadcastMonthResDto 생성
+            - 방송 정보 리스트, 조회 연도, 조회 월을 포함하는 응답 DTO를 생성한다.
+        */
+        BroadcastMonthResDto result = BroadcastMonthResDto.builder()
+                .broadcastMonthInfoList(infoList)
+                .broadcastYear(year)
+                .broadcastMonth(month)
+                .build();
+
+        log.info("[BroadcastService] getBroadcastMonth() - END | resultSize: {}", infoList.size());
         return result;
     }
 

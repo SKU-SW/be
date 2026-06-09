@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 
 public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
@@ -102,5 +103,27 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
     Optional<Broadcast> findActiveByUserId(
             @Param("userId") Long userId,
             @Param("status") BroadcastStatus status
+    );
+
+    /**
+     * 사용자의 해당 월 방송 목록 조회
+     * - userId와 month로 특정 월의 방송 목록을 조회한다.
+     * - startedAt 오름차순으로 정렬한다.
+     * @param userId : 조회할 사용자 ID
+     * @param year : 조회할 연도
+     * @param month : 조회할 월
+     * @return : List<Broadcast>
+     */
+    @Query("select b " +
+            "from Broadcast b " +
+            "join fetch b.character " +
+            "where b.character.user.id = :userId " +
+            "and year(b.startedAt) = :year " +
+            "and month(b.startedAt) = :month " +
+            "order by b.startedAt asc")
+    List<Broadcast> findAllByUserIdAndMonth(
+            @Param("userId") Long userId,
+            @Param("year") int year,
+            @Param("month") int month
     );
 }
