@@ -8,4 +8,15 @@ public record BroadcastMonthResDto(
         List<BroadcastMonthInfoResDto> broadcastMonthInfoList,
         int broadcastYear,
         int broadcastMonth
-) {}
+) {
+    public static BroadcastMonthResDto create(
+            List<BroadcastMonthInfoResDto> broadcastMonthInfoList,
+            int broadcastYear,
+            int broadcastMonth){
+        return BroadcastMonthResDto.builder()
+                .broadcastMonthInfoList(broadcastMonthInfoList)
+                .broadcastYear(broadcastYear)
+                .broadcastMonth(broadcastMonth)
+                .build();
+    }
+}

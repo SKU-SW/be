@@ -3,18 +3,7 @@ package com.example.sku_sw.domain.broadcast.service;
 import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
 import com.example.sku_sw.domain.auth.service.AuthService;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterInfoResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastStartResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateReqDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastTendencyUpdateResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterImageRedisDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCursorItemResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastTerminateResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
-import com.example.sku_sw.domain.broadcast.dto.CharacterPersonaInfoResDto;
-import com.example.sku_sw.domain.broadcast.dto.CurrentStreamInfoResDto;
+import com.example.sku_sw.domain.broadcast.dto.*;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelResDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateReqDto;
@@ -26,9 +15,6 @@ import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredExceptio
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.TendencyVersion;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastChatStatsResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastMonthInfoResDto;
-import com.example.sku_sw.domain.broadcast.dto.BroadcastMonthResDto;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
@@ -47,7 +33,9 @@ import com.example.sku_sw.domain.character.entity.CharacterVrm;
 import com.example.sku_sw.domain.character.enums.CharacterAppearanceType;
 import com.example.sku_sw.domain.character.enums.CharacterErrorCode;
 import com.example.sku_sw.domain.character.enums.Emotion;
+import com.example.sku_sw.domain.character.repository.CharacterImageDetailRepository;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
+import com.example.sku_sw.domain.character.repository.CharacterTriggerWordRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
@@ -56,6 +44,7 @@ import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,8 +82,12 @@ public class BroadcastService {
     private final BroadcastStatsRepository broadcastStatsRepository;
     private final ChatRedisUtil chatRedisUtil;
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
+    private final CharacterTriggerWordRepository characterTriggerWordRepository;
+    private final CharacterImageDetailRepository characterImageDetailRepository;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
+    @Value("${spring.cloud.cloudfront.domain}")
+    private String cloudfrontDomain;
 
     /**
      * AI 캐릭터 방송 시작
@@ -379,7 +372,7 @@ public class BroadcastService {
             5. Redis + DB 병합 후 CursorSliceResponse 생성
             - 응답 본문에는 최신 size개만 담고, 초과 1개는 hasNext/nextCursor 계산에만 사용한다.
          */
-        CursorSliceResponse<BroadcastDialogueCursorItemResDto> dialogueSlice = buildCurrentStreamDialogueSlice(
+        CursorSliceResponse<BroadcastDialogueCursorResDto> dialogueSlice = buildCurrentStreamDialogueSlice(
                 redisDialogues,
                 dbDialogues,
                 normalizedSize
@@ -415,7 +408,7 @@ public class BroadcastService {
      * @return : CursorSliceResponse<BroadcastDialogueCursorItemResDto>
      */
     @Transactional(readOnly = true)
-    public CursorSliceResponse<BroadcastDialogueCursorItemResDto> getBroadcastDialoguesByCursor(
+    public CursorSliceResponse<BroadcastDialogueCursorResDto> getBroadcastDialoguesByCursor(
             Long userId,
             Integer size,
             Long cursorId,
@@ -473,7 +466,7 @@ public class BroadcastService {
             5. CursorSliceResponse 생성
             - 기존 현재 방송 정보 조회 API와 동일한 extra 1개 처리 규칙을 적용한다.
          */
-        CursorSliceResponse<BroadcastDialogueCursorItemResDto> result = buildCurrentStreamDialogueSlice(
+        CursorSliceResponse<BroadcastDialogueCursorResDto> result = buildCurrentStreamDialogueSlice(
                 redisDialogues,
                 dbDialogues,
                 normalizedSize
@@ -889,7 +882,7 @@ public class BroadcastService {
      * @param size : 응답에 포함할 최대 대화 개수
      * @return : CursorSliceResponse<BroadcastDialogueCursorItemResDto>
      */
-    private CursorSliceResponse<BroadcastDialogueCursorItemResDto> buildCurrentStreamDialogueSlice(
+    private CursorSliceResponse<BroadcastDialogueCursorResDto> buildCurrentStreamDialogueSlice(
             List<BroadcastInfoRedisDto> redisDialogues,
             List<BroadcastDialogue> dbDialogues,
             int size
@@ -921,7 +914,7 @@ public class BroadcastService {
                     .toList()
                 : mergedDialogues;
 
-        CursorSliceResponse<BroadcastDialogueCursorItemResDto> result = CursorSliceResponse.<BroadcastDialogueCursorItemResDto>builder()
+        CursorSliceResponse<BroadcastDialogueCursorResDto> result = CursorSliceResponse.<BroadcastDialogueCursorResDto>builder()
                 .content(responseDialogues.stream()
                         .map(this::toBroadcastDialogueCursorItemResDto)
                         .toList())
@@ -936,12 +929,12 @@ public class BroadcastService {
     }
 
     /**
-     * 현재 방송 대화 투영 객체를 응답 DTO로 변환
-     * @param dialogue : 대화 투영 객체
+     * 현재 방송 대화 임시 객체를 응답 DTO로 변환
+     * @param dialogue : 대화 임시 객체
      * @return : 방송 대화 커서 응답 DTO
      */
-    private BroadcastDialogueCursorItemResDto toBroadcastDialogueCursorItemResDto(BroadcastDialogueCursorProjection dialogue) {
-        return BroadcastDialogueCursorItemResDto.builder()
+    private BroadcastDialogueCursorResDto toBroadcastDialogueCursorItemResDto(BroadcastDialogueCursorProjection dialogue) {
+        return BroadcastDialogueCursorResDto.builder()
                 .cursorId(dialogue.cursorId())
                 .subject(dialogue.subject())
                 .content(dialogue.content())
@@ -1289,14 +1282,14 @@ public class BroadcastService {
                     long seconds = totalSeconds % 60;
                     String broadcastTime = String.format("%02d:%02d:%02d", hours, minutes, seconds);
 
-                    return BroadcastMonthInfoResDto.builder()
-                            .day(broadcast.getStartedAt().getDayOfMonth())
-                            .broadcastId(broadcast.getId())
-                            .characterId(broadcast.getCharacter().getId())
-                            .characterName(broadcast.getCharacter().getName())
-                            .broadcastStatus(broadcast.getStatus())
-                            .broadcastTime(broadcastTime)
-                            .build();
+                    return BroadcastMonthInfoResDto.create(
+                            broadcast.getStartedAt().getDayOfMonth(),
+                            broadcast.getId(),
+                            broadcast.getCharacter().getId(),
+                            broadcast.getCharacter().getName(),
+                            broadcast.getStatus(),
+                            broadcastTime
+                    );
                 })
                 .toList();
 
@@ -1304,13 +1297,189 @@ public class BroadcastService {
             3. BroadcastMonthResDto 생성
             - 방송 정보 리스트, 조회 연도, 조회 월을 포함하는 응답 DTO를 생성한다.
         */
-        BroadcastMonthResDto result = BroadcastMonthResDto.builder()
-                .broadcastMonthInfoList(infoList)
-                .broadcastYear(year)
-                .broadcastMonth(month)
+        BroadcastMonthResDto result = BroadcastMonthResDto.create(infoList, year, month);
+        log.info("[BroadcastService] getBroadcastMonth() - END | resultSize: {}", infoList.size());
+        return result;
+    }
+
+    /**
+     * 방송 통계 조회
+     * - 특정 방송의 통계 정보를 조회한다.
+     * - 본인 방송만 조회 가능하며, broadcastId + userId 조건으로 검증한다.
+     * - 캐릭터 정보, 방송 정보, 최근 5개 대화를 포함하여 반환한다.
+     * @param userId : 조회하는 사용자 ID
+     * @param broadcastId : 조회할 방송 ID
+     * @return : 방송 통계 응답 DTO
+     */
+    @Transactional(readOnly = true)
+    public BroadcastDayStatsResDto getBroadcastDayStats(Long userId, Long broadcastId) {
+        log.info("[BroadcastService] getBroadcastDayStats() - START | userId: {}, broadcastId: {}", userId, broadcastId);
+
+        /*
+            1. 방송 단건 조회
+            - broadcastId와 userId 조건으로 방송을 조회한다.
+            - 존재하지 않거나 본인 방송이 아니면 BROADCAST_NOT_FOUND 예외를 발생시킨다.
+         */
+        Broadcast broadcast = broadcastRepository.findByIdAndUserId(broadcastId, userId)
+                .orElseThrow(() -> new CustomException(BroadcastErrorCode.BROADCAST_NOT_FOUND));
+
+        /*
+            2. 응답 하위 정보 구성
+            - 캐릭터 정보, 방송 정보, 채팅 정보를 각각 별도 함수에서 구성한다.
+         */
+        BroadcastDayCharacterInfoResDto characterInfo = buildBroadcastDayCharacterInfo(broadcast.getCharacter());
+        BroadcastDayBroadcastInfoResDto broadcastInfo = buildBroadcastDayBroadcastInfo(broadcast);
+        BroadcastDayChatInfoResDto chatInfo = buildBroadcastDayChatInfo();
+
+        /*
+            3. 최종 응답 DTO 생성
+         */
+        BroadcastDayStatsResDto result = BroadcastDayStatsResDto.builder()
+                .characterInfo(characterInfo)
+                .broadcastInfo(broadcastInfo)
+                .chatAnalysisInfo(chatInfo)
                 .build();
 
-        log.info("[BroadcastService] getBroadcastMonth() - END | resultSize: {}", infoList.size());
+        log.info("[BroadcastService] getBroadcastDayStats() - END | broadcastId: {}, streamId: {}", broadcastId, broadcast.getStreamId());
+        return result;
+    }
+
+    /**
+     * 방송 통계 조회용 캐릭터 정보 구성
+     * - 캐릭터 기본 정보, 대표 이미지 URL, 페르소나, 호출어 목록을 조합한다.
+     * - 호출어와 2D 이미지 상세 정보는 별도 Repository로 조회한다.
+     * @param character : 방송에 연결된 캐릭터 엔티티
+     * @return : 방송 통계 캐릭터 정보 응답 DTO
+     */
+    private BroadcastDayCharacterInfoResDto buildBroadcastDayCharacterInfo(Character character) {
+        log.info("[BroadcastService] buildBroadcastDayCharacterInfo() - START | characterId: {}", character.getId());
+
+        /*
+            1. 호출어 목록 조회
+            - Character.triggerWords 컬렉션에 직접 접근하지 않고 Repository로 정렬 조회한다.
+         */
+        List<String> triggerWords = characterTriggerWordRepository.findAllByCharacterIdOrderBySortOrderAsc(character.getId())
+                .stream()
+                .map(CharacterTriggerWord::getWord)
+                .toList();
+
+        /*
+            2. 대표 이미지 URL 조회
+            - 2D 캐릭터는 CharacterImageDetailRepository로 첫 번째 이미지 상세를 조회한다.
+            - 3D 캐릭터는 CharacterVrm thumbnailUrl을 사용한다.
+         */
+        String imageUrl = cloudfrontDomain + resolveBroadcastDayCharacterImageUrl(character);
+
+        /*
+            3. 캐릭터 정보 DTO 생성
+         */
+        BroadcastDayCharacterInfoResDto result = BroadcastDayCharacterInfoResDto.create(character.getName(), character.getGender(), imageUrl, character.getCharacterPersona().getPresetType(), triggerWords);
+
+        log.info("[BroadcastService] buildBroadcastDayCharacterInfo() - END | characterId: {}", character.getId());
+        return result;
+    }
+
+    /**
+     * 방송 통계 조회용 캐릭터 대표 이미지 URL 조회
+     * - 2D 캐릭터는 CharacterImageDetailRepository로 첫 번째 이미지 상세를 조회한다.
+     * - 3D 캐릭터는 CharacterVrm thumbnailUrl을 반환한다.
+     * @param character : 대표 이미지 URL을 조회할 캐릭터 엔티티
+     * @return : 대표 이미지 URL
+     */
+    private String resolveBroadcastDayCharacterImageUrl(Character character) {
+        log.info("[BroadcastService] resolveBroadcastDayCharacterImageUrl() - START | characterId: {}", character.getId());
+        // 1. 2D 캐릭터인 경우
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.TWO_D) {
+            CharacterImage characterImage = character.getCharacterImage();
+            if (characterImage == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND);
+            }
+
+            String result = characterImageDetailRepository.findFirstByCharacterImageIdOrderByIdAsc(characterImage.getId())
+                    .map(CharacterImageDetail::getImageUrl)
+                    .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_IMAGE_NOT_FOUND));
+
+            log.info("[BroadcastService] resolveBroadcastDayCharacterImageUrl() - END | characterId: {}, appearanceType: {}",
+                    character.getId(), character.getCharacterAppearanceType());
+            return result;
+        }
+        // 2. 3D 캐릭터인 경우
+        if (character.getCharacterAppearanceType() == CharacterAppearanceType.THREE_D) {
+            CharacterVrm characterVrm = character.getCharacterVrm();
+            if (characterVrm == null) {
+                throw new CustomException(CharacterErrorCode.CHARACTER_VRM_NOT_FOUND);
+            }
+
+            String result = characterVrm.getThumbnailUrl();
+            log.info("[BroadcastService] resolveBroadcastDayCharacterImageUrl() - END | characterId: {}, appearanceType: {}",
+                    character.getId(), character.getCharacterAppearanceType());
+            return result;
+        }
+
+        throw new CustomException(CharacterErrorCode.INVALID_CHARACTER_APPEARANCE_TYPE);
+    }
+
+    /**
+     * 방송 통계 조회용 방송 정보 구성
+     * - 방송 기본 정보, 최근 5개 대화 목록, 방송 분석 결과 null 값을 조합한다.
+     * @param broadcast : 방송 엔티티
+     * @return : 방송 통계 방송 정보 응답 DTO
+     */
+    private BroadcastDayBroadcastInfoResDto buildBroadcastDayBroadcastInfo(Broadcast broadcast) {
+        log.info("[BroadcastService] buildBroadcastDayBroadcastInfo() - START | broadcastId: {}", broadcast.getId());
+
+        /*
+            1. 최근 5개 방송 대화 조회
+            - cursorId 기준 내림차순으로 최신 대화 최대 5개를 조회한다.
+         */
+        List<BroadcastDialogue> lastFiveDialogues = broadcastDialogueRepository.findByBroadcastIdOrderByCursorIdDesc(
+                broadcast.getId(), PageRequest.of(0, 5));
+
+        /*
+            2. BroadcastDialogueCursorResDto 변환
+            - BroadcastDialogueCursorProjection.fromEntity() 후 기존 변환 함수를 재사용한다.
+         */
+        List<BroadcastDialogueCursorResDto> lastFiveDialogueDtos = lastFiveDialogues.stream()
+                .map(dialogue -> toBroadcastDialogueCursorItemResDto(BroadcastDialogueCursorProjection.fromEntity(dialogue)))
+                .toList();
+
+        /*
+            3. 방송 정보 DTO 생성
+            - analysisResult는 이번 구현 범위에서 null로 설정한다.
+         */
+        BroadcastDayBroadcastInfoResDto result = BroadcastDayBroadcastInfoResDto.create(
+                        broadcast.getStreamId(),
+                        broadcast.getStatus(),
+                        broadcast.getStartedAt().format(BROADCAST_DATE_TIME_FORMATTER),
+                        broadcast.getTerminatedAt() != null
+                                ? broadcast.getTerminatedAt().format(BROADCAST_DATE_TIME_FORMATTER)
+                                : null,
+                        lastFiveDialogueDtos,
+                        null
+                );
+
+        log.info("[BroadcastService] buildBroadcastDayBroadcastInfo() - END | broadcastId: {}, dialogueSize: {}",
+                broadcast.getId(), lastFiveDialogueDtos.size());
+        return result;
+    }
+
+    /**
+     * 방송 통계 조회용 채팅 정보 구성
+     * - 채팅 분석 결과는 이번 구현 범위에서 null로 설정한다.
+     * @return : 방송 통계 채팅 정보 응답 DTO
+     */
+    private BroadcastDayChatInfoResDto buildBroadcastDayChatInfo() {
+        log.info("[BroadcastService] buildBroadcastDayChatInfo() - START");
+
+        /*
+            1. 채팅 정보 DTO 생성
+            - analysisResult는 이번 구현 범위에서 null로 설정한다.
+         */
+        BroadcastDayChatInfoResDto result = BroadcastDayChatInfoResDto.builder()
+                .analysisResult(null)
+                .build();
+
+        log.info("[BroadcastService] buildBroadcastDayChatInfo() - END");
         return result;
     }
 

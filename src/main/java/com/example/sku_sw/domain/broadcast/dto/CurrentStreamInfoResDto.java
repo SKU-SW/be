@@ -13,6 +13,6 @@ public record CurrentStreamInfoResDto(
 
         @JsonUnwrapped
         @Schema(description = "현재 방송 대화 커서 슬라이스 응답")
-        CursorSliceResponse<BroadcastDialogueCursorItemResDto> dialogueSlice
+        CursorSliceResponse<BroadcastDialogueCursorResDto> dialogueSlice
 ) {
 }
