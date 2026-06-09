@@ -4,7 +4,6 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueCompactionSnapsh
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueSnapshotItemDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastCompactionTriggerType;
-import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.event.BroadcastCompactionCheckRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRefreshService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -15,7 +14,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import reactor.core.scheduler.Schedulers;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -78,33 +76,6 @@ public class BroadcastDialogueCompactionService {
     }
 
     /**
-     * 방송 종료 시 남은 대화를 즉시 compaction하는 함수
-     * @param broadcastStreamId : 방송 스트림 ID
-     */
-    public boolean compactRemainingDialogues(String broadcastStreamId) {
-        log.info("[BroadcastDialogueCompactionService] compactRemainingDialogues() - START | streamId: {}", broadcastStreamId);
-
-        if (broadcastRedisUtil.isSummaryInProgress(broadcastStreamId)) {
-            log.info("[BroadcastDialogueCompactionService] compactRemainingDialogues() - END | streamId: {}, action: in_progress", broadcastStreamId);
-            return false;
-        }
-
-        if (!broadcastRedisUtil.hasInactiveDialogues(broadcastStreamId) && broadcastRedisUtil.countActiveDialogues(broadcastStreamId) == 0) {
-            log.info("[BroadcastDialogueCompactionService] compactRemainingDialogues() - END | streamId: {}, action: no_dialogue", broadcastStreamId);
-            return true;
-        }
-
-        if (!broadcastRedisUtil.markSummaryInProgress(broadcastStreamId)) {
-            log.info("[BroadcastDialogueCompactionService] compactRemainingDialogues() - END | streamId: {}, action: mark_failed", broadcastStreamId);
-            return false;
-        }
-
-        boolean result = compactInternalSync(broadcastStreamId);
-        log.info("[BroadcastDialogueCompactionService] compactRemainingDialogues() - END | streamId: {}", broadcastStreamId);
-        return result;
-    }
-
-    /**
      * 비동기적으로 방송 정보를 요약하는 함수
      * @param broadcastStreamId 방송 고유 ID
      */
@@ -160,38 +131,6 @@ public class BroadcastDialogueCompactionService {
         }
 
         log.info("[BroadcastDialogueCompactionService] compactInternalAsync() - END | streamId: {}", broadcastStreamId);
-    }
-
-    // 동기적으로 방송 대화를 요약하는 함수
-    private boolean compactInternalSync(String broadcastStreamId) {
-        log.info("[BroadcastDialogueCompactionService] compactInternalSync() - START | streamId: {}", broadcastStreamId);
-
-        try {
-            CompactionPreparedData preparedData = prepareCompaction(broadcastStreamId);
-            if (preparedData == null) {
-                log.info("[BroadcastDialogueCompactionService] compactInternalSync() - END | streamId: {}, action: empty_snapshot", broadcastStreamId);
-                return true;
-            }
-
-            // block() 함수로 Mono 객체에 데이터가 올때까지 동기적으로 대기하도록 한다.
-            String summaryText = broadcastDialogueSummaryService.summarize(preparedData.summary(), preparedData.dialogues()).block();
-            BroadcastInfoRedisDto newSummary = BroadcastInfoRedisDto.buildSummaryDto(summaryText, preparedData.summary().dataStatus());
-
-            broadcastRedisUtil.atomicReplaceSummaryAndDeleteInactive(broadcastStreamId, newSummary);
-            broadcastRedisUtil.clearSummaryInProgress(broadcastStreamId);
-
-            if (broadcastRedisUtil.hasInactiveDialogues(broadcastStreamId)
-                    || broadcastRedisUtil.countActiveDialogues(broadcastStreamId) >= redisBroadcastDialogueMaxNum) {
-                return compactRemainingDialogues(broadcastStreamId);
-            }
-        } catch (Exception e) {
-            log.error("[BroadcastDialogueCompactionService] compactInternalSync() - Failed | streamId: {}, error: {}", broadcastStreamId, e.getMessage(), e);
-            broadcastRedisUtil.clearSummaryInProgress(broadcastStreamId);
-            return false;
-        }
-
-        log.info("[BroadcastDialogueCompactionService] compactInternalSync() - END | streamId: {}", broadcastStreamId);
-        return true;
     }
 
     private CompactionPreparedData prepareCompaction(String broadcastStreamId) {

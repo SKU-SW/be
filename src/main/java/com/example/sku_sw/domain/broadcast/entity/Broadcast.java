@@ -80,6 +80,9 @@ public class Broadcast {
     @Builder.Default
     private List<BroadcastKeywords> broadcastKeywordsList = new ArrayList<>();
 
+    @OneToOne(mappedBy = "broadcast", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    private BroadcastAnalysis broadcastAnalysis;
+
     // ======================================
     // [비즈니스 로직]
     // ======================================

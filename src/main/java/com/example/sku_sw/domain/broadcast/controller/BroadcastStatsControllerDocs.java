@@ -35,8 +35,33 @@ public interface BroadcastStatsControllerDocs {
             [Response Body]
             - `characterInfo`: 캐릭터 정보 (name, gender, imageUrl, persona, triggerWords)
             - `broadcastInfo`: 방송 정보 (streamId, status, startedAt, terminatedAt, lastFiveBroadcastDialogues, analysisResult)
-            - `chatAnalysisInfo`: 채팅 분석 정보 (analysisResult)
-            
+              - `analysisResult`: 방송 분석 결과. 분석 데이터가 아직 없으면 null입니다.
+                - `majorContent`: 방송의 주 컨텐츠에 대한 설명
+                - `majorMoodWithViewers`: 시청자와의 주 분위기를 분석한 결과
+                - `summary`: 당일 방송 요약
+                - `totalAnalysis`: 방송 최종 분석
+                - `catchPhrases`: 사람들이 함께 반복적으로 사용한 유행어 목록
+                - `timeLines`: 주요 컨텐츠 내용이 확연히 바뀐 방송 구간 목록
+                  - `content`: 해당 구간 방송 내용
+                  - `startTime`: 구간 시작 시간 (`yyyy-MM-dd HH:mm:ss`)
+                  - `endTime`: 구간 종료 시간 (`yyyy-MM-dd HH:mm:ss`)
+            - `chatAnalysisInfo`: 채팅 분석 정보
+              - `publicOpinion`: 해당 방송 전체 채팅 데이터 기준 여론 현황
+                - `positiveChatCount`: 긍정 채팅 수
+                - `neutralChatCount`: 중립 채팅 수
+                - `negativeChatCount`: 부정 채팅 수
+                - `totalChatCount`: 전체 채팅 수
+                - `positiveRatio`: 긍정 비율 (%)
+                - `neutralRatio`: 중립 비율 (%)
+                - `negativeRatio`: 부정 비율 (%)
+              - `aiPartnerTendency`: 최종 채팅 여론 분석 결과와 동일한 AI 파트너 응답 성향
+              - `sentimentFlow`: 해당 방송 전체 통계를 10분 간격으로 고정 그룹핑한 감정 흐름
+                - `timeLabel`: 구간 시작 시각 (`HH:mm`)
+                - `positiveRatio`: 구간 긍정 비율 (%)
+                - `neutralRatio`: 구간 중립 비율 (%)
+                - `negativeRatio`: 구간 부정 비율 (%)
+              - `topKeywords`: 해당 방송 전체 데이터 기준 상위 10개 키워드
+             
             [예외]
             - 본인 방송이 아니거나 존재하지 않는 방송이면 404 예외가 발생합니다.
             """)
