@@ -12,6 +12,8 @@ import com.example.sku_sw.domain.auth.dto.AuthRefreshTokenReqDto;
 import com.example.sku_sw.domain.auth.dto.AuthRefreshTokenResDto;
 import com.example.sku_sw.domain.auth.dto.AuthRegisterEmailReqDto;
 import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
+import com.example.sku_sw.domain.setting.entity.BroadcastSetting;
+import com.example.sku_sw.domain.setting.repository.BroadcastSettingRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.enums.RegisterType;
 import com.example.sku_sw.domain.user.repository.UserRepository;
@@ -50,6 +52,7 @@ public class AuthService {
     private static final String CHZZK_REFRESH_TOKEN_TYPE_HINT = "refresh_token";
 
     private final UserRepository userRepository;
+    private final BroadcastSettingRepository broadcastSettingRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final RedisUtil redisUtil;
@@ -69,6 +72,7 @@ public class AuthService {
      * - 이메일 중복 여부를 확인한다.
      * - 비밀번호와 비밀번호 확인 값의 일치 여부를 검증한다.
      * - 비밀번호를 단방향 해싱한 뒤 User 엔티티를 생성 및 저장한다.
+     * - 회원가입 시 기본값으로 BroadcastSetting을 생성하여 연결한다.
      * @param reqDto : 이메일 회원가입 요청 DTO
      */
     @Transactional
@@ -96,6 +100,15 @@ public class AuthService {
 
         // 5. 생성한 사용자를 저장하여 회원가입을 완료한다.
         User savedUser = userRepository.save(user);
+
+        /*
+            6. 방송 설정 초기 생성
+            - 신규 가입 사용자의 방송 설정을 기본값(aiProactiveToChat=true)으로 생성하여 연결한다.
+        */
+        BroadcastSetting broadcastSetting = BroadcastSetting.builder()
+                .user(savedUser)
+                .build();
+        broadcastSettingRepository.save(broadcastSetting);
 
         log.info("[AuthService] registerEmail() - END | userId: {}, email: {}", savedUser.getId(), savedUser.getEmail());
     }
