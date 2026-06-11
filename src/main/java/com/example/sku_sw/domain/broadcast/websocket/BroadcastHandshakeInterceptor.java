@@ -44,8 +44,7 @@ public class BroadcastHandshakeInterceptor implements HandshakeInterceptor {
             WebSocketHandler wsHandler,
             Map<String, Object> attributes
     ) {
-        log.info("[BroadcastHandshakeInterceptor] beforeHandshake() - START | uri: {}", request.getURI());
-        log.info("[BroadcastHandshakeInterceptor] beforeHandshake() - Origin | origin: {}", request.getHeaders().getOrigin());
+        log.info("[BroadcastHandshakeInterceptor] beforeHandshake() - START | uri: {}, origin: {}", request.getURI(), request.getHeaders().getOrigin());
 
         /*
             1. Access Token 추출 및 검증
