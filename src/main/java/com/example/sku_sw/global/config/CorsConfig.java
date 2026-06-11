@@ -36,7 +36,8 @@ public class CorsConfig {
          */
         config.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",
-                "file://localhost:5173"
+                "file://localhost:5173",
+                "https://dev.sku-sw.cloud"
         ));
 
         /*
