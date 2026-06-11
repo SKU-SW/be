@@ -35,7 +35,8 @@ public class CorsConfig {
          *  setAllowedOrigins 대신 setAllowedOriginPatterns를 사용해야 와일드카드(*)와 Credentials를 동시에 쓸 수 있음
          */
         config.setAllowedOriginPatterns(List.of(
-                "http://localhost:5173"
+                "http://localhost:5173",
+                "file://localhost:5173"
         ));
 
         /*
