@@ -143,4 +143,12 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
             @Param("year") int year,
             @Param("month") int month
     );
+
+    /**
+     * 캐릭터 ID로 방송 목록 조회
+     * - 캐릭터 삭제 전 관련 방송을 선삭제하기 위해 사용한다.
+     * @param characterId : 캐릭터 ID
+     * @return : List<Broadcast>
+     */
+    List<Broadcast> findAllByCharacterId(Long characterId);
 }
