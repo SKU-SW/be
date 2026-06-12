@@ -38,8 +38,7 @@ public class CorsConfig {
                 "http://localhost:5173",
                 "https://dev.sku-sw.cloud",
                 "https://sku-sw.cloud",
-                "file://electron-app",
-                "null/file://"
+                "sku-sw://app"
         ));
 
         /*
