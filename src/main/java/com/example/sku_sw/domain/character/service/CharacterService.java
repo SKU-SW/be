@@ -1,5 +1,7 @@
 package com.example.sku_sw.domain.character.service;
 
+import com.example.sku_sw.domain.broadcast.entity.Broadcast;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.character.dto.CharacterCreateReqDto;
 import com.example.sku_sw.domain.character.dto.CharacterDetailResDto;
 import com.example.sku_sw.domain.character.dto.CharacterListResDto;
@@ -53,6 +55,7 @@ public class CharacterService {
     private final UserRepository userRepository;
     private final CharacterMapper characterMapper;
     private final CharacterVrmRepository characterVrmRepository;
+    private final BroadcastRepository broadcastRepository;
     private final S3Util s3Util;
 
     /**
@@ -528,7 +531,15 @@ public class CharacterService {
         }
 
         /*
-            4. 캐릭터 삭제
+            4. 관련 Broadcast 선삭제 (FK 제약 해소)
+            - 캐릭터 삭제 전 해당 캐릭터와 연관된 방송을 먼저 삭제한다.
+            - Broadcast의 cascade 설정으로 BroadcastDialogue, BroadcastStats, BroadcastKeywords, BroadcastAnalysis도 함께 삭제된다.
+        */
+        List<Broadcast> broadcasts = broadcastRepository.findAllByCharacterId(characterId);
+        broadcastRepository.deleteAll(broadcasts);
+
+        /*
+            5. 캐릭터 삭제
             - cascade 설정으로 CharacterPersona와 CharacterTriggerWord도 함께 삭제된다.
         */
         characterRepository.delete(character);
