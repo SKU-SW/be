@@ -40,7 +40,7 @@ public class CharacterController implements CharacterControllerDocs {
             int page,
             int size
     ) {
-        log.info("[CharacterController] createCharacter 요청 발생 - Origin: {}", origin);
+        log.info("[CharacterController] getCharacter 요청 발생 - Origin: {}", origin);
         Long userId = SecurityUtil.getCurrentUserId();
         SliceResponse<CharacterListResDto> response = characterService.getCharacterList(userId, page, size);
         return ResponseEntity.ok(GlobalResponse.success("캐릭터 리스트 조회 완료", response));
