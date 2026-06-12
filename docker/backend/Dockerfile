@@ -3,6 +3,10 @@
 # Ubuntu 22.04(Jammy) 기반의 ARM64 Java 21 JRE 이미지 사용
 FROM --platform=linux/arm64 eclipse-temurin:21-jre-jammy
 
+# 타임존 설정 (KST)
+ENV TZ=Asia/Seoul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # 2. LABEL: 이미지의 메타데이터를 설정하는 명령어
 # 프로젝트명, 설명 등의 정보들을 기록한다.
 LABEL project="SKU SW 인재양성 Spring Boot" \

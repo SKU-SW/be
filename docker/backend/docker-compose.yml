@@ -8,10 +8,13 @@ services:
       - "3306:3306"
     volumes:
       - mysql-dev:/var/lib/mysql
+    environment:
+      - TZ=Asia/Seoul
     command:
       - --default-authentication-plugin=mysql_native_password # allowPublicKeyRetrieval 방식이 아니라 설정해준 Username, PW로 로그인을 시도한다.
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+09:00
 
     environment:
       - MYSQL_DATABASE=${DEV_DB_NAME}
@@ -31,6 +34,7 @@ services:
     depends_on:
       - mysql
     environment:
+      - TZ=Asia/Seoul
       - SPRING_PROFILES_ACTIVE=dev
       - DEV_DB_HOST=${DEV_DB_HOST}
       - DEV_DB_NAME=${DEV_DB_NAME}
