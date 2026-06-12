@@ -13,9 +13,12 @@ import com.example.sku_sw.global.response.SliceResponse;
 import com.example.sku_sw.global.security.SecurityUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class CharacterController implements CharacterControllerDocs {
@@ -33,9 +36,11 @@ public class CharacterController implements CharacterControllerDocs {
 
     @Override
     public ResponseEntity<GlobalResponse<SliceResponse<CharacterListResDto>>> getCharacterList(
+            @RequestHeader(value = "Origin", required = false) String origin,
             int page,
             int size
     ) {
+        log.info("[CharacterController] createCharacter 요청 발생 - Origin: {}", origin);
         Long userId = SecurityUtil.getCurrentUserId();
         SliceResponse<CharacterListResDto> response = characterService.getCharacterList(userId, page, size);
         return ResponseEntity.ok(GlobalResponse.success("캐릭터 리스트 조회 완료", response));
