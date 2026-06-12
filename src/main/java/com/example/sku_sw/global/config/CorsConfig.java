@@ -36,7 +36,8 @@ public class CorsConfig {
          */
         config.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",
-                "file://electron-app"
+                "file://electron-app",
+                "null"
         ));
 
         /*
