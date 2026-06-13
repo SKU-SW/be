@@ -4,6 +4,7 @@ import com.example.sku_sw.domain.broadcast.dto.BroadcastVoiceMetadataResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastVoiceEventType;
 import com.example.sku_sw.domain.character.enums.Emotion;
+import com.example.sku_sw.domain.chat.dto.BroadcastChatMetadataResDto;
 import com.example.sku_sw.global.exception.CustomException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -144,6 +145,47 @@ public class BroadcastWebSocketSender {
         // voiceText, CursorId 값 없이 감정 정보만 담긴 Dto를 생성하고 클라이언트에게 전송한다.
         BroadcastVoiceMetadataResDto metadata = BroadcastVoiceMetadataResDto.buildEmotionMetadataResDto(turnNumber, characterId, emotion);
         sendPayload(broadcastStreamId, generation, null, metadata, "sendEmotionMetadata");
+    }
+
+    /**
+     * 채팅 메시지를 클라이언트에게 전송한다.
+     * - Redis 구독 트리거로 호출되므로 generation을 알 수 없어 최신 번들을 조회한다.
+     * - 세션이 없거나 닫힌 경우 warn 로그 후 정상 종료한다.
+     *
+     * @param broadcastStreamId : 대상 방송 스트림 ID
+     * @param chatMessage       : 전송할 채팅 메시지 DTO
+     */
+    public void sendChatMessage(
+            String broadcastStreamId,
+            BroadcastChatMetadataResDto chatMessage
+    ) {
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(broadcastStreamId);
+        if (bundle == null) {
+            log.warn("[BroadcastWebSocketSender] sendChatMessage() - Bundle not found | streamId: {}", broadcastStreamId);
+            return;
+        }
+
+        WebSocketSession clientSession = bundle.getClientSession();
+        if (clientSession == null || !clientSession.isOpen()) {
+            log.warn("[BroadcastWebSocketSender] sendChatMessage() - Session not found or closed | streamId: {}", broadcastStreamId);
+            return;
+        }
+
+        try {
+            String messageJson = objectMapper.writeValueAsString(chatMessage);
+
+            synchronized (clientSession) {
+                clientSession.sendMessage(new TextMessage(messageJson));
+            }
+
+            log.info("[BroadcastWebSocketSender] sendChatMessage() - Sent | streamId: {}, eventType: {}, nickname: {}",
+                    broadcastStreamId,
+                    chatMessage.eventType(),
+                    chatMessage.nickname());
+        } catch (IOException e) {
+            log.warn("[BroadcastWebSocketSender] sendChatMessage() - Failed to send | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage());
+        }
     }
 
     private void sendPayload(
