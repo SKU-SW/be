@@ -6,12 +6,15 @@ import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastKeywords;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastStats;
 import com.example.sku_sw.domain.broadcast.enums.AiCharacterTendency;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastVoiceEventType;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSender;
+import com.example.sku_sw.domain.chat.dto.BroadcastChatMetadataResDto;
 import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -45,10 +48,12 @@ public class ChzzkChatMessageService {
     private final BroadcastStatsRepository broadcastStatsRepository;
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
+    private final BroadcastWebSocketSender broadcastWebSocketSender;
 
     /**
      * FastApi로부터 전달받은 Chzzk 채팅 메시지를 파싱하고,
-     * Redis 및 BroadcastDialogue에 저장한다.
+     * Redis 및 BroadcastDialogue에 저장한 뒤,
+     * 연결된 클라이언트 WebSocket으로 실시간 채팅 메시지를 전송한다.
      * - 스트리머 채팅은 DialogueSubject.STREAMER로 저장한다.
      * - 일반 채팅은 Gemini 문맥 누적용 접두어를 포함한 문자열로 저장한다.
      * @param payload : FastApi가 전달한 JSON 형식의 채팅 메시지
@@ -73,6 +78,20 @@ public class ChzzkChatMessageService {
             DialogueSubject dialogueSubject = resolveDialogueSubject(message);
             String redisContent = buildRedisContent(message);
             broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
+
+            /*
+                3. 클라이언트 WebSocket으로 실시간 채팅 메시지 전송
+                - BroadcastChatMetadataResDto를 빌드하여 연결된 클라이언트에게 전송한다.
+              */
+            BroadcastChatMetadataResDto chatMessage = BroadcastChatMetadataResDto.builder()
+                    .eventType(BroadcastVoiceEventType.CHAT_MESSAGE)
+                    .nickname(message.nickname())
+                    .userRoleCode(message.userRoleCode())
+                    .content(message.content())
+                    .redisContent(redisContent)
+                    .messageTime(message.messageTime())
+                    .build();
+            broadcastWebSocketSender.sendChatMessage(message.broadcastStreamId(), chatMessage);
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());
