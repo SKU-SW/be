@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.websocket;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastPromptHistoryContext;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
@@ -10,6 +11,7 @@ import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutSer
 import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastPromptHistoryService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastStreamerSilenceService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
@@ -90,6 +92,9 @@ class BroadcastWebSocketStartIntegrationTest {
     private BroadcastPromptBuilder broadcastPromptBuilder;
 
     @Mock
+    private BroadcastPromptHistoryService broadcastPromptHistoryService;
+
+    @Mock
     private ChatRedisUtil chatRedisUtil;
 
     @Mock
@@ -120,7 +125,8 @@ class BroadcastWebSocketStartIntegrationTest {
                 broadcastGeminiRequestService,
                 geminiUtil,
                 broadcastRedisUtil,
-                broadcastPromptBuilder
+                broadcastPromptBuilder,
+                broadcastPromptHistoryService
         );
         ReflectionTestUtils.setField(broadcastGeminiBootstrapService, "redisBroadcastDialogueMaxNum", 50);
         broadcastWebSocketHandler = new BroadcastWebSocketHandler(
@@ -454,6 +460,13 @@ class BroadcastWebSocketStartIntegrationTest {
         given(broadcastRedisUtil.getBroadcastCharacterDto(BROADCAST_STREAM_ID)).willReturn(character);
         given(broadcastRedisUtil.getSummary(BROADCAST_STREAM_ID)).willReturn(summary);
         given(broadcastRedisUtil.getRecentActiveDialogues(BROADCAST_STREAM_ID, 50)).willReturn(List.of());
-        given(broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, List.of())).willReturn("테스트 시스템 프롬프트");
+        given(broadcastPromptHistoryService.buildPromptHistoryContext(BROADCAST_STREAM_ID))
+                .willReturn(new BroadcastPromptHistoryContext(List.of(), List.of()));
+        given(broadcastPromptBuilder.buildBroadcastDialoguePrompt(
+                eq(character),
+                eq(summary),
+                eq(List.of()),
+                any(BroadcastPromptHistoryContext.class)
+        )).willReturn("테스트 시스템 프롬프트");
     }
 }

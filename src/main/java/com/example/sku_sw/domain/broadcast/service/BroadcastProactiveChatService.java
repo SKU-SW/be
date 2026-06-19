@@ -108,8 +108,11 @@ public class BroadcastProactiveChatService {
             BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(streamId);
             if (bundle == null || !bundle.canSendToGemini() || bundle.getRequestFlightCountValue() > 0) {
                 state.future = schedule(streamId, state, batchWindowMs);
-                log.info("[BroadcastProactiveChatService] flush() - END | streamId: {}, action: rescheduled",
-                        streamId);
+                log.info("[BroadcastProactiveChatService] flush() - END | streamId: {}, action: rescheduled, reason: {}, batchCursorCount: {}, batchCursorIds: {}",
+                        streamId,
+                        buildRescheduledReason(bundle),
+                        state.cursorIds.size(),
+                        state.cursorIds);
                 return;
             }
 
@@ -144,6 +147,32 @@ public class BroadcastProactiveChatService {
             log.info("[BroadcastProactiveChatService] flush() - END | streamId: {}, action: sent, candidateCount: {}",
                     streamId, candidates.size());
         }
+    }
+
+    /**
+     * proactive chat flush 재예약 사유를 문자열로 정리하는 함수.
+     *
+     * @param bundle 현재 방송 세션 번들
+     * @return 재예약 사유 문자열
+     */
+    private String buildRescheduledReason(BroadcastWebSocketSessionBundle bundle) {
+        /*
+            1. flush 재예약에 영향을 주는 세션 상태를 한 줄로 직렬화한다.
+            - request-flight 누수, refresh 잔류, Gemini 세션 종료 여부를 로그만 보고 바로 식별할 수 있도록 한다.
+         */
+        if (bundle == null) {
+            return "bundle_missing";
+        }
+
+        return String.format(
+                "bundleStatus=%s, canSendToGemini=%s, geminiSessionOpen=%s, refreshRequested=%s, refreshInProgress=%s, requestFlightCount=%d",
+                bundle.getStatus(),
+                bundle.canSendToGemini(),
+                bundle.isGeminiSessionOpen(),
+                bundle.isGeminiSessionRefreshRequested(),
+                bundle.getGeminiSessionRefreshInProgress(),
+                bundle.getRequestFlightCountValue()
+        );
     }
 
     private boolean isEligible(String streamId) {

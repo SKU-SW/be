@@ -139,9 +139,11 @@ public class BroadcastGeminiRequestService {
             /*
                 2. first resumption event 진행 상태를 기록하고 request-flight를 증가시킨다.
                 - 이후 raw clientContent payload를 직접 Gemini 세션에 전송한다.
-             */
+            */
             bundle.getGeminiHandler().markFirstResumptionEventStarted();
-            bundle.incrementRequestFlight();
+            int requestFlightCount = bundle.incrementRequestFlight();
+            log.info("[BroadcastGeminiRequestService] getFirstResumptionEvent() - Request-flight incremented | streamId: {}, generation: {}, source: first_resumption_event, requestFlightCount: {}",
+                    broadcastStreamId, generation, requestFlightCount);
 
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode clientContentNode = requestNode.putObject("clientContent");
@@ -256,7 +258,9 @@ public class BroadcastGeminiRequestService {
                         broadcastStreamId, generation);
                 return false;
             }
-            bundle.incrementRequestFlight();
+            int requestFlightCount = bundle.incrementRequestFlight();
+            log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - Request-flight incremented | streamId: {}, generation: {}, source: proactive_chat_request, requestFlightCount: {}",
+                    broadcastStreamId, generation, requestFlightCount);
             try {
                 ObjectNode requestNode = objectMapper.createObjectNode();
                 ObjectNode clientContentNode = requestNode.putObject("clientContent");
@@ -281,7 +285,9 @@ public class BroadcastGeminiRequestService {
                         broadcastStreamId, generation);
                 return true;
             } catch (Exception e) {
-                bundle.decrementRequestFlight();
+                int remainingRequestFlightCount = bundle.decrementRequestFlight();
+                log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - Request-flight decremented | streamId: {}, generation: {}, source: proactive_chat_request_send_failed, requestFlightCount: {}",
+                        broadcastStreamId, generation, remainingRequestFlightCount);
                 log.error("[BroadcastGeminiRequestService] sendProactiveChatRequest() - Failed | streamId: {}, generation: {}, error: {}",
                         broadcastStreamId, generation, e.getMessage(), e);
                 log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - END | streamId: {}, generation: {}, action: failed",
@@ -401,7 +407,9 @@ public class BroadcastGeminiRequestService {
         bundle.getGeminiHandler().clearFirstResumptionEventInProgress();
         bundle.getGeminiHandler().clearAccumulator();
         if (decrementRequestFlight && bundle.getRequestFlightCountValue() > 0) {
-            bundle.decrementRequestFlight();
+            int remainingRequestFlightCount = bundle.decrementRequestFlight();
+            log.info("[BroadcastGeminiRequestService] clearFirstResumptionEventState() - Request-flight decremented | source: first_resumption_cleanup, requestFlightCount: {}",
+                    remainingRequestFlightCount);
         }
     }
 
@@ -426,7 +434,9 @@ public class BroadcastGeminiRequestService {
         }
 
         try {
-            bundle.incrementRequestFlight();
+            int requestFlightCount = bundle.incrementRequestFlight();
+            log.info("[BroadcastGeminiRequestService] sendRealtimeText() - Request-flight incremented | streamId: {}, generation: {}, source: realtime_input, requestFlightCount: {}",
+                    broadcastStreamId, generation, requestFlightCount);
             ObjectNode requestNode = objectMapper.createObjectNode();
             ObjectNode realtimeInputNode = requestNode.putObject("realtimeInput");
             realtimeInputNode.put("text", text);
@@ -438,7 +448,9 @@ public class BroadcastGeminiRequestService {
             }
             geminiSession.sendMessage(new TextMessage(requestPayload));
         } catch (Exception e) {
-            bundle.decrementRequestFlight();
+            int remainingRequestFlightCount = bundle.decrementRequestFlight();
+            log.info("[BroadcastGeminiRequestService] sendRealtimeText() - Request-flight decremented | streamId: {}, generation: {}, source: realtime_input_send_failed, requestFlightCount: {}",
+                    broadcastStreamId, generation, remainingRequestFlightCount);
             log.error("[BroadcastGeminiRequestService] sendRealtimeText() - Failed | streamId: {}, generation: {}, characterId: {}, error: {}",
                     broadcastStreamId,
                     generation,
