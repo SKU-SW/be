@@ -3,10 +3,12 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastDialogueRefreshSnapshotDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastPromptHistoryContext;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.service.BroadcastPromptHistoryService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
@@ -44,6 +46,7 @@ public class BroadcastGeminiRefreshService {
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastPromptBuilder broadcastPromptBuilder;
+    private final BroadcastPromptHistoryService broadcastPromptHistoryService;
     private final GeminiUtil geminiUtil;
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
@@ -139,12 +142,14 @@ public class BroadcastGeminiRefreshService {
             /*
                 3. snapshot 데이터를 기반으로 prompt를 생성해 신규 Gemini Session 연결을 시도한다.
                 - setup이 완료된 Gemini Session을 반환받으면, 해당 Session 객체를 사용해 Refresh 성공 시의 후처리 작업을 수행한다.
-             */
+            */
             BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
+            BroadcastPromptHistoryContext historyContext = broadcastPromptHistoryService.buildPromptHistoryContext(broadcastStreamId);
             String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(
                     character,
                     snapshot.summary(),
-                    snapshot.dialogues()
+                    snapshot.dialogues(),
+                    historyContext
             );
             String voiceName = deriveVoiceName(character);
             WebSocketSession oldGeminiSession = bundle.getGeminiSession();

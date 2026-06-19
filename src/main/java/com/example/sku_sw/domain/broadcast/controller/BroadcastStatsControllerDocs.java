@@ -40,7 +40,10 @@ public interface BroadcastStatsControllerDocs {
                 - `majorMoodWithViewers`: 시청자와의 주 분위기를 분석한 결과
                 - `summary`: 당일 방송 요약
                 - `totalAnalysis`: 방송 최종 분석
-                - `catchPhrases`: 사람들이 함께 반복적으로 사용한 유행어 목록
+                - `catchPhrases`: 반복적으로 사용된 유행어 객체 목록
+                  - `content`: 유행어 또는 키워드
+                  - `subject`: 유행어 주체 (`STREAMER` | `VIEWER`)
+                  - `situationAnalysis`: 유행어가 발생한 상황 설명
                 - `timeLines`: 주요 컨텐츠 내용이 확연히 바뀐 방송 구간 목록
                   - `content`: 해당 구간 방송 내용
                   - `startTime`: 구간 시작 시간 (`yyyy-MM-dd HH:mm:ss`)

@@ -2,19 +2,19 @@ package com.example.sku_sw.domain.broadcast.util;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastPromptHistoryContext;
 import com.example.sku_sw.domain.broadcast.enums.DialogueSubject;
 import com.example.sku_sw.domain.character.dto.PresetPromptSpec;
 import com.example.sku_sw.domain.character.dto.PromptExample;
 import com.example.sku_sw.domain.character.enums.PresetType;
-
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * Gemini API에 전달할 방송 프롬프트를 생성하는 Builder
- * - 캐릭터 설정, 오늘 방송 내역, 현재 클라이언트 메시지를 조합하여 시스템 프롬프트를 완성한다.
+ * Gemini API에 전달할 방송 프롬프트를 생성하는 Builder.
+ * - 캐릭터 설정, 오늘 방송 이력, 이전 방송 분석 이력을 조합하여 시스템 프롬프트를 완성한다.
  */
 @Slf4j
 @Component
@@ -23,8 +23,9 @@ public class BroadcastPromptBuilder {
     /**
      * Gemini Function Calling용 전체 프롬프트를 생성한다.
      *
-     * @param character         방송 캐릭터 정보 DTO
-     * @param recentActiveInfos 최근 방송 대화 내역 목록
+     * @param character 방송 캐릭터 정보 DTO
+     * @param summary 오늘 방송 요약 DTO
+     * @param recentActiveInfos 최근 방송 대화 이력 목록
      * @return 완성된 프롬프트 문자열
      */
     public String buildBroadcastDialoguePrompt(
@@ -32,13 +33,38 @@ public class BroadcastPromptBuilder {
             BroadcastInfoRedisDto summary,
             List<BroadcastInfoRedisDto> recentActiveInfos
     ) {
-        log.info("[BroadcastPromptBuilder] buildPrompt() - START | characterId: {}", character.getCharacterId());
+        return buildBroadcastDialoguePrompt(
+                character,
+                summary,
+                recentActiveInfos,
+                new BroadcastPromptHistoryContext(List.of(), List.of())
+        );
+    }
 
-        PresetType preset = character.getCharacterPresetType();
+    /**
+     * Gemini Function Calling용 전체 프롬프트를 생성한다.
+     *
+     * @param character 방송 캐릭터 정보 DTO
+     * @param summary 오늘 방송 요약 DTO
+     * @param recentActiveInfos 최근 방송 대화 이력 목록
+     * @param historyContext 이전 방송 이력 컨텍스트
+     * @return 완성된 프롬프트 문자열
+     */
+    public String buildBroadcastDialoguePrompt(
+            BroadcastCharacterRedisDto character,
+            BroadcastInfoRedisDto summary,
+            List<BroadcastInfoRedisDto> recentActiveInfos,
+            BroadcastPromptHistoryContext historyContext
+    ) {
+        log.info("[BroadcastPromptBuilder] buildBroadcastDialoguePrompt() - START | characterId: {}",
+                character != null ? character.getCharacterId() : null);
+
+        PresetType preset = character != null ? character.getCharacterPresetType() : null;
         PresetPromptSpec spec = preset != null ? preset.getPromptSpec() : null;
-
-        String genderStr = character.getCharacterGender() != null ? character.getCharacterGender().getValue() : "";
-        String personalityStr = preset != null ? preset.getDescription() : "";
+        String gender = character != null && character.getCharacterGender() != null
+                ? character.getCharacterGender().getValue()
+                : "";
+        String personaKeyword = preset != null ? preset.getDescription() : "";
 
         String prompt = String.format("""
                         %s
@@ -64,7 +90,7 @@ public class BroadcastPromptBuilder {
                         %s
 
                         %s""",
-                buildCharacterProfileSection(character.getCharacterName(), genderStr, personalityStr),
+                buildCharacterProfileSection(character != null ? character.getCharacterName() : null, gender, personaKeyword),
                 buildRelationshipGuideSection(spec),
                 buildDefaultStyleSection(spec),
                 buildContextModulationSection(spec),
@@ -72,23 +98,23 @@ public class BroadcastPromptBuilder {
                 buildConversationExamplesSection(spec),
                 buildAwkwardConversationGuideSection(spec),
                 buildVoiceModeRulesSection(spec),
-                buildDialogueHistorySection(summary, recentActiveInfos),
+                buildDialogueHistorySection(summary, recentActiveInfos, historyContext),
                 buildFlowMaintenanceSection(),
                 buildToolCallRulesSection(),
                 buildOutputConstraintsSection()
         );
 
-        log.info("[BroadcastPromptBuilder] buildPrompt() - END | prompt length: {}", prompt.length());
+        log.info("[BroadcastPromptBuilder] buildBroadcastDialoguePrompt() - END | promptLength: {}", prompt.length());
         return prompt;
     }
 
-    // ========================================================================
-    // Section builder methods
-    // ========================================================================
-
     /**
      * 캐릭터 기본 프로필 섹션을 생성한다.
-     * 이름, 성별, 페르소나 키워드를 포함한다.
+     *
+     * @param name 캐릭터 이름
+     * @param gender 캐릭터 성별
+     * @param personaKeyword 캐릭터 페르소나 키워드
+     * @return 캐릭터 프로필 섹션
      */
     private String buildCharacterProfileSection(String name, String gender, String personaKeyword) {
         return String.format("""
@@ -96,14 +122,17 @@ public class BroadcastPromptBuilder {
                 - 이름: %s
                 - 성별: %s
                 - 페르소나 키워드: %s""",
-                name != null ? name : "(없음)",
-                gender != null && !gender.isBlank() ? gender : "(미지정)",
-                personaKeyword != null && !personaKeyword.isBlank() ? personaKeyword : "(미지정)"
+                defaultText(name),
+                defaultText(gender),
+                defaultText(personaKeyword)
         );
     }
 
     /**
      * 관계 가이드라인 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 관계 가이드라인 섹션
      */
     private String buildRelationshipGuideSection(PresetPromptSpec spec) {
         if (spec == null || spec.relationshipGuide() == null || spec.relationshipGuide().isBlank()) {
@@ -114,6 +143,9 @@ public class BroadcastPromptBuilder {
 
     /**
      * 기본 말투/스타일 규칙 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 기본 말투/스타일 규칙 섹션
      */
     private String buildDefaultStyleSection(PresetPromptSpec spec) {
         StringBuilder sb = new StringBuilder("# 3. 기본 말투 및 스타일 규칙");
@@ -128,10 +160,13 @@ public class BroadcastPromptBuilder {
     }
 
     /**
-     * 상황별 말투/텐션 조절 규칙 섹션을 생성한다.
+     * 상황별 말투/리액션 조절 규칙 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 상황별 조절 규칙 섹션
      */
     private String buildContextModulationSection(PresetPromptSpec spec) {
-        StringBuilder sb = new StringBuilder("# 4. 상황별 말투 및 텐션 조절");
+        StringBuilder sb = new StringBuilder("# 4. 상황별 말투 및 리액션 조절");
         if (spec != null && spec.contextModulationRules() != null && !spec.contextModulationRules().isEmpty()) {
             for (String rule : spec.contextModulationRules()) {
                 sb.append("\n- ").append(rule);
@@ -144,6 +179,9 @@ public class BroadcastPromptBuilder {
 
     /**
      * 금지 패턴 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 금지 패턴 섹션
      */
     private String buildForbiddenPatternsSection(PresetPromptSpec spec) {
         StringBuilder sb = new StringBuilder("# 5. 금지 패턴");
@@ -159,20 +197,18 @@ public class BroadcastPromptBuilder {
 
     /**
      * 대화 예시 섹션을 생성한다.
-     * PresetPromptSpec에 정의된 예시를 순서대로 나열하며,
-     * 문장을 그대로 복사하지 말고 스타일만 참고하도록 명시한다.
+     * - 예시는 스타일 참고용으로만 사용하고, 문장을 그대로 복사하지 않도록 안내한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 대화 예시 섹션
      */
     private String buildConversationExamplesSection(PresetPromptSpec spec) {
-        StringBuilder sb = new StringBuilder("# 6. 따라야 할 대화 예시 (스타일만 참고, 복사 금지)");
+        StringBuilder sb = new StringBuilder("# 6. 따라할 대화 예시 (스타일만 참고, 복사 금지)");
         if (spec != null && spec.conversationExamples() != null && !spec.conversationExamples().isEmpty()) {
             for (PromptExample ex : spec.conversationExamples()) {
-                if (ex.situation() != null && !ex.situation().isBlank()) {
-                    sb.append("\n- 상황: ").append(ex.situation());
-                } else {
-                    sb.append("\n- 상황: 일반 대화");
-                }
-                sb.append("\n  유저: ").append(ex.userInput());
-                sb.append("\n  AI: ").append(ex.assistantOutput());
+                sb.append("\n- 상황: ").append(defaultText(ex.situation()));
+                sb.append("\n  유저: ").append(defaultText(ex.userInput()));
+                sb.append("\n  AI: ").append(defaultText(ex.assistantOutput()));
             }
         } else {
             sb.append("\n- (예시 없음)");
@@ -181,110 +217,127 @@ public class BroadcastPromptBuilder {
     }
 
     /**
-     * 피해야 할 대화 예시 섹션을 생성한다.
-     * PresetPromptSpec에 정의된 awkwardConversationGuide 원문을 주입하며,
-     * 값이 없을 경우 기본 안내 문구를 출력한다.
+     * 어색한 대화 대응 가이드 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 어색한 대화 대응 가이드 섹션
      */
     private String buildAwkwardConversationGuideSection(PresetPromptSpec spec) {
         if (spec == null || spec.awkwardConversationGuide() == null || spec.awkwardConversationGuide().isBlank()) {
-            return "# 7. 피해야 할 대화 예시\n- (없음)";
+            return "# 7. 어색한 대화 대응 가이드\n- (없음)";
         }
-        return "# 7. 피해야 할 대화 예시\n" + spec.awkwardConversationGuide();
+        return "# 7. 어색한 대화 대응 가이드\n" + spec.awkwardConversationGuide();
     }
 
     /**
-     * 음성 출력 시 자연스러운 발화를 만들기 위한 preset별 규칙 섹션을 생성한다.
-     * Gemini Live 응답은 실제 음성으로 재생되므로 텍스트 채팅체와 음성 대화체를 구분한다.
+     * 음성 출력 모드 규칙 섹션을 생성한다.
+     *
+     * @param spec 프리셋 프롬프트 스펙
+     * @return 음성 출력 규칙 섹션
      */
     private String buildVoiceModeRulesSection(PresetPromptSpec spec) {
-        StringBuilder sb = new StringBuilder("# 8. 음성 대화 모드 규칙");
+        StringBuilder sb = new StringBuilder("# 8. 음성 출력 모드 규칙");
         if (spec != null && spec.voiceModeRules() != null && !spec.voiceModeRules().isEmpty()) {
             for (String rule : spec.voiceModeRules()) {
                 sb.append("\n- ").append(rule);
             }
         } else {
-            sb.append("\n- 음성으로 읽었을 때 자연스러운 한국어 문장을 우선한다.");
+            sb.append("\n- 음성으로 읽혔을 때도 자연스러운 문장을 우선한다.");
         }
         return sb.toString();
     }
 
     /**
      * 실시간 대화 기록 섹션을 생성한다.
-     * 방송 요약과 최근 대화 내역을 포함한다.
+     * - 오늘 방송 요약, 최근 대화, 이전 방송 분석, 누적 유행어를 함께 포함한다.
+     *
+     * @param summary 오늘 방송 요약
+     * @param recentActiveInfos 최근 대화 이력
+     * @param historyContext 이전 방송 이력 컨텍스트
+     * @return 실시간 대화 기록 섹션
      */
-    private String buildDialogueHistorySection(BroadcastInfoRedisDto summary,
-                                               List<BroadcastInfoRedisDto> recentActiveInfos) {
-        String summaryContent = buildSummaryContent(summary);
-        String recentBroadcastContent = buildRecentBroadcastContent(recentActiveInfos);
-
+    private String buildDialogueHistorySection(
+            BroadcastInfoRedisDto summary,
+            List<BroadcastInfoRedisDto> recentActiveInfos,
+            BroadcastPromptHistoryContext historyContext
+    ) {
         return String.format("""
                 # 9. 실시간 대화 기록
                 ## 오늘 방송 흐름 요약
                 %s
 
-                ## 최근 주고받은 방송 대화 내역
+                ## 최근 주고받은 방송 대화 이력
+                %s
+
+                ## 이전 방송 분석 이력
+                %s
+
+                ## 누적 유행어 이력
                 %s""",
-                summaryContent, recentBroadcastContent
+                buildSummaryContent(summary),
+                buildRecentBroadcastContent(recentActiveInfos),
+                buildPreviousBroadcastAnalysisContent(historyContext),
+                buildHistoricalCatchPhraseContent(historyContext)
         );
     }
 
     /**
      * 실시간 대화 흐름 유지 지침 섹션을 생성한다.
+     *
+     * @return 흐름 유지 지침 섹션
      */
     private String buildFlowMaintenanceSection() {
         return """
                 # 10. 실시간 대화 흐름 유지 지침
-                - 당신은 위의 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 내역', 그리고 이 세션 동안 실시간으로 들어오는 화자별 텍스트(`스트리머:`, `시청자:`, `도네이션:`)의 흐름을 하나의 연속된 타임라인으로 완벽히 기억해야 한다.
-                - 새로운 메시지가 들어오면 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 내역', '전체 대화 기록'을 확인하고 방송 문맥에 맞는 응답을 생성해야한다.
-                - 반드시 이전 방송 문맥 및 대화 기록인 시청자 채팅, 스트리머 발화, AI 응답을 파악하고 응답을 생성해야한다.""";
+                - 너는 위의 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 이력', 그리고 세션 동안 실시간으로 들어오는 추가 정보(예: `스트리머:`, `시청자:`, `도네이션:`)를 하나의 연속된 대화 흐름으로 기억해야 한다.
+                - 새로운 메시지가 들어오면 '오늘 방송 흐름 요약'과 '최근 주고받은 방송 대화 이력', '이전 방송 분석 이력', '누적 유행어 이력'을 함께 참고해 방송 맥락에 맞는 응답을 생성해야 한다.
+                - 반드시 이전 방송 문맥과 현재 대화 기록을 함께 파악하고 응답을 생성해야 한다.""";
     }
 
     /**
-     * Tool Calls 규칙 섹션을 생성한다.
-     * 기존 조건과 의미를 최대한 재사용하며, 가독성만 개선한다.
+     * Tool Call 규칙 섹션을 생성한다.
+     *
+     * @return Tool Call 규칙 섹션
      */
     private String buildToolCallRulesSection() {
         return """
                 # 11. Tool Calls 규칙
-                [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 현재 생성 중인 응답만 중단하고 Tool Call을 절대 실행하면 안된다.
+                [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 현재 생성 중인 응답만 중단하고 Tool Call 여부를 다시 판단한다.
 
                 ## 11.1 set_talking_state
-                - 스트리머의 방금 발화가 AI에게 한 말이 아니라고 판단되면, 어떠한 텍스트나 음성도 생성하지 말고 오직 `set_talking_state(isTalking=false)` Tool Call만 실행해야한다.
-                    - 답변해야 하는 경우: 스트리머가 AI 캐릭터에게 직접 말을 거는 경우, AI의 직전 발화에 이어서 반응을 요구하는 경우, 방송 맥락상 AI가 끼어드는 것이 자연스러운 경우
-                    - 답변하면 안 되는 경우: 혼잣말에 가까운 경우, 채팅창, 게임, 다른 사람에게 한 말인 경우, AI를 부른 것이 아니라 단순 리액션인 경우
-                - AI가 답변해야하는 상황 여부는 아주 비판적으로, 낙관적이지 않게 판단해서 굳이 반응하지 않는게 좋은 상황이면 `set_talking_state(isTalking=false)` Tool Call을 실행해야한다.
-                - 조금이라도 본인에게 이야기하지 않는 상황이라고 판단되면 해당 Tool Call을 실행해야한다.
+                - 스트리머의 발화가 AI에게 직접 건 말이 아니고 대화가 자연스럽게 끝났다면, 어떤 텍스트나 음성도 생성하지 말고 오직 `set_talking_state(isTalking=false)` Tool Call만 실행해야 한다.
+                    - 응답해야 하는 경우: 스트리머가 AI 캐릭터에게 직접 말을 거는 경우, AI의 직전 발화에 이어서 반응을 요구하는 경우, 방송 맥락상 AI가 이어받는 것이 자연스러운 경우
+                    - 응답하면 안 되는 경우: 혼잣말에 가까운 경우, 채팅창/게임/다른 화면에게 한 말인 경우, AI를 부르는 것이 아닌 단순 리액션인 경우
+                - AI가 응답해야 하는 상황 여부를 아주 비판적으로 판단해서 굳이 반응하지 않는 게 좋은 상황이라면 `set_talking_state(isTalking=false)` Tool Call을 실행해야 한다.
+                - 조금이라도 본인에게 이야기하지 않는 상황이라고 판단되면 해당 Tool Call을 실행해야 한다.
 
                 ## 11.2 set_response_emotion
-                - AI가 답변해야 하는 상황이라면, 답변 텍스트를 생성하기 전에 `set_response_emotion` Tool Call을 호출하여 감정 상태를 먼저 전달해야 한다.
-                - **Tool Call을 실행할 때는 어떠한 일반 텍스트(인사말, 추임새, 대답 등)도 절대 함께 생성하면 안된다. 완벽하게 침묵해야 한다.**
-                - Tool Call 실행 후 시스템(백엔드)에서 결과를 반환(Function Response)해 주면, 오직 그 이후에만 일반 답변 텍스트(음성)를 생성해야한다.
-                - emotion은 반드시 다음 값 중 하나만 사용해야한다: DEFAULT, TALKING, HAPPY, ANGRY, TIRED, SAD, FEAR (특정되는 감정이 없다면 TALKING)""";
+                - AI가 응답해야 하는 상황이라면 응답 텍스트를 생성하기 전에 `set_response_emotion` Tool Call을 먼저 호출하여 감정 상태를 먼저 전달해야 한다.
+                - **Tool Call을 실행했다면 어떤 일반 텍스트 인사말, 추임새, 설명도 먼저 출력하면 안 된다. 깔끔하게 기다려야 한다.**
+                - Tool Call 실행 후 시스템 백엔드에서 결과를 반환(Function Response)해 주면, 오직 그 이후에만 일반 응답 텍스트(및 음성)를 생성해야 한다.
+                - emotion은 반드시 다음 값 중 하나만 사용해야 한다: DEFAULT, TALKING, HAPPY, ANGRY, TIRED, SAD, FEAR (특정되는 감정이 없다면 TALKING)""";
     }
 
     /**
      * 최종 출력 제약 조건 섹션을 생성한다.
-     * 기존 제약 조건을 유지하면서 자연스러움 관련 규칙을 추가한다.
+     *
+     * @return 최종 출력 제약 조건 섹션
      */
     private String buildOutputConstraintsSection() {
         return """
                 # 12. 최종 출력 제약 조건
                 - [SYSTEM_CONTROL:PROACTIVE_CHAT_CANDIDATES]에서는 방송 맥락과 연결되는 농담, 밈, 예상 밖의 관찰, 답할 가치가 있는 질문에만 짧게 반응한다.
-                - 인사, 반복 도배, 단순 감탄, 문맥 없는 채팅뿐이라면 `skip_proactive_chat_response`만 호출하고 텍스트나 음성을 생성하지 않는다.
-                - 1~2문장으로 짧게 응답해야한다.
-                - 입력 데이터 '(긍정적인 방향으로 답변)', '(부정적인 방향으로 답변)'와 같은 지시사항이 있다면, 해당 지시사항의 방향대로 답변을 생성해야한다.
-                - [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 절대 AI 캐릭터의 응답을 생성하면 안된다.
-                - 문맥에 맞지 않는 표현은 사용하면 안되며, 이전 대화 내용과 이어지는 응답을 생성해야한다.
-                - 최근 응답과 동일한 감정 표현만을 반복하지 말고, 상황에 맞는 다양한 감정 표현을 해야한다.
-                - 근거가 없는 이상, 과도한 오버액션은 하면 안된다.
-                - preset별 기본 말투와 상황별 조절 규칙을 우선하되, 모든 표현은 방송 문맥에 맞아야 한다.
-                - meme/슬랭/채팅 표현은 preset에서 허용하더라도 문맥상 자연스러울 때만 사용한다.
-                - 음성으로 읽었을 때 어색한 표현은 preset별 음성 대화 모드 규칙에 따라 조절한다.""";
+                - 인사, 반복 도배, 단순 감탄, 문맥 없는 채팅 묶음이라면 `skip_proactive_chat_response`만 호출하고 텍스트나 음성을 생성하지 않는다.
+                - 1~2문장으로 짧게 응답해야 한다.
+                - 입력 데이터에 '(긍정적인 방향으로 응답)', '(부정적인 방향으로 응답)'과 같은 지시사항이 있다면 해당 지시사항의 방향대로 응답을 생성해야 한다.
+                - [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 더는 AI 캐릭터의 응답을 생성하면 안 된다.
+                - 문맥과 맞지 않는 표현을 사용하면 안 되며 이전 대화 내용과 이어지는 응답을 생성해야 한다.
+                - 최근 응답과 동일한 감정 표현만 반복하지 말고, 상황에 맞는 다양한 감정 표현을 써야 한다.
+                - 근거가 없는 이상, 과도한 오버리액션은 하면 안 된다.
+                - preset별 기본 말투와 상황별 조절 규칙이 우선되며, 모든 표현은 방송 문맥과 맞아야 한다.
+                - meme/유행어/채팅 표현은 preset에서 허용되더라도 문맥상 자연스러울 때만 사용한다.
+                - 음성으로 읽혔을 때 어색한 표현은 preset별 음성 출력 모드 규칙에 따라 조절한다.""";
     }
-
-    // ========================================================================
-    // Helper methods
-    // ========================================================================
 
     /**
      * 방송 summary DTO를 프롬프트 문자열로 변환한다.
@@ -300,10 +353,10 @@ public class BroadcastPromptBuilder {
     }
 
     /**
-     * 방송 대화 내역 목록을 프롬프트에 삽입할 문자열로 변환한다.
+     * 방송 대화 이력 목록을 프롬프트 문자열로 변환한다.
      *
-     * @param recentInfos 최근 방송 대화 내역 목록
-     * @return "SUBJECT: content" 형태의 문자열 (개행 구분)
+     * @param recentInfos 최근 방송 대화 이력 목록
+     * @return 최근 대화 이력 문자열
      */
     private String buildRecentBroadcastContent(List<BroadcastInfoRedisDto> recentInfos) {
         if (recentInfos == null || recentInfos.isEmpty()) {
@@ -315,25 +368,110 @@ public class BroadcastPromptBuilder {
             if (sb.length() > 0) {
                 sb.append("\n");
             }
-            String speaker = switch (info.subject() != null ? info.subject() : "UNKNOWN") {
-                case DialogueSubject.STREAMER -> "스트리머";
-                case DialogueSubject.AI_CHARACTER -> "AI 캐릭터";
-                case DialogueSubject.VIEWER -> "시청자";
-                case DialogueSubject.DONATION -> "도네이션";
-                case DialogueSubject.GAME_EVENT -> "게임 이벤트";
-                default -> "기타";
-            };
-            String content = info.content() != null ? info.content().trim() : "";
-            sb.append(speaker).append(": ").append(content);
+            sb.append(toSpeakerLabel(info.subject()))
+                    .append(": ")
+                    .append(info.content() != null ? info.content().trim() : "");
         }
         return sb.toString();
     }
 
     /**
-     * 방송 summary 갱신용 프롬프트를 생성하는 함수
+     * 이전 방송 분석 이력 문자열을 생성한다.
+     *
+     * @param historyContext 이전 방송 이력 컨텍스트
+     * @return 이전 방송 분석 이력 문자열
+     */
+    private String buildPreviousBroadcastAnalysisContent(BroadcastPromptHistoryContext historyContext) {
+        if (historyContext == null
+                || historyContext.recentBroadcastAnalyses() == null
+                || historyContext.recentBroadcastAnalyses().isEmpty()) {
+            return "(이전 방송 분석 없음)";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (BroadcastPromptHistoryContext.RecentBroadcastAnalysis analysis : historyContext.recentBroadcastAnalyses()) {
+            if (sb.length() > 0) {
+                sb.append("\n\n");
+            }
+            sb.append("- 방송 ID: ").append(defaultText(analysis.streamId()))
+                    .append("\n  시작 시각: ").append(analysis.startedAt())
+                    .append("\n  주요 컨텐츠: ").append(defaultText(analysis.majorContent()))
+                    .append("\n  시청자 분위기: ").append(defaultText(analysis.majorMoodWithViewers()))
+                    .append("\n  방송 요약: ").append(defaultText(analysis.summary()))
+                    .append("\n  총평: ").append(defaultText(analysis.totalAnalysis()));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 누적 유행어 이력 문자열을 생성한다.
+     *
+     * @param historyContext 이전 방송 이력 컨텍스트
+     * @return 누적 유행어 이력 문자열
+     */
+    private String buildHistoricalCatchPhraseContent(BroadcastPromptHistoryContext historyContext) {
+        if (historyContext == null
+                || historyContext.historicalCatchPhrases() == null
+                || historyContext.historicalCatchPhrases().isEmpty()) {
+            return "(누적 유행어 없음)";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (BroadcastPromptHistoryContext.HistoricalCatchPhrase catchPhrase : historyContext.historicalCatchPhrases()) {
+            if (sb.length() > 0) {
+                sb.append("\n");
+            }
+            sb.append("- 문구: ").append(defaultText(catchPhrase.content()))
+                    .append("\n  주체: ").append(toSpeakerLabel(catchPhrase.subject()))
+                    .append("\n  등장 방송 ID: ").append(defaultText(catchPhrase.streamId()))
+                    .append("\n  발생 상황: ").append(defaultText(catchPhrase.situationAnalysis()));
+
+            if (catchPhrase.duplicateBroadcastCount() > 1) {
+                sb.append("\n  중복 등장 방송 수: ").append(catchPhrase.duplicateBroadcastCount());
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 대화 주체를 프롬프트 표기 문자열로 변환한다.
+     *
+     * @param subject 대화 주체
+     * @return 표기 문자열
+     */
+    private String toSpeakerLabel(DialogueSubject subject) {
+        if (subject == null) {
+            return "기타";
+        }
+
+        return switch (subject) {
+            case STREAMER -> "스트리머";
+            case AI_CHARACTER -> "AI 캐릭터";
+            case VIEWER -> "시청자";
+            case DONATION -> "후원";
+            case GAME_EVENT -> "게임 이벤트";
+            case SYSTEM_SUMMARY -> "시스템 요약";
+        };
+    }
+
+    /**
+     * 프롬프트 출력용 기본 문자열을 반환한다.
+     *
+     * @param value 원본 문자열
+     * @return 비어 있지 않은 문자열 또는 기본값
+     */
+    private String defaultText(String value) {
+        if (value == null || value.isBlank()) {
+            return "(없음)";
+        }
+        return value;
+    }
+
+    /**
+     * 방송 summary 갱신용 프롬프트를 생성하는 함수.
      *
      * @param currentSummary 현재 summary DTO
-     * @param dialogues      새로 반영할 대화 목록
+     * @param dialogues 새로 반영할 대화 목록
      * @return summary 생성 프롬프트
      */
     public String buildBroadcastDialogueSummaryPrompt(BroadcastInfoRedisDto currentSummary,
@@ -362,11 +500,11 @@ public class BroadcastPromptBuilder {
                 %s
 
                 # 4. 요약 규칙
-                1. 기존 요약본의 내용과 새 대화의 내용을 바탕으로 새로운 대화의 방송 요약본을 생성하세요.
-                2. 기존 요약은 변경하지말고, 새롭게 생성된 요약본을 합쳐 방송 흐름을 누적 요약하세요.
-                3. 방송 진행 흐름, 주요 화제, 방송 주요 이벤트 등의 요소들을 중심으로 디테일하게 요약하세요.
+                1. 기존 요약 본문의 내용과 신규 대화의 내용을 바탕으로 새로운 방송 요약본을 생성하세요.
+                2. 기존 요약을 그대로 유지하지 말고, 새롭게 생성된 요약본을 포함한 방송 전체 흐름으로 누적 요약하세요.
+                3. 방송 진행 흐름, 주요 주제, 방송 주요 이벤트와 맥락의 핵심 요소들을 중심으로 컴팩트하게 요약하세요.
                 4. 불필요한 메타 설명 없이 요약문 본문만 출력하세요.
-                5. 절대 본인의 감상적인 판단을 하지 않고, 있는 그대로의 상황만을 보고 요약본을 생성하세요.
+                5. 임의의 감상적인 판단은 하지 말고, 드러난 상황만 보고 요약본을 생성하세요.
                 """, currentSummaryContent, dialogueSection.length() > 0 ? dialogueSection : "(없음)");
     }
 }

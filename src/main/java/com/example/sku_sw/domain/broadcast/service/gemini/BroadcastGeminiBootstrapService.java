@@ -2,11 +2,13 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastPromptHistoryContext;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketErrorResDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastWebSocketStatusResDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.service.BroadcastPromptHistoryService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
@@ -46,6 +48,7 @@ public class BroadcastGeminiBootstrapService {
     private final GeminiUtil geminiUtil;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastPromptBuilder broadcastPromptBuilder;
+    private final BroadcastPromptHistoryService broadcastPromptHistoryService;
 
     /**
      * Gemini WebSocket bootstrap(초기 세팅) 비동기 작업을 시작한다.
@@ -73,7 +76,8 @@ public class BroadcastGeminiBootstrapService {
                     broadcastStreamId,
                     redisBroadcastDialogueMaxNum
             );
-            String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos);
+            BroadcastPromptHistoryContext historyContext = broadcastPromptHistoryService.buildPromptHistoryContext(broadcastStreamId);
+            String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos, historyContext);
             String voiceName = deriveVoiceName(character);
 
             /*
