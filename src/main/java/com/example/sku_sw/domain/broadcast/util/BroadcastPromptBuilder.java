@@ -269,6 +269,8 @@ public class BroadcastPromptBuilder {
     private String buildOutputConstraintsSection() {
         return """
                 # 12. 최종 출력 제약 조건
+                - [SYSTEM_CONTROL:PROACTIVE_CHAT_CANDIDATES]에서는 방송 맥락과 연결되는 농담, 밈, 예상 밖의 관찰, 답할 가치가 있는 질문에만 짧게 반응한다.
+                - 인사, 반복 도배, 단순 감탄, 문맥 없는 채팅뿐이라면 `skip_proactive_chat_response`만 호출하고 텍스트나 음성을 생성하지 않는다.
                 - 1~2문장으로 짧게 응답해야한다.
                 - 입력 데이터 '(긍정적인 방향으로 답변)', '(부정적인 방향으로 답변)'와 같은 지시사항이 있다면, 해당 지시사항의 방향대로 답변을 생성해야한다.
                 - [SYSTEM_CONTROL:INTERRUPT_CURRENT_RESPONSE] 메시지를 받으면 절대 AI 캐릭터의 응답을 생성하면 안된다.

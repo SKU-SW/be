@@ -33,6 +33,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -68,6 +69,7 @@ class GeminiLiveWebSocketHandlerTest {
         objectMapper = new ObjectMapper();
         lenient().when(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration()).thenReturn(buildTalkingStateFunctionDeclaration());
         lenient().when(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration()).thenReturn(buildResponseEmotionFunctionDeclaration());
+        lenient().when(broadcastGeminiToolCallService.buildSkipProactiveChatResponseFunctionDeclaration()).thenReturn(buildSkipProactiveChatResponseFunctionDeclaration());
         geminiLiveWebSocketHandler = new GeminiLiveWebSocketHandler(
                 objectMapper,
                 sessionRegistry,
@@ -87,8 +89,8 @@ class GeminiLiveWebSocketHandlerTest {
         // given
         WebSocketSession session = org.mockito.Mockito.mock(WebSocketSession.class);
         Map<String, Object> attributes = new HashMap<>();
-        given(session.getId()).willReturn("gemini-1");
-        given(session.getAttributes()).willReturn(attributes);
+        lenient().when(session.getId()).thenReturn("gemini-1");
+        lenient().when(session.getAttributes()).thenReturn(attributes);
 
         // when
         geminiLiveWebSocketHandler.afterConnectionEstablished(session);
@@ -105,7 +107,7 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("generationConfig").get("responseModalities").get(0).asText()).isEqualTo("AUDIO");
         assertThat(setupNode.get("systemInstruction").get("parts").get(0).get("text").asText()).isEqualTo(SYSTEM_PROMPT);
         assertThat(setupNode.get("tools")).hasSize(1);
-        assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(2);
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations")).hasSize(3);
         assertThat(setupNode.has("sessionResumption")).isTrue();
         assertThat(setupNode.get("historyConfig").get("initialHistoryInClientContent").asBoolean()).isTrue();
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0).get("name").asText()).isEqualTo("set_talking_state");
@@ -114,6 +116,7 @@ class GeminiLiveWebSocketHandlerTest {
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(0)
                 .get("parameters").get("properties").get("isTalking").get("enum")).isNull();
         assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(1).get("name").asText()).isEqualTo("set_response_emotion");
+        assertThat(setupNode.get("tools").get(0).get("functionDeclarations").get(2).get("name").asText()).isEqualTo("skip_proactive_chat_response");
         assertThat(setupNode.has("outputAudioTranscription")).isTrue();
         assertThat(geminiLiveWebSocketHandler.getSetupCompleteFuture()).isNotNull();
         assertThat(geminiLiveWebSocketHandler.getSetupFailureDiagnostics()).contains("lastSentSetupPayload=");
@@ -127,7 +130,7 @@ class GeminiLiveWebSocketHandlerTest {
         WebSocketSession clientSession = org.mockito.Mockito.mock(WebSocketSession.class);
         Map<String, Object> attributes = new HashMap<>();
         attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
-        given(geminiSession.getId()).willReturn("gemini-1");
+        lenient().when(geminiSession.getId()).thenReturn("gemini-1");
         given(geminiSession.getAttributes()).willReturn(attributes);
 
         BroadcastWebSocketSessionBundle bundle = BroadcastWebSocketSessionBundle.builder()
@@ -163,8 +166,8 @@ class GeminiLiveWebSocketHandlerTest {
         // given
         WebSocketSession geminiSession = mock(WebSocketSession.class);
         WebSocketSession clientSession = mock(WebSocketSession.class);
-        given(geminiSession.getId()).willReturn("gemini-1");
-        given(geminiSession.isOpen()).willReturn(true);
+        lenient().when(geminiSession.getId()).thenReturn("gemini-1");
+        lenient().when(geminiSession.isOpen()).thenReturn(true);
 
         Map<String, Object> attributes = new HashMap<>();
         attributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), "stream-1");
@@ -650,5 +653,14 @@ class GeminiLiveWebSocketHandlerTest {
 
         parametersNode.putArray("required").add("emotion");
         return functionDeclarationNode;
+    }
+
+    private ObjectNode buildSkipProactiveChatResponseFunctionDeclaration() {
+        ObjectNode declaration = objectMapper.createObjectNode();
+        declaration.put("name", "skip_proactive_chat_response");
+        ObjectNode parameters = declaration.putObject("parameters");
+        parameters.put("type", "object");
+        parameters.putObject("properties");
+        return declaration;
     }
 }

@@ -12,6 +12,7 @@ import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepositor
 import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
+import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSender;
 import com.example.sku_sw.domain.chat.dto.BroadcastChatMetadataResDto;
@@ -49,6 +50,7 @@ public class ChzzkChatMessageService {
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
     private final BroadcastWebSocketSender broadcastWebSocketSender;
+    private final BroadcastProactiveChatService broadcastProactiveChatService;
 
     /**
      * FastApi로부터 전달받은 Chzzk 채팅 메시지를 파싱하고,
@@ -77,7 +79,8 @@ public class ChzzkChatMessageService {
               */
             DialogueSubject dialogueSubject = resolveDialogueSubject(message);
             String redisContent = buildRedisContent(message);
-            broadcastRedisUtil.pushBroadcastInfo(message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
+            BroadcastInfoRedisDto savedInfo = broadcastRedisUtil.pushBroadcastInfo(
+                    message.broadcastStreamId(), dialogueSubject, redisContent, null, false);
 
             /*
                 3. 클라이언트 WebSocket으로 실시간 채팅 메시지 전송
@@ -92,6 +95,14 @@ public class ChzzkChatMessageService {
                     .messageTime(message.messageTime())
                     .build();
             broadcastWebSocketSender.sendChatMessage(message.broadcastStreamId(), chatMessage);
+
+            /*
+                4. 채팅 주체가 스트리머가 아닌 시청자 채팅이면 BroadcastProactiveChatService의 HashMap에 저장해둔다
+                - 만약 스트리머가 일정 시간동안 말이 없으면, AI는 해당 버퍼에 모여있던 채팅에 대한 응답 생성을 시도한다
+             */
+            if (dialogueSubject == DialogueSubject.VIEWER) {
+                broadcastProactiveChatService.enqueue(message.broadcastStreamId(), savedInfo.cursorId());
+            }
 
             log.info("[ChzzkChatMessageService] processChatMessage() - Received | channelId: {}, nickname: {}, content: {}",
                     message.channelId(), message.nickname(), message.content());

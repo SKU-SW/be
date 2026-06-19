@@ -38,6 +38,8 @@ import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.domain.character.repository.CharacterImageDetailRepository;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.character.repository.CharacterTriggerWordRepository;
+import com.example.sku_sw.domain.setting.entity.BroadcastSetting;
+import com.example.sku_sw.domain.setting.repository.BroadcastSettingRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
@@ -89,6 +91,9 @@ public class BroadcastService {
     private final CharacterImageDetailRepository characterImageDetailRepository;
     private final BroadcastAnalysisRepository broadcastAnalysisRepository;
     private final BroadcastAnalysisMapper broadcastAnalysisMapper;
+    private final BroadcastSettingRepository broadcastSettingRepository;
+    private final BroadcastStreamerSilenceService streamerSilenceService;
+    private final BroadcastProactiveChatService proactiveChatService;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
     @Value("${spring.cloud.cloudfront.domain}")
@@ -176,7 +181,10 @@ public class BroadcastService {
             - 방송 시작 DB 커밋이 확정된 이후 Redis에 방송 캐릭터/사용자 정보를 저장한다.
          */
         BroadcastCharacterRedisDto redisDto = buildBroadcastCharacterRedisDto(character);
-        BroadcastUserRedisDto broadcastUserRedisDto = buildBroadcastUserRedisDto(fastApiResponse);
+        boolean aiProactiveToChat = broadcastSettingRepository.findByUserId(userId)
+                .map(BroadcastSetting::isAiProactiveToChat)
+                .orElse(true);
+        BroadcastUserRedisDto broadcastUserRedisDto = buildBroadcastUserRedisDto(fastApiResponse, aiProactiveToChat);
         registerBroadcastRedisSaveAfterCommit(savedBroadcast.getStreamId(), redisDto, broadcastUserRedisDto);
 
         /*
@@ -812,11 +820,16 @@ public class BroadcastService {
         return result;
     }
 
-    private BroadcastUserRedisDto buildBroadcastUserRedisDto(FastApiChzzkSessionCreateResDto fastApiResponse){
+    private BroadcastUserRedisDto buildBroadcastUserRedisDto(
+            FastApiChzzkSessionCreateResDto fastApiResponse,
+            boolean aiProactiveToChat
+    ){
         return BroadcastUserRedisDto.builder()
                 .sessionKey(fastApiResponse.sessionKey())
                 .channelId(fastApiResponse.channelId())
                 .channelName(null)
+                .aiProactiveToChat(aiProactiveToChat)
+                .isStreamerSilent(false)
                 .build();
     }
 
@@ -1253,6 +1266,8 @@ public class BroadcastService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                streamerSilenceService.cancel(broadcastStreamId);
+                proactiveChatService.cancel(broadcastStreamId);
                 BroadcastUserRedisDto broadcastUserRedisDto = null;
                 boolean remainingDialoguesSaved = false;
                 try {

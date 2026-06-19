@@ -6,6 +6,10 @@ import com.example.sku_sw.domain.setting.entity.BroadcastSetting;
 import com.example.sku_sw.domain.setting.enums.SettingErrorCode;
 import com.example.sku_sw.domain.setting.mapper.BroadcastSettingMapper;
 import com.example.sku_sw.domain.setting.repository.BroadcastSettingRepository;
+import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
+import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
+import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService;
+import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
@@ -13,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Slf4j
 @Service
@@ -22,6 +28,9 @@ public class BroadcastSettingService {
     private final BroadcastSettingRepository broadcastSettingRepository;
     private final UserRepository userRepository;
     private final BroadcastSettingMapper broadcastSettingMapper;
+    private final BroadcastRepository broadcastRepository;
+    private final BroadcastRedisUtil broadcastRedisUtil;
+    private final BroadcastProactiveChatService proactiveChatService;
 
     /**
      * 사용자의 방송 설정을 조회한다.
@@ -76,6 +85,7 @@ public class BroadcastSettingService {
             - 요청받은 값으로 aiProactiveToChat을 멱등하게 수정한다.
         */
         broadcastSetting.updateAiProactiveToChat(reqDto.aiProactiveToChat());
+        registerActiveBroadcastSettingSyncAfterCommit(userId, reqDto.aiProactiveToChat());
 
         /*
             3. ResponseDto Mapping
@@ -85,6 +95,32 @@ public class BroadcastSettingService {
 
         log.info("[BroadcastSettingService] updateAiProactiveToChat() - END | userId: {}, aiProactiveToChat: {}", userId, result.aiProactiveToChat());
         return result;
+    }
+
+    private void registerActiveBroadcastSettingSyncAfterCommit(Long userId, boolean enabled) {
+        Runnable sync = () -> broadcastRepository.findActiveByUserId(userId, BroadcastStatus.BROADCASTING)
+                .ifPresent(broadcast -> {
+                    try {
+                        broadcastRedisUtil.updateBroadcastUserAiProactiveToChat(broadcast.getStreamId(), enabled);
+                        if (!enabled) {
+                            proactiveChatService.cancel(broadcast.getStreamId());
+                        }
+                    } catch (RuntimeException e) {
+                        log.warn("[BroadcastSettingService] Active broadcast Redis sync failed | userId: {}, streamId: {}, error: {}",
+                                userId, broadcast.getStreamId(), e.getMessage());
+                    }
+                });
+
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            sync.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sync.run();
+            }
+        });
     }
 
     /**
@@ -117,6 +153,7 @@ public class BroadcastSettingService {
                             .build();
                     return broadcastSettingRepository.save(newSetting);
                 });
+        registerActiveBroadcastSettingSyncAfterCommit(userId, true);
 
         /*
             2. ResponseDto Mapping

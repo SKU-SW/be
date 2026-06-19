@@ -121,6 +121,7 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
         ArrayNode functionDeclarationsNode = toolNode.putArray("functionDeclarations");
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildTalkingStateFunctionDeclaration());
         functionDeclarationsNode.add(broadcastGeminiToolCallService.buildResponseEmotionFunctionDeclaration());
+        functionDeclarationsNode.add(broadcastGeminiToolCallService.buildSkipProactiveChatResponseFunctionDeclaration());
 
         setupNode.putObject("outputAudioTranscription");
 
