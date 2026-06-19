@@ -230,6 +230,68 @@ public class BroadcastGeminiRequestService {
     }
 
     /**
+     * 선제 채팅 후보 블록을 Gemini Live의 clientContent 턴으로 전송한다.
+     * - 후보 블록이 비어 있거나 현재 세션이 전송 불가 상태면 전송하지 않는다.
+     * - Gemini가 판단 턴을 완료할 수 있도록 turnComplete=true로 전달한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation : 현재 세션 generation
+     * @param candidateBlock : 선제 반응 후보 채팅 블록
+     * @return : 전송 성공 여부
+     */
+    public boolean sendProactiveChatRequest(String broadcastStreamId, long generation, String candidateBlock) {
+        log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - START | streamId: {}, generation: {}, candidateLength: {}",
+                broadcastStreamId, generation, candidateBlock != null ? candidateBlock.length() : null);
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+        if (bundle == null || candidateBlock == null || candidateBlock.isBlank()) {
+            log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - END | streamId: {}, generation: {}, action: skip_invalid",
+                    broadcastStreamId, generation);
+            return false;
+        }
+
+        synchronized (bundle) {
+            if (!bundle.canSendToGemini() || bundle.getRequestFlightCountValue() > 0 || bundle.getGeminiSession() == null) {
+                log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - END | streamId: {}, generation: {}, action: skip_unavailable",
+                        broadcastStreamId, generation);
+                return false;
+            }
+            bundle.incrementRequestFlight();
+            try {
+                ObjectNode requestNode = objectMapper.createObjectNode();
+                ObjectNode clientContentNode = requestNode.putObject("clientContent");
+                ArrayNode turnsNode = clientContentNode.putArray("turns");
+                ObjectNode turnNode = turnsNode.addObject();
+                turnNode.put("role", "user");
+                turnNode.putArray("parts").addObject().put("text", """
+                        [SYSTEM_CONTROL:PROACTIVE_CHAT_CANDIDATES]
+                        The following messages are viewer chat candidates, not streamer speech.
+                        Respond briefly only if at least one message is genuinely funny, surprising, contextually relevant, or worth answering on stream.
+                        For greetings, repetition, spam, simple reactions, or contextless messages, call skip_proactive_chat_response and produce no text or audio.
+
+                        """ + candidateBlock);
+                clientContentNode.put("turnComplete", true);
+
+                String payload = objectMapper.writeValueAsString(requestNode);
+                if (bundle.getGeminiHandler() != null) {
+                    bundle.getGeminiHandler().recordOutboundMessage("PROACTIVE_CHAT_REQUEST", payload);
+                }
+                bundle.getGeminiSession().sendMessage(new TextMessage(payload));
+                log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - END | streamId: {}, generation: {}, action: sent",
+                        broadcastStreamId, generation);
+                return true;
+            } catch (Exception e) {
+                bundle.decrementRequestFlight();
+                log.error("[BroadcastGeminiRequestService] sendProactiveChatRequest() - Failed | streamId: {}, generation: {}, error: {}",
+                        broadcastStreamId, generation, e.getMessage(), e);
+                log.info("[BroadcastGeminiRequestService] sendProactiveChatRequest() - END | streamId: {}, generation: {}, action: failed",
+                        broadcastStreamId, generation);
+                return false;
+            }
+        }
+    }
+
+    /**
      * 현재 Gemini WebSocket 세션으로 인터럽트 요청을 전송한다.
      * - Gemini Live API의 clientContent turnComplete 메시지를 전송하여 현재 응답 생성을 중단하도록 요청한다.
      * - request-flight는 인터럽트 요청 시 증가시키지 않는다. (Gemini가 interrupted:true 응답 시 감소)
@@ -239,7 +301,7 @@ public class BroadcastGeminiRequestService {
      * @param generation        : 현재 세션 generation
      */
     public void sendInterruptRequest(WebSocketSession geminiSession, String broadcastStreamId, long generation) {
-        log.info("[BroadcastGeminiService] sendInterruptRequest() - START | streamId: {}, generation: {}",
+        log.info("[BroadcastGeminiRequestService] sendInterruptRequest() - START | streamId: {}, generation: {}",
                 broadcastStreamId, generation);
 
         try {
@@ -270,11 +332,13 @@ public class BroadcastGeminiRequestService {
 
             geminiSession.sendMessage(new TextMessage(requestPayload));
 
-            log.info("[BroadcastGeminiService] sendInterruptRequest() - END | streamId: {}, generation: {}",
+            log.info("[BroadcastGeminiRequestService] sendInterruptRequest() - END | streamId: {}, generation: {}, action: sent",
                     broadcastStreamId, generation);
         } catch (Exception e) {
-            log.error("[BroadcastGeminiService] sendInterruptRequest() - Failed | streamId: {}, generation: {}, error: {}",
+            log.error("[BroadcastGeminiRequestService] sendInterruptRequest() - Failed | streamId: {}, generation: {}, error: {}",
                     broadcastStreamId, generation, e.getMessage());
+            log.info("[BroadcastGeminiRequestService] sendInterruptRequest() - END | streamId: {}, generation: {}, action: failed",
+                    broadcastStreamId, generation);
             // 인터럽트 요청 실패는 세션을 종료하지 않고 로깅만 수행한다.
         }
     }

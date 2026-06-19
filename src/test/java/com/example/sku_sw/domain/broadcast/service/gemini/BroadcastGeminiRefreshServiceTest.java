@@ -116,7 +116,7 @@ class BroadcastGeminiRefreshServiceTest {
 
         // tryStartRefresh 내부에서 사용할 stubs (guard 체크용)
         given(sessionRegistry.getSessionBundleIfCurrent(streamId, 1L)).willReturn(bundle);
-        given(bundle.getGeminiSessionRefreshRequested()).willReturn(true);
+        given(bundle.isGeminiSessionRefreshRequested()).willReturn(true);
         // 여전히 flight > 0 이므로 tryStartRefresh는 markRefreshInProgress를 호출하지 않고 종료됨
 
         // when
@@ -147,7 +147,7 @@ class BroadcastGeminiRefreshServiceTest {
         // then
         verify(sessionRegistry, times(1)).getSessionBundle(streamId);
         verifyNoMoreInteractions(sessionRegistry);
-        verify(taskScheduler, never()).schedule(any(), any());
+        verify(taskScheduler, never()).schedule(any(), any(java.time.Instant.class));
     }
 
     @Test
@@ -164,7 +164,7 @@ class BroadcastGeminiRefreshServiceTest {
 
         // then
         verify(bundle, never()).markRefreshRequested();
-        verify(taskScheduler, never()).schedule(any(), any());
+        verify(taskScheduler, never()).schedule(any(), any(java.time.Instant.class));
     }
 
     @Test
@@ -174,7 +174,7 @@ class BroadcastGeminiRefreshServiceTest {
         String streamId = "stream-1";
         long generation = 1L;
         BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
-        given(bundle.getGeminiSessionRefreshRequested()).willReturn(false);
+        given(bundle.isGeminiSessionRefreshRequested()).willReturn(false);
         given(sessionRegistry.getSessionBundleIfCurrent(streamId, generation)).willReturn(bundle);
 
         // when
@@ -191,7 +191,7 @@ class BroadcastGeminiRefreshServiceTest {
         String streamId = "stream-1";
         long generation = 1L;
         BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
-        given(bundle.getGeminiSessionRefreshRequested()).willReturn(true);
+        given(bundle.isGeminiSessionRefreshRequested()).willReturn(true);
         given(bundle.getRequestFlightCountValue()).willReturn(1);
         given(sessionRegistry.getSessionBundleIfCurrent(streamId, generation)).willReturn(bundle);
 

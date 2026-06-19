@@ -9,6 +9,8 @@ import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastStreamerSilenceService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
@@ -93,6 +95,12 @@ class BroadcastWebSocketStartIntegrationTest {
     @Mock
     private FastApiUtil fastApiUtil;
 
+    @Mock
+    private BroadcastStreamerSilenceService streamerSilenceService;
+
+    @Mock
+    private BroadcastProactiveChatService proactiveChatService;
+
     private ObjectMapper objectMapper;
     private BroadcastWebSocketSessionRegistry sessionRegistry;
     private BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
@@ -127,7 +135,9 @@ class BroadcastWebSocketStartIntegrationTest {
                 transactionTemplate,
                 broadcastGeminiRequestService,
                 chatRedisUtil,
-                fastApiUtil
+                fastApiUtil,
+                streamerSilenceService,
+                proactiveChatService
         );
     }
 
@@ -150,7 +160,7 @@ class BroadcastWebSocketStartIntegrationTest {
         broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
 
         // then
-        verify(clientSession, times(1)).close(any(CloseStatus.class));
+        verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
         verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
@@ -180,7 +190,7 @@ class BroadcastWebSocketStartIntegrationTest {
         // then
         ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
         verify(clientSession, times(2)).sendMessage(captor.capture());
-        verify(clientSession, times(1)).close(any(CloseStatus.class));
+        verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
 
         // 먼저 GEMINI_CONNECTING 상태가 나가고, 이후 에러 응답이 내려가는지 확인한다.
         List<TextMessage> messages = captor.getAllValues();

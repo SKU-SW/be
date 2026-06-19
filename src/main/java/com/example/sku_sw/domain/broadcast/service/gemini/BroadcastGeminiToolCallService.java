@@ -32,6 +32,7 @@ public class BroadcastGeminiToolCallService {
 
     private static final String FUNCTION_SET_TALKING_STATE = "set_talking_state";
     private static final String FUNCTION_SET_RESPONSE_EMOTION = "set_response_emotion";
+    private static final String FUNCTION_SKIP_PROACTIVE_CHAT_RESPONSE = "skip_proactive_chat_response";
     private static final String ARG_IS_TALKING = "isTalking";
     private static final String ARG_EMOTION = "emotion";
 
@@ -131,6 +132,28 @@ public class BroadcastGeminiToolCallService {
     }
 
     /**
+     * 선제 채팅 무응답 전용 function declaration을 생성한다.
+     *
+     * @return : skip_proactive_chat_response function declaration JSON
+     */
+    public ObjectNode buildSkipProactiveChatResponseFunctionDeclaration() {
+        log.info("[BroadcastGeminiToolCallService] buildSkipProactiveChatResponseFunctionDeclaration() - START");
+
+        ObjectNode declaration = objectMapper.createObjectNode();
+        declaration.put(FIELD_NAME, FUNCTION_SKIP_PROACTIVE_CHAT_RESPONSE);
+        declaration.put("description",
+                "Call only for a PROACTIVE_CHAT_CANDIDATES turn when none of the viewer messages are worth responding to. " +
+                "Produce no spoken or text response with or after this call.");
+        ObjectNode parameters = declaration.putObject("parameters");
+        parameters.put("type", "object");
+        parameters.putObject("properties");
+
+        log.info("[BroadcastGeminiToolCallService] buildSkipProactiveChatResponseFunctionDeclaration() - END | functionName: {}",
+                FUNCTION_SKIP_PROACTIVE_CHAT_RESPONSE);
+        return declaration;
+    }
+
+    /**
      * Gemini Live에서 반환한 toolCall을 처리한다.
      * - functionCalls 배열을 순회하면서 지원하는 함수만 처리한다.
      * - 처리 결과는 Gemini Live로 toolResponse 형태로 반환한다.
@@ -173,6 +196,12 @@ public class BroadcastGeminiToolCallService {
             if (FUNCTION_SET_RESPONSE_EMOTION.equals(functionName)) {
                 resolvedEmotion = handleSetResponseEmotionFunctionCall(geminiSession, broadcastStreamId, functionCallNode);
                 responseEmotionHandled = true;
+                processedCount += 1;
+                continue;
+            }
+
+            if (FUNCTION_SKIP_PROACTIVE_CHAT_RESPONSE.equals(functionName)) {
+                sendToolResponse(geminiSession, functionCallId, functionName, buildSkipSuccessResponse());
                 processedCount += 1;
                 continue;
             }
@@ -342,7 +371,6 @@ public class BroadcastGeminiToolCallService {
             functionResponseNode.put(FIELD_ID, functionCallId);
             functionResponseNode.put(FIELD_NAME, functionName);
             functionResponseNode.set(FIELD_RESPONSE, responseBody);
-//            functionResponseNode.put("scheduling", "SILENT");
             String payload = objectMapper.writeValueAsString(rootNode);
             recordOutboundToolResponse(geminiSession, payload);
 
@@ -378,6 +406,18 @@ public class BroadcastGeminiToolCallService {
     }
 
     /**
+     * proactive chat skip tool response body를 생성한다.
+     *
+     * @return : 성공 response body
+     */
+    private ObjectNode buildSkipSuccessResponse() {
+        ObjectNode responseBody = objectMapper.createObjectNode();
+        responseBody.put(FIELD_SUCCESS, true);
+        responseBody.put("skipped", true);
+        return responseBody;
+    }
+
+    /**
      * tool response 실패 body를 생성한다.
      * @param reason : 실패 사유
      * @return : 실패 response body
@@ -389,6 +429,12 @@ public class BroadcastGeminiToolCallService {
         return responseBody;
     }
 
+    /**
+     * Gemini 세션에 기록된 outbound tool response를 handler 로그에 남긴다.
+     *
+     * @param geminiSession : Gemini WebSocket Session
+     * @param payload : toolResponse payload
+     */
     private void recordOutboundToolResponse(WebSocketSession geminiSession, String payload) {
         if (geminiSession == null || geminiSession.getAttributes() == null) {
             return;

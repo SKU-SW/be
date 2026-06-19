@@ -211,7 +211,7 @@ class BroadcastGeminiRequestServiceTest {
 
     @Test
     @DisplayName("processClientMessage - 전송 실패 시 request-flight를 감소시키고 CustomException을 던진다")
-    void processClientMessage_실패시_requestFlight_decrement() {
+    void processClientMessage_실패시_requestFlight_decrement() throws Exception {
         // given
         String broadcastStreamId = "stream-1";
         long generation = 1L;

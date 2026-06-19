@@ -53,8 +53,7 @@ class BroadcastGeminiToolCallServiceTest {
 
         // then
         assertThat(result.get("name").asText()).isEqualTo("set_talking_state");
-        assertThat(result.get("description").asText())
-                .isEqualTo("Set the broadcast character talking state when the streamer was not speaking to the AI.");
+        assertThat(result.get("description").asText()).contains("latest streamer utterance");
         assertThat(result.get("parameters").get("type").asText()).isEqualTo("object");
         assertThat(result.get("parameters").get("properties").get("isTalking").get("type").asText()).isEqualTo("boolean");
         assertThat(result.get("parameters").get("properties").get("isTalking").get("enum")).isNull();
@@ -74,6 +73,28 @@ class BroadcastGeminiToolCallServiceTest {
         assertThat(result.get("parameters").get("properties").get("emotion").get("type").asText()).isEqualTo("string");
         assertThat(result.get("parameters").get("properties").get("emotion").get("enum")).hasSize(Emotion.values().length);
         assertThat(result.get("parameters").get("required").get(0).asText()).isEqualTo("emotion");
+    }
+
+    @Test
+    @DisplayName("skip proactive chat response는 talking 상태를 변경하지 않는다")
+    void skip_proactive_chat_response_does_not_change_talking_state() throws Exception {
+        JsonNode toolCallNode = objectMapper.readTree("""
+                {
+                  "functionCalls": [
+                    {"id": "fc-skip", "name": "skip_proactive_chat_response", "args": {}}
+                  ]
+                }
+                """);
+
+        broadcastGeminiToolCallService.handleToolCall(geminiSession, "stream-1", toolCallNode);
+
+        verify(broadcastRedisUtil, never()).updateBroadcastCharacterIsTalking(eq("stream-1"), eq(false));
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(geminiSession).sendMessage(captor.capture());
+        JsonNode response = objectMapper.readTree(captor.getValue().getPayload())
+                .get("toolResponse").get("functionResponses").get(0);
+        assertThat(response.get("name").asText()).isEqualTo("skip_proactive_chat_response");
+        assertThat(response.get("response").get("skipped").asBoolean()).isTrue();
     }
 
     @Test

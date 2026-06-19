@@ -157,6 +157,54 @@ public class BroadcastRedisUtil {
     }
 
     /**
+     * 방송 유저 Redis 상태의 aiProactiveToChat 값을 갱신한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param enabled : AI 선제 채팅 반응 활성화 여부
+     */
+    public synchronized void updateBroadcastUserAiProactiveToChat(String broadcastStreamId, boolean enabled) {
+        BroadcastUserRedisDto existing = getBroadcastUserDto(broadcastStreamId);
+        existing.setAiProactiveToChat(enabled);
+        setBroadcastUserValue(broadcastStreamId, existing);
+        log.debug("[BroadcastRedisUtil] updateBroadcastUserAiProactiveToChat() - Updated | streamId: {}, enabled: {}",
+                broadcastStreamId, enabled);
+    }
+
+    /**
+     * 방송 유저 Redis 상태의 isStreamerSilent 값을 갱신한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param silent : 스트리머 무음 여부
+     */
+    public synchronized void updateBroadcastUserStreamerSilent(String broadcastStreamId, boolean silent) {
+        BroadcastUserRedisDto existing = getBroadcastUserDto(broadcastStreamId);
+        existing.setIsStreamerSilent(silent);
+        setBroadcastUserValue(broadcastStreamId, existing);
+        log.debug("[BroadcastRedisUtil] updateBroadcastUserStreamerSilent() - Updated | streamId: {}, silent: {}",
+                broadcastStreamId, silent);
+    }
+
+    /**
+     * 방송 유저 Redis 상태에서 AI 선제 채팅 반응 활성화 여부를 조회한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : AI 선제 채팅 반응 활성화 여부
+     */
+    public boolean isAiProactiveToChatEnabled(String broadcastStreamId) {
+        return getBroadcastUserDto(broadcastStreamId).isAiProactiveToChatEnabled();
+    }
+
+    /**
+     * 방송 유저 Redis 상태에서 스트리머 무음 여부를 조회한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @return : 스트리머 무음 여부
+     */
+    public boolean isStreamerSilent(String broadcastStreamId) {
+        return getBroadcastUserDto(broadcastStreamId).isStreamerSilentNow();
+    }
+
+    /**
      * Redis에 방송 캐릭터 정보가 존재하는지 확인하는 함수
      * @param broadcastStreamId : 확인할 방송 스트림 ID
      * @return : 키 존재 여부
@@ -558,6 +606,25 @@ public class BroadcastRedisUtil {
                 .skip(1)
                 .filter(info -> info.dataStatus() == BroadcastDataStatus.ACTIVE)
                 .filter(info -> !info.sentToGemini())
+                .toList();
+    }
+
+    /**
+     * 지정한 cursorId 목록 중 아직 Gemini로 전송되지 않은 대화만 조회한다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param cursorIds : 조회할 cursor ID 목록
+     * @return : 미전송 대화 목록
+     */
+    public List<BroadcastInfoRedisDto> getUnsentDialoguesByCursorIds(
+            String broadcastStreamId,
+            Collection<Long> cursorIds
+    ) {
+        if (cursorIds == null || cursorIds.isEmpty()) {
+            return List.of();
+        }
+        return getUnsentDialogues(broadcastStreamId).stream()
+                .filter(info -> cursorIds.contains(info.cursorId()))
                 .toList();
     }
 

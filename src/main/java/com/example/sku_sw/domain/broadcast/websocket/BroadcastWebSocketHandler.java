@@ -13,6 +13,8 @@ import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService;
+import com.example.sku_sw.domain.broadcast.service.BroadcastStreamerSilenceService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
@@ -68,6 +70,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final ChatRedisUtil chatRedisUtil;
     private final FastApiUtil fastApiUtil;
+    private final BroadcastStreamerSilenceService streamerSilenceService;
+    private final BroadcastProactiveChatService proactiveChatService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession clientSession) {
@@ -107,8 +111,10 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
         // 4. 오래된 session Bundle을 종료하고 Client에게 GEMINI_CONNECTING 메시지를 보낸다. 이후 Gemini WebSocket 초기 세팅 비동기 작업을 시작한다.
         closeOldBundle(oldBundle, broadcastStreamId);
+        proactiveChatService.cancel(broadcastStreamId);
         sendStatusMessage(clientSession, WebSocketSessionBundleStatus.GEMINI_CONNECTING.name(), "WebSocket 연결 대기중");
         broadcastGeminiBootstrapService.bootstrapGeminiAsync(broadcastStreamId, clientSession, generation);
+        streamerSilenceService.startInitialTimer(broadcastStreamId, generation);
 
         log.info("[BroadcastWebSocketHandler] afterConnectionEstablished() - Session registered | userId: {}, streamId: {}, generation: {}",
                 userId, broadcastStreamId, generation);
@@ -149,13 +155,18 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
 
         // AI 응답 인터럽트 요청 prefix 감지 — 일반 메시지 흐름으로 처리하지 않고 즉시 분기한다.
         if (reqDto.message().startsWith(AI_RESPONSE_INTERRUPT_PREFIX)) {
+            streamerSilenceService.markSpeechStarted(broadcastStreamId, generation != null ? generation : -1L);
+            proactiveChatService.cancel(broadcastStreamId);
             handleInterruptRequest(session, broadcastStreamId, userId, generation, reqDto.message());
             return;
         }
 
         try {
             // AI 응답 인터럽트 요청이 아닌 경우, 일반 Client Message
+            streamerSilenceService.markSpeechStarted(broadcastStreamId, generation != null ? generation : -1L);
+            proactiveChatService.cancel(broadcastStreamId);
             broadcastMessageService.handleClientMessage(broadcastStreamId, generation, reqDto.message());
+            streamerSilenceService.markUtteranceCompleted(broadcastStreamId, generation != null ? generation : -1L);
         } catch (CustomException e) {
             log.error("[BroadcastWebSocketHandler] handleTextMessage() - CustomException | userId: {}, streamId: {}, errorCode: {}",
                     userId, broadcastStreamId, e.getErrorCode().getMessage());
@@ -328,6 +339,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
     private void abnormalTerminateBroadcast(String broadcastStreamId) {
         log.info("[BroadcastWebSocketHandler] abnormalTerminateBroadcast() - START | streamId: {}", broadcastStreamId);
 
+        streamerSilenceService.cancel(broadcastStreamId);
+        proactiveChatService.cancel(broadcastStreamId);
+
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 Broadcast broadcast = broadcastRepository.findByStreamIdAndStatusForUpdate(
@@ -425,6 +439,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         log.error("[BroadcastWebSocketHandler] handleTransportError() - Transport error | streamId: {}, generation: {}, error: {}",
                 broadcastStreamId, generation, exception.getMessage());
 
+        streamerSilenceService.cancel(broadcastStreamId);
+        proactiveChatService.cancel(broadcastStreamId);
+
         sessionRegistry.removeSessionBundleIfCurrent(
                 broadcastStreamId,
                 generation != null ? generation : -1L,
@@ -438,6 +455,9 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         String broadcastStreamId = (String) session.getAttributes().get(WebSocketAttributes.BROADCAST_STREAM_ID.getValue());
         Long userId = (Long) session.getAttributes().get(WebSocketAttributes.USER_ID.getValue());
         Long generation = (Long) session.getAttributes().get(WebSocketAttributes.SESSION_GENERATION.getValue());
+
+        streamerSilenceService.cancel(broadcastStreamId);
+        proactiveChatService.cancel(broadcastStreamId);
 
         sessionRegistry.removeSessionBundleIfCurrent(
                 broadcastStreamId,
