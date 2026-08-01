@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionReadyEvent;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
@@ -12,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
@@ -31,6 +33,7 @@ public class BroadcastGeminiRequestService {
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
     private final TaskScheduler taskScheduler;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Value("${gemini.api.live-first-resumption-timeout-ms:3000}")
     private Long liveFirstResumptionTimeoutMs;
@@ -128,7 +131,7 @@ public class BroadcastGeminiRequestService {
             - Gemini Handler가 없으면 first resumption state를 기록할 수 없으므로 예외를 발생시킨다.
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
-        if (bundle == null || !bundle.canSendToGemini()) {
+        if (bundle == null || !bundle.canSendControlToGemini()) {
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
         }
         if (bundle.getGeminiHandler() == null || bundle.getGeminiSession() == null) {
@@ -168,6 +171,7 @@ public class BroadcastGeminiRequestService {
             );
         } catch (Exception e) {
             clearFirstResumptionEventState(bundle, true);
+            publishResumptionReadyEvent(broadcastStreamId, generation, "FIRST_RESUMPTION_EVENT_SEND_FAILED");
             log.error("[BroadcastGeminiRequestService] getFirstResumptionEvent() - Failed | streamId: {}, generation: {}, error: {}",
                     broadcastStreamId, generation, e.getMessage(), e);
             throw new CustomException(BroadcastErrorCode.GEMINI_RESPONSE_FAILED);
@@ -393,6 +397,7 @@ public class BroadcastGeminiRequestService {
             - 이후 일반 메시지 처리는 정상적으로 진행될 수 있도록 in-progress 플래그를 해제한다.
          */
         clearFirstResumptionEventState(currentBundle, true);
+        publishResumptionReadyEvent(broadcastStreamId, generation, "FIRST_RESUMPTION_EVENT_TIMEOUT");
         log.warn("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - Timeout cleanup applied | streamId: {}, generation: {}",
                 broadcastStreamId, generation);
         log.info("[BroadcastGeminiRequestService] handleFirstResumptionEventTimeout() - END | streamId: {}, generation: {}",
@@ -411,6 +416,14 @@ public class BroadcastGeminiRequestService {
             log.info("[BroadcastGeminiRequestService] clearFirstResumptionEventState() - Request-flight decremented | source: first_resumption_cleanup, requestFlightCount: {}",
                     remainingRequestFlightCount);
         }
+    }
+
+    private void publishResumptionReadyEvent(String broadcastStreamId, long generation, String reason) {
+        applicationEventPublisher.publishEvent(BroadcastGeminiResumptionReadyEvent.builder()
+                .broadcastStreamId(broadcastStreamId)
+                .generation(generation)
+                .reason(reason)
+                .build());
     }
 
     /**

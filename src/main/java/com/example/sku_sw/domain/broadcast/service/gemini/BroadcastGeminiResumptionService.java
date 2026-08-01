@@ -102,7 +102,6 @@ public class BroadcastGeminiResumptionService {
             }
             // 동일 bundle이면 새 Gemini 세션/handler로 교체하고 READY 상태로 복구
             currentBundle.registerGeminiSession(resumedGeminiSession, resumedHandler);
-            currentBundle.clearResumptionInProgress();
             currentBundle.updateStatus(WebSocketSessionBundleStatus.READY);
 
             /*

@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.GeminiSessionCloseReason;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionReadyEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionRequestedEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
@@ -517,15 +518,23 @@ public class GeminiLiveWebSocketHandler extends AbstractWebSocketHandler {
 
     private void finishFirstResumptionEvent(WebSocketSession geminiSession, String reason) {
         BroadcastWebSocketSessionBundle bundle = resolveBundle(geminiSession);
+        String broadcastStreamId = resolveBroadcastStreamId(geminiSession);
         if (bundle != null && bundle.getGeminiSession() == geminiSession && bundle.getRequestFlightCountValue() > 0) {
             broadcastGeminiResponseService.handleGeminiTurnFinished(
-                    resolveBroadcastStreamId(geminiSession),
+                    broadcastStreamId,
                     bundle.getGeneration(),
                     bundle
             );
         }
         clearAccumulator();
         clearFirstResumptionEventInProgress();
+        if (bundle != null && bundle.getGeminiSession() == geminiSession) {
+            applicationEventPublisher.publishEvent(BroadcastGeminiResumptionReadyEvent.builder()
+                    .broadcastStreamId(broadcastStreamId)
+                    .generation(bundle.getGeneration())
+                    .reason(reason)
+                    .build());
+        }
         log.info("[GeminiLiveWebSocketHandler] finishFirstResumptionEvent() - Finished | sessionId: {}, reason: {}, end: {}",
                 geminiSession != null ? geminiSession.getId() : null, reason, geminiSessionFirstResumptionEnd);
     }

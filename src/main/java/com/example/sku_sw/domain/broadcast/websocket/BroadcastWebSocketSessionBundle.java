@@ -109,7 +109,9 @@ public class BroadcastWebSocketSessionBundle {
      * @return : 수신 가능 여부
      */
     public boolean canAcceptClientMessage() {
-        return status == WebSocketSessionBundleStatus.READY || status == WebSocketSessionBundleStatus.REFRESHING;
+        return status == WebSocketSessionBundleStatus.READY
+                || status == WebSocketSessionBundleStatus.REFRESHING
+                || (status == WebSocketSessionBundleStatus.GEMINI_CONNECTING && getGeminiSessionResumptionInProgress());
     }
 
     /**
@@ -126,7 +128,20 @@ public class BroadcastWebSocketSessionBundle {
      * @return : 전송 가능 여부
      */
     public boolean canSendToGemini() {
-        return status == WebSocketSessionBundleStatus.READY && isGeminiSessionOpen() && !isGeminiSessionRefreshRequested();
+        return status == WebSocketSessionBundleStatus.READY
+                && isGeminiSessionOpen()
+                && !isGeminiSessionRefreshRequested()
+                && !getGeminiSessionResumptionInProgress();
+    }
+
+    /**
+     * 현재 세션 번들이 Gemini 제어 요청 전송이 가능한 상태인지 확인한다.
+     * @return : 전송 가능 여부
+     */
+    public boolean canSendControlToGemini() {
+        return status == WebSocketSessionBundleStatus.READY
+                && isGeminiSessionOpen()
+                && !isGeminiSessionRefreshRequested();
     }
 
     public boolean isWebSocketSessionBundleReady() {

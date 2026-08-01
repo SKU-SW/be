@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.websocket.gemini;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastGeminiRefreshTriggerType;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionReadyEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionRequestedEvent;
 import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiRefreshRequestedEvent;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiResponseService;
@@ -203,6 +204,8 @@ class GeminiLiveWebSocketHandlerTest {
         verify(broadcastGeminiResponseService, never()).handleCompletedTurnAsync(any(), any(), any(), any(), any(), any(), any());
         verify(broadcastGeminiResponseService, times(1)).handleGeminiTurnFinished("stream-1", 1L, bundle);
         assertThat(geminiLiveWebSocketHandler.isGeminiSessionFirstResumptionEventInProgress()).isFalse();
+        verify(applicationEventPublisher, times(1))
+                .publishEvent(org.mockito.ArgumentMatchers.argThat((Object event) -> event instanceof BroadcastGeminiResumptionReadyEvent));
     }
 
     @Test

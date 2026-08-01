@@ -2,6 +2,7 @@ package com.example.sku_sw.domain.broadcast.service.gemini;
 
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
+import com.example.sku_sw.domain.broadcast.event.BroadcastGeminiResumptionReadyEvent;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionBundle;
 import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.chat.dto.ChzzkChatMessageDto;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.socket.TextMessage;
@@ -37,11 +39,14 @@ class BroadcastGeminiRequestServiceTest {
     @Mock
     private TaskScheduler taskScheduler;
 
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     private BroadcastGeminiRequestService service;
 
     @BeforeEach
     void setUp() {
-        service = new BroadcastGeminiRequestService(objectMapper, sessionRegistry, taskScheduler);
+        service = new BroadcastGeminiRequestService(objectMapper, sessionRegistry, taskScheduler, applicationEventPublisher);
         ReflectionTestUtils.setField(service, "liveFirstResumptionTimeoutMs", 3000L);
     }
 
@@ -249,7 +254,7 @@ class BroadcastGeminiRequestServiceTest {
         WebSocketSession geminiSession = mock(WebSocketSession.class);
         com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler handler = mock(com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler.class);
         BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
-        given(bundle.canSendToGemini()).willReturn(true);
+        given(bundle.canSendControlToGemini()).willReturn(true);
         given(bundle.getGeminiSession()).willReturn(geminiSession);
         given(bundle.getGeminiHandler()).willReturn(handler);
         given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
@@ -280,7 +285,7 @@ class BroadcastGeminiRequestServiceTest {
         WebSocketSession geminiSession = mock(WebSocketSession.class);
         com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler handler = mock(com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler.class);
         BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
-        given(bundle.canSendToGemini()).willReturn(true);
+        given(bundle.canSendControlToGemini()).willReturn(true);
         given(bundle.getGeminiSession()).willReturn(geminiSession);
         given(bundle.getGeminiHandler()).willReturn(handler);
         given(bundle.getRequestFlightCountValue()).willReturn(1);
@@ -296,5 +301,36 @@ class BroadcastGeminiRequestServiceTest {
         verify(handler, times(1)).clearFirstResumptionEventInProgress();
         verify(bundle, times(1)).incrementRequestFlight();
         verify(bundle, times(1)).decrementRequestFlight();
+        verify(applicationEventPublisher, times(1)).publishEvent(any(BroadcastGeminiResumptionReadyEvent.class));
+    }
+
+    @Test
+    @DisplayName("getFirstResumptionEvent - timeout 시 ready 이벤트를 발행한다")
+    void getFirstResumptionEvent_timeout시_ready_이벤트_발행() throws Exception {
+        // given
+        String broadcastStreamId = "stream-1";
+        long generation = 1L;
+        WebSocketSession geminiSession = mock(WebSocketSession.class);
+        com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler handler =
+                mock(com.example.sku_sw.domain.broadcast.websocket.gemini.GeminiLiveWebSocketHandler.class);
+        BroadcastWebSocketSessionBundle bundle = mock(BroadcastWebSocketSessionBundle.class);
+        given(bundle.canSendControlToGemini()).willReturn(true);
+        given(bundle.getGeminiSession()).willReturn(geminiSession);
+        given(bundle.getGeminiHandler()).willReturn(handler);
+        given(bundle.getRequestFlightCountValue()).willReturn(1);
+        given(sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation)).willReturn(bundle);
+
+        ArgumentCaptor<Runnable> timeoutCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        // when
+        service.getFirstResumptionEvent(broadcastStreamId, generation);
+        verify(taskScheduler, times(1)).schedule(timeoutCaptor.capture(), any(java.time.Instant.class));
+        timeoutCaptor.getValue().run();
+
+        // then
+        verify(handler, times(1)).clearFirstResumptionEventInProgress();
+        verify(handler, times(1)).clearAccumulator();
+        verify(bundle, times(1)).decrementRequestFlight();
+        verify(applicationEventPublisher, times(1)).publishEvent(any(BroadcastGeminiResumptionReadyEvent.class));
     }
 }

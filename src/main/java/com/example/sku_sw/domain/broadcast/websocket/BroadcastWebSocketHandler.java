@@ -104,7 +104,7 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         // 3. Client WebSocket Session에 SESSION_GENERATION, LAST_PONG_AT 속성을 설정하고, ConnectionTimeout 스케줄러를 삭제한다.
-        long generation = currentBundle.getGeneration();
+        long generation = currentBundle.getGeneration(); // 고유 생성 번호값
         clientSession.getAttributes().put(WebSocketAttributes.SESSION_GENERATION.getValue(), generation);
         clientSession.getAttributes().put(WebSocketAttributes.LAST_PONG_AT.getValue(), Instant.now());
         broadcastConnectionTimeoutService.cancelConnectionTimeout(broadcastStreamId);
@@ -114,6 +114,8 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
         proactiveChatService.cancel(broadcastStreamId);
         sendStatusMessage(clientSession, WebSocketSessionBundleStatus.GEMINI_CONNECTING.name(), "WebSocket 연결 대기중");
         broadcastGeminiBootstrapService.bootstrapGeminiAsync(broadcastStreamId, clientSession, generation);
+
+        // 5. AI 선제 반응 여부 판별 타이머 시작
         streamerSilenceService.startInitialTimer(broadcastStreamId, generation);
 
         log.info("[BroadcastWebSocketHandler] afterConnectionEstablished() - Session registered | userId: {}, streamId: {}, generation: {}",
