@@ -13,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastStatus;
 import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
+import com.example.sku_sw.domain.broadcast.service.fastapi.FastApiChzzkSessionService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
 import com.example.sku_sw.domain.character.entity.*;
@@ -23,7 +24,6 @@ import com.example.sku_sw.domain.character.enums.Emotion;
 import com.example.sku_sw.domain.character.repository.CharacterRepository;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelResDto;
-import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateReqDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateResDto;
 import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
 import com.example.sku_sw.domain.chat.util.FastApiUtil;
@@ -43,7 +43,6 @@ import org.springframework.util.StringUtils;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
-import java.util.UUID;
 
 @Slf4j
 @Service
@@ -60,6 +59,7 @@ public class BroadcastStartService {
     private final BroadcastSettingRepository broadcastSettingRepository;
 
     private final FastApiUtil fastApiUtil;
+    private final FastApiChzzkSessionService fastApiChzzkSessionService;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final ChatRedisUtil chatRedisUtil;
 
@@ -118,15 +118,10 @@ public class BroadcastStartService {
             - DB 저장 후 FastAPI에 세션 연결을 동기 요청한다.
             - 실패 시 예외를 발생시켜 트랜잭션을 롤백한다.
          */
-        String attemptId = UUID.randomUUID().toString();
-        FastApiChzzkSessionCreateReqDto fastApiRequest = new FastApiChzzkSessionCreateReqDto(
+        FastApiChzzkSessionCreateResDto fastApiResponse = fastApiChzzkSessionService.connectChzzkSession(
                 savedBroadcast.getStreamId(),
-                attemptId,
                 user.getChzzkAuthAccessToken()
         );
-        FastApiChzzkSessionCreateResDto fastApiResponse = fastApiUtil.createChzzkSession(fastApiRequest)
-                .block();
-        validateFastApiChzzkSessionCreateResDto(savedBroadcast, attemptId, fastApiResponse);
 
         /*
             8. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
@@ -217,38 +212,6 @@ public class BroadcastStartService {
         log.debug("[BroadcastStartService] 방송 엔티티 저장됨 | createAndSaveBroadcast() - END | streamId: {}", savedBroadcast.getStreamId());
         return savedBroadcast;
     }
-
-    /**
-     * FastAPI Chzzk 세션 생성 응답이 현재 방송 시작 요청과 일치하는지 검증한다.
-     * @param savedBroadcast : 저장된 방송 엔티티
-     * @param attemptId : 세션 생성 요청 식별자
-     * @param fastApiResponse : FastAPI Chzzk 세션 생성 응답
-     */
-    private void validateFastApiChzzkSessionCreateResDto(
-            Broadcast savedBroadcast,
-            String attemptId,
-            FastApiChzzkSessionCreateResDto fastApiResponse
-    ) {
-        log.debug("[BroadcastStartService] Chzzk 세션 응답 검증됨 | validateFastApiChzzkSessionCreateResDto() - START | streamId: {}, attemptId: {}",
-                savedBroadcast.getStreamId(), attemptId);
-
-        if (fastApiResponse == null) {
-            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
-        }
-        if (!savedBroadcast.getStreamId().equals(fastApiResponse.broadcastStreamId())) {
-            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
-        }
-        if (!attemptId.equals(fastApiResponse.attemptId())) {
-            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_ATTEMPT_MISMATCH);
-        }
-        if (!StringUtils.hasText(fastApiResponse.sessionKey()) || !StringUtils.hasText(fastApiResponse.channelId())) {
-            throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
-        }
-
-        log.debug("[BroadcastStartService] Chzzk 세션 응답 검증 완료 | validateFastApiChzzkSessionCreateResDto() - END | streamId: {}, attemptId: {}",
-                savedBroadcast.getStreamId(), attemptId);
-    }
-
 
     /**
      * 방송 시작 전 치지직 인증 토큰 상태를 점검하는 함수
