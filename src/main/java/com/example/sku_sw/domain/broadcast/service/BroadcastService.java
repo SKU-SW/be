@@ -74,13 +74,10 @@ public class BroadcastService {
 
     private final BroadcastStartService broadcastStartService;
     private final UserRepository userRepository;
-    private final CharacterRepository characterRepository;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
-    private final AuthService authService;
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastConnectionTimeoutService broadcastConnectionTimeoutService;
     private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
     private final BroadcastAnalysisService broadcastAnalysisService;
     private final FastApiUtil fastApiUtil;

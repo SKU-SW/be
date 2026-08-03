@@ -74,6 +74,15 @@ public class User {
         this.selectedCharacterId = selectedCharacterId;
     }
 
+    /**
+     * 요청한 캐릭터가 현재 사용자가 선택한 캐릭터인지 확인한다.
+     * @param characterId : 확인할 캐릭터 ID
+     * @return : 선택된 캐릭터 일치 여부
+     */
+    public boolean isSelectedCharacter(Long characterId) {
+        return selectedCharacterId != null && selectedCharacterId.equals(characterId);
+    }
+
     public void updateChzzkAuthTokens(
             String chzzkAuthAccessToken,
             String chzzkAuthRefreshToken,

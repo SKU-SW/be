@@ -75,7 +75,7 @@ public class BroadcastStartService {
      */
     @Transactional
     public BroadcastStartResDto startBroadcast(Long userId, Long characterId) {
-        log.info("[BroadcastService] startBroadcast() - START | userId: {}, characterId: {}", userId, characterId);
+        log.info("[BroadcastStartService] 방송 시작됨 | startBroadcast() - START | userId: {}, characterId: {}", userId, characterId);
         /*
             1. User row Write Lock 획득
             - 동시 요청 직렬화를 위해 비관적 쓰기 락을 사용한다.
@@ -93,40 +93,28 @@ public class BroadcastStartService {
             3. 선택된 캐릭터 검증
             - 선택된 캐릭터가 없거나, 요청한 캐릭터가 선택된 캐릭터가 아닌 경우 예외를 발생시킨다.
          */
-        if (user.getSelectedCharacterId() == null || !user.getSelectedCharacterId().equals(characterId)) {
-            throw new CustomException(BroadcastErrorCode.BROADCAST_CHARACTER_NOT_SELECTED);
-        }
+        validateSelectedCharacter(user, characterId);
 
         /*
             4. 캐릭터 조회 및 소유권 검증
             - characterId와 userId로 캐릭터를 조회하고, 존재하지 않으면 CHARACTER_NOT_FOUND 예외를 발생시킨다.
          */
-        Character character = characterRepository.findBroadcastRedisCharacterByIdAndUserId(characterId, userId)
-                .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_NOT_FOUND));
+        Character character = findOwnedBroadcastCharacter(userId, characterId);
 
         /*
             5. 해당 캐릭터 방송 중 여부 확인
             - 이미 BROADCASTING 상태인 방송이 있으면 CHARACTER_ALREADY_BROADCASTING 예외를 발생시킨다.
          */
-        if (broadcastRepository.existsByCharacterIdAndStatus(characterId, BroadcastStatus.BROADCASTING)) {
-            throw new CustomException(BroadcastErrorCode.CHARACTER_ALREADY_BROADCASTING);
-        }
+        validateCharacterNotBroadcasting(characterId);
 
         /*
-            6. 고유 streamId 생성
-            - 16자리 영숫자 랜덤 ID를 생성하고, 중복 시 재생성한다.
+            6. Broadcast 엔티티 생성 및 저장
+            - Broadcast 객체를 생성하고 저장한다.
          */
-        String streamId = streamIdGenerator.generate();
+        Broadcast savedBroadcast = createAndSaveBroadcast(character);
 
         /*
-            7. Broadcast 엔티티 생성 및 저장
-            - 생성한 streamId와 character로 Broadcast 객체를 생성하고 저장한다.
-         */
-        Broadcast broadcast = Broadcast.startBroadcast(streamId, character);
-        Broadcast savedBroadcast = broadcastRepository.save(broadcast);
-
-        /*
-            8. FastAPI에 치지직 세션 연결 요청
+            7. FastAPI에 치지직 세션 연결 요청
             - DB 저장 후 FastAPI에 세션 연결을 동기 요청한다.
             - 실패 시 예외를 발생시켜 트랜잭션을 롤백한다.
          */
@@ -141,7 +129,7 @@ public class BroadcastStartService {
         validateFastApiChzzkSessionCreateResDto(savedBroadcast, attemptId, fastApiResponse);
 
         /*
-            9. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
+            8. Redis 저장용 DTO 생성 및 커밋 후 저장 예약
             - 방송 시작 DB 커밋이 확정된 이후 Redis에 방송 캐릭터/사용자 정보를 저장한다.
          */
         BroadcastCharacterRedisDto redisDto = buildBroadcastCharacterRedisDto(character);
@@ -160,12 +148,90 @@ public class BroadcastStartService {
                 .broadcastStartedAt(savedBroadcast.getStartedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss")))
                 .build();
 
-        log.info("[BroadcastService] startBroadcast() - END | streamId: {}", streamId);
+        log.info("[BroadcastStartService] 방송 시작됨 | startBroadcast() - END | streamId: {}", savedBroadcast.getStreamId());
         return result;
     }
 
 
-    private void validateFastApiChzzkSessionCreateResDto(Broadcast savedBroadcast, String attemptId, FastApiChzzkSessionCreateResDto fastApiResponse) {
+    /**
+     * 방송 시작 요청 캐릭터가 사용자가 선택한 캐릭터인지 검증한다.
+     * @param user : 비관적 쓰기 잠금을 획득한 사용자 엔티티
+     * @param characterId : 방송을 시작할 캐릭터 ID
+     */
+    private void validateSelectedCharacter(User user, Long characterId) {
+        log.debug("[BroadcastStartService] 선택 캐릭터 검증됨 | validateSelectedCharacter() - START | userId: {}, characterId: {}",
+                user.getId(), characterId);
+
+        if (!user.isSelectedCharacter(characterId)) {
+            throw new CustomException(BroadcastErrorCode.BROADCAST_CHARACTER_NOT_SELECTED);
+        }
+
+        log.debug("[BroadcastStartService] 선택 캐릭터 검증됨 | validateSelectedCharacter() - END | userId: {}, characterId: {}",
+                user.getId(), characterId);
+    }
+
+    /**
+     * 방송 시작에 필요한 캐릭터를 조회하고 사용자 소유 여부를 검증한다.
+     * @param userId : 캐릭터 소유 사용자 ID
+     * @param characterId : 조회할 캐릭터 ID
+     * @return : 방송 Redis 초기화에 필요한 연관관계가 조회된 캐릭터 엔티티
+     */
+    private Character findOwnedBroadcastCharacter(Long userId, Long characterId) {
+        log.debug("[BroadcastStartService] 방송 캐릭터 조회됨 | findOwnedBroadcastCharacter() - START | userId: {}, characterId: {}",
+                userId, characterId);
+
+        Character character = characterRepository.findBroadcastRedisCharacterByIdAndUserId(characterId, userId)
+                .orElseThrow(() -> new CustomException(CharacterErrorCode.CHARACTER_NOT_FOUND));
+
+        log.debug("[BroadcastStartService] 방송 캐릭터 조회됨 | findOwnedBroadcastCharacter() - END | userId: {}, characterId: {}",
+                userId, characterId);
+        return character;
+    }
+
+    /**
+     * 해당 캐릭터의 진행 중인 방송 존재 여부를 검증한다.
+     * @param characterId : 방송 상태를 확인할 캐릭터 ID
+     */
+    private void validateCharacterNotBroadcasting(Long characterId) {
+        log.debug("[BroadcastStartService] 방송 중복 여부 검증됨 | validateCharacterNotBroadcasting() - START | characterId: {}", characterId);
+
+        if (broadcastRepository.existsByCharacterIdAndStatus(characterId, BroadcastStatus.BROADCASTING)) {
+            throw new CustomException(BroadcastErrorCode.CHARACTER_ALREADY_BROADCASTING);
+        }
+
+        log.debug("[BroadcastStartService] 방송 중복 여부 검증됨 | validateCharacterNotBroadcasting() - END | characterId: {}", characterId);
+    }
+
+    /**
+     * 고유 streamId로 방송 엔티티를 생성하고 저장한다.
+     * @param character : 방송을 진행할 캐릭터 엔티티
+     * @return : 저장된 방송 엔티티
+     */
+    private Broadcast createAndSaveBroadcast(Character character) {
+        log.debug("[BroadcastStartService] 방송 엔티티 저장됨 | createAndSaveBroadcast() - START | characterId: {}", character.getId());
+
+        String streamId = streamIdGenerator.generate();
+        Broadcast broadcast = Broadcast.startBroadcast(streamId, character);
+        Broadcast savedBroadcast = broadcastRepository.save(broadcast);
+
+        log.debug("[BroadcastStartService] 방송 엔티티 저장됨 | createAndSaveBroadcast() - END | streamId: {}", savedBroadcast.getStreamId());
+        return savedBroadcast;
+    }
+
+    /**
+     * FastAPI Chzzk 세션 생성 응답이 현재 방송 시작 요청과 일치하는지 검증한다.
+     * @param savedBroadcast : 저장된 방송 엔티티
+     * @param attemptId : 세션 생성 요청 식별자
+     * @param fastApiResponse : FastAPI Chzzk 세션 생성 응답
+     */
+    private void validateFastApiChzzkSessionCreateResDto(
+            Broadcast savedBroadcast,
+            String attemptId,
+            FastApiChzzkSessionCreateResDto fastApiResponse
+    ) {
+        log.debug("[BroadcastStartService] Chzzk 세션 응답 검증됨 | validateFastApiChzzkSessionCreateResDto() - START | streamId: {}, attemptId: {}",
+                savedBroadcast.getStreamId(), attemptId);
+
         if (fastApiResponse == null) {
             throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
         }
@@ -178,6 +244,9 @@ public class BroadcastStartService {
         if (!StringUtils.hasText(fastApiResponse.sessionKey()) || !StringUtils.hasText(fastApiResponse.channelId())) {
             throw new CustomException(BroadcastErrorCode.CHZZK_SESSION_RESPONSE_INVALID);
         }
+
+        log.debug("[BroadcastStartService] Chzzk 세션 응답 검증 완료 | validateFastApiChzzkSessionCreateResDto() - END | streamId: {}, attemptId: {}",
+                savedBroadcast.getStreamId(), attemptId);
     }
 
 
@@ -190,7 +259,7 @@ public class BroadcastStartService {
      * @param user : Write Lock을 획득한 사용자 엔티티
      */
     private void ensureChzzkAuthReadyForBroadcast(Long userId, User user) {
-        log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - START | userId: {}", userId);
+        log.debug("[BroadcastStartService] Chzzk 인증 준비 확인됨 | ensureChzzkAuthReadyForBroadcast() - START | userId: {}", userId);
         /*
             1. 치지직 Auth 토큰 저장 & 인증 여부 확인
             - 치지직 Auth Access Token / Refresh Token이 모두 저장되어 있어야 방송을 시작할 수 있다.
@@ -204,11 +273,13 @@ public class BroadcastStartService {
             - Access Token이 아직 유효하면 추가 작업 없이 방송 시작 로직을 이어서 진행한다.
          */
         if (!user.isChzzkAuthAccessTokenExpired()) {
-            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - accessExpired: {}, refreshExpired: {}, accessExpiresAt: {}, refreshExpiresAt: {}",
+            log.debug("[BroadcastStartService] Chzzk 인증 토큰 상태 확인됨 | ensureChzzkAuthReadyForBroadcast() - accessExpired: {}, refreshExpired: {}, accessExpiresAt: {}, refreshExpiresAt: {}",
                     user.isChzzkAuthAccessTokenExpired(),
                     user.isChzzkAuthRefreshTokenExpired(),
                     user.getChzzkAuthAccessTokenExpiresAt(),
                     user.getChzzkAuthRefreshTokenExpiresAt());
+            log.debug("[BroadcastStartService] Chzzk 인증 준비 완료 | ensureChzzkAuthReadyForBroadcast() - END | userId: {}",
+                    userId);
             return;
         }
 
@@ -217,9 +288,9 @@ public class BroadcastStartService {
                 3. 치지직 Access Token 재발급 시도
                 - 저장된 Refresh Token으로 치지직 Access / Refresh Token 재발급을 시도한다.
              */
-            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - TRY_REFRESH");
+            log.debug("[BroadcastStartService] Chzzk Access Token 갱신 시도됨 | ensureChzzkAuthReadyForBroadcast() - TRY_REFRESH");
             authService.refreshChzzkAccessToken(user);
-            log.info("[BroadcastService] ensureChzzkAuthReadyForBroadcast() - END | userId: {}", userId);
+            log.debug("[BroadcastStartService] Chzzk 인증 준비 완료 | ensureChzzkAuthReadyForBroadcast() - END | userId: {}", userId);
         } catch (CustomException e) {
             /*
                 4. Refresh Token 만료/무효 시 재인증 요구
@@ -241,7 +312,7 @@ public class BroadcastStartService {
      * @return : 방송 캐릭터 Redis DTO
      */
     private BroadcastCharacterRedisDto buildBroadcastCharacterRedisDto(Character character) {
-        log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - START | characterId: {}", character.getId());
+        log.debug("[BroadcastStartService] 방송 캐릭터 Redis DTO 생성됨 | buildBroadcastCharacterRedisDto() - START | characterId: {}", character.getId());
 
         List<String> characterTriggerWords = character.getTriggerWords()
                 .stream()
@@ -302,32 +373,58 @@ public class BroadcastStartService {
                 .tendencyAutoUpdate(true)
                 .build();
 
-        log.info("[BroadcastService] buildBroadcastCharacterRedisDto() - END | characterId: {}", character.getId());
+        log.debug("[BroadcastStartService] 방송 캐릭터 Redis DTO 생성됨 | buildBroadcastCharacterRedisDto() - END | characterId: {}", character.getId());
         return result;
     }
 
+    /**
+     * FastAPI Chzzk 세션 응답과 방송 설정을 방송 사용자 Redis DTO로 변환한다.
+     * @param fastApiResponse : FastAPI Chzzk 세션 생성 응답
+     * @param aiProactiveToChat : AI 선제적 채팅 사용 여부
+     * @return : 방송 사용자 Redis DTO
+     */
     private BroadcastUserRedisDto buildBroadcastUserRedisDto(
             FastApiChzzkSessionCreateResDto fastApiResponse,
             boolean aiProactiveToChat
     ){
-        return BroadcastUserRedisDto.builder()
+        log.debug("[BroadcastStartService] 방송 사용자 Redis DTO 생성됨 | buildBroadcastUserRedisDto() - START | channelId: {}, aiProactiveToChat: {}",
+                fastApiResponse.channelId(), aiProactiveToChat);
+
+        BroadcastUserRedisDto result = BroadcastUserRedisDto.builder()
                 .sessionKey(fastApiResponse.sessionKey())
                 .channelId(fastApiResponse.channelId())
                 .channelName(null)
                 .aiProactiveToChat(aiProactiveToChat)
                 .isStreamerSilent(false)
                 .build();
+
+        log.debug("[BroadcastStartService] 방송 사용자 Redis DTO 생성 완료 | buildBroadcastUserRedisDto() - END | channelId: {}",
+                result.getChannelId());
+        return result;
     }
 
+    /**
+     * FastAPI Redis 채널 연결 요청 DTO를 생성한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param broadcastUserRedisDto : 방송 사용자 Redis 정보
+     * @return : FastAPI Redis 채널 연결 요청 DTO
+     */
     private FastApiChzzkRedisChannelReqDto buildFastApiChzzkRedisChannelReqDto(
             String broadcastStreamId,
             BroadcastUserRedisDto broadcastUserRedisDto
     ) {
-        return new FastApiChzzkRedisChannelReqDto(
+        log.debug("[BroadcastStartService] FastAPI Redis 채널 요청 DTO 생성됨 | buildFastApiChzzkRedisChannelReqDto() - START | streamId: {}",
+                broadcastStreamId);
+
+        FastApiChzzkRedisChannelReqDto result = new FastApiChzzkRedisChannelReqDto(
                 broadcastStreamId,
                 broadcastUserRedisDto.getSessionKey(),
                 broadcastUserRedisDto.getChannelName()
         );
+
+        log.debug("[BroadcastStartService] FastAPI Redis 채널 요청 DTO 생성 완료 | buildFastApiChzzkRedisChannelReqDto() - END | streamId: {}",
+                broadcastStreamId);
+        return result;
     }
 
     /**
@@ -345,9 +442,14 @@ public class BroadcastStartService {
             BroadcastCharacterRedisDto redisDto,
             BroadcastUserRedisDto broadcastUserRedisDto
     ) {
+        log.debug("[BroadcastStartService] 커밋 후 Redis 저장 예약됨 | registerBroadcastRedisSaveAfterCommit() - START | streamId: {}",
+                broadcastStreamId);
+
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                log.info("[BroadcastStartService] 커밋 후 Redis 저장 실행됨 | afterCommit() - START | streamId: {}",
+                        broadcastStreamId);
                 String subscribedChannelId = null;
                 boolean fastApiConnected = false;
                 try {
@@ -378,19 +480,25 @@ public class BroadcastStartService {
                     /*
                         4. 위 과정에서 예외가 발생하면 방송 시작 afterCommit() 로직을 롤백한다.
                      */
-                    log.error("[BroadcastService] 방송 캐릭터 정보 Redis 저장 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
+                    log.error("[BroadcastStartService] 방송 캐릭터 정보 Redis 저장 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
                     rollbackBroadcastStartAfterCommit(broadcastStreamId, broadcastUserRedisDto, subscribedChannelId, fastApiConnected);
                 }
+
+                log.info("[BroadcastStartService] 커밋 후 Redis 저장 완료 | afterCommit() - END | streamId: {}",
+                        broadcastStreamId);
             }
         });
+
+        log.debug("[BroadcastStartService] 커밋 후 Redis 저장 예약 완료 | registerBroadcastRedisSaveAfterCommit() - END | streamId: {}",
+                broadcastStreamId);
     }
 
     /**
-     * AfterCommit 과정에서 예외가 발생했을 때 과정을 RollBack 한다
-     * @param broadcastStreamId
-     * @param broadcastUserRedisDto
-     * @param subscribedChannelId
-     * @param fastApiConnected
+     * AfterCommit 과정에서 예외가 발생했을 때 방송 시작 후속 처리를 보상한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param broadcastUserRedisDto : 방송 사용자 Redis 정보
+     * @param subscribedChannelId : 구독을 해제할 채널 ID
+     * @param fastApiConnected : FastAPI Redis 채널 연결 완료 여부
      */
     private void rollbackBroadcastStartAfterCommit(
             String broadcastStreamId,
@@ -398,6 +506,9 @@ public class BroadcastStartService {
             String subscribedChannelId,
             boolean fastApiConnected
     ) {
+        log.debug("[BroadcastStartService] 커밋 후 방송 시작 보상 처리됨 | rollbackBroadcastStartAfterCommit() - START | streamId: {}",
+                broadcastStreamId);
+
         try {
             /*
                 1. fastApi가 연결되어있고, BroadcastUser:broadcastStreamId에 channelName이 저장되어있는 경우
@@ -410,7 +521,7 @@ public class BroadcastStartService {
                 );
             }
         } catch (Exception e) {
-            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - FastAPI disconnect failed | streamId: {}, error: {}",
+            log.error("[BroadcastStartService] rollbackBroadcastStartAfterCommit() - FastAPI disconnect failed | streamId: {}, error: {}",
                     broadcastStreamId, e.getMessage(), e);
         }
 
@@ -422,7 +533,7 @@ public class BroadcastStartService {
                 chatRedisUtil.unsubscribeChannelPattern(subscribedChannelId);
             }
         } catch (Exception e) {
-            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - Chat unsubscribe failed | streamId: {}, error: {}",
+            log.error("[BroadcastStartService] rollbackBroadcastStartAfterCommit() - Chat unsubscribe failed | streamId: {}, error: {}",
                     broadcastStreamId, e.getMessage(), e);
         }
 
@@ -437,9 +548,12 @@ public class BroadcastStartService {
             broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId);
             broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId);
         } catch (Exception e) {
-            log.error("[BroadcastService] rollbackBroadcastStartAfterCommit() - Redis rollback failed | streamId: {}, error: {}",
+            log.error("[BroadcastStartService] rollbackBroadcastStartAfterCommit() - Redis rollback failed | streamId: {}, error: {}",
                     broadcastStreamId, e.getMessage(), e);
         }
+
+        log.debug("[BroadcastStartService] 커밋 후 방송 시작 보상 처리 완료 | rollbackBroadcastStartAfterCommit() - END | streamId: {}",
+                broadcastStreamId);
     }
 
 }
