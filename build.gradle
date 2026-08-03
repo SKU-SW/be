@@ -96,7 +96,7 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// --- QueryDSL generated 경로 지정 (Gradle 8+ 호환) ---
+// --- QueryDSL generated 경로 지정 ---
 def querydslDir = layout.buildDirectory.dir("generated/querydsl")
 
 sourceSets {
@@ -107,19 +107,12 @@ sourceSets {
     }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    /**
-     * 1. 기존 QueryDSL 경로 설정
-     */
+// QueryDSL 생성 경로는 main 컴파일에만 적용
+tasks.named('compileJava', JavaCompile) {
     options.generatedSourceOutputDirectory.set(querydslDir)
-
-    /**
-     * 2. ★ 컴파일 시 파라미터 이름 정보 유지 (-parameters)
-     * 이 옵션이 있어야 Jackson이 record의 변수명(deviceUid)을 인식할 수 있습니다.
-     */
-    options.compilerArgs.add("-parameters")
 }
 
-clean.doLast {
-    delete(querydslDir)
+// -parameters 옵션은 main/test 모두 적용
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.add("-parameters")
 }
