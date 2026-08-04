@@ -13,10 +13,6 @@ import org.springframework.validation.annotation.Validated;
  * - application.yml 설정 파일의 값을 Java 객체로 묶어주는 "설정 바인딩 전용 객체"
  * - 현재 Redis 설정이 2개이므로, 본 Class로 2개의 Redis 설정을 관리한다.
  *
- * Spring은 이 클래스 자체를 Bean 1개로 등록한다.
- * broadcast, chat은 별도 Bean이 아니라, 이 Bean 내부에 포함된 하위 값 객체이다.
- * 즉, "AppRedisProperties가 2개 생기는 것"이 아니라, "AppRedisProperties 1개 안에 broadcast와 chat 설정이 들어가는 것"이다.
- *
  * 값 바인딩 흐름
  * 1. Spring이 AppRedisProperties Bean을 생성한다.
  * 2. {@code app.redis.broadcast.*}, {@code app.redis.chat.*} 값을 읽는다.

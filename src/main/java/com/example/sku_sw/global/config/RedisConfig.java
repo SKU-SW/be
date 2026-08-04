@@ -40,6 +40,8 @@ public class RedisConfig {
      * - 실제 Redis 명령은 이 Template를 통해 수행된다.
      * - Broadcast Redis 전용 ConnectionFactory를 주입받아, 이 Template이 Broadcast Redis를 바라보도록 한다.
      * - @Qualifier: 같은 타입의 Bean을 여러 개 만든다.
+     * StringRedisTemplate: 실행 중인 Redis 서버에 명령을 보내는 클라이언트 객체
+     * 
      * @param connectionFactory Broadcast Redis용 ConnectionFactory
      * @return Broadcast Redis 전용 StringRedisTemplate
      */
