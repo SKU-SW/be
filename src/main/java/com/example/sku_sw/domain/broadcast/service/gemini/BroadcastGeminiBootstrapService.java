@@ -91,6 +91,8 @@ public class BroadcastGeminiBootstrapService {
                         handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
                         return null;
                     });
+            log.info("[BroadcastGeminiBootstrapService] bootstrapGeminiAsync() - END | streamId: {}, generation: {}",
+                    broadcastStreamId, generation);
         } catch (Exception e) {
             handleBootstrapFailure(broadcastStreamId, clientSession, generation, e);
         }

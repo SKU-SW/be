@@ -55,11 +55,11 @@ export async function getCharacterSettings() {
 }
 
 export async function createCharacter(input: {
+  characterAppearanceType: 'TWO_D' | 'THREE_D';
   characterName: string;
   triggerWords: string[];
   gender: string;
-  voiceTypeId: number;
-  characterImageId: number;
+  targetId: number;
   characterPersona: {
     presetType: string;
     speechStyle: string;
