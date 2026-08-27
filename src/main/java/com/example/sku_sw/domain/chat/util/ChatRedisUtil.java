@@ -61,6 +61,24 @@ public class ChatRedisUtil {
     }
 
     /**
+     * Redis 채널 이름에 대응되는 MessageListener 등록 여부를 확인한다.
+     * @param channelName : Chat:{channelId}.message 형식의 Redis 채널 이름
+     * @return : MessageListener 등록 여부
+     */
+    public boolean hasChannelListener(String channelName) {
+        return chatRedisSubscriber.hasChannelListener(channelName);
+    }
+
+    /**
+     * Redis 채널 이름을 기준으로 Pattern Channel을 다시 구독한다.
+     * @param channelName : Chat:{channelId}.message 형식의 Redis 채널 이름
+     * @return : 이번 호출에서 MessageListener를 새로 등록했는지 여부
+     */
+    public boolean resubscribeChannelPattern(String channelName) {
+        return chatRedisSubscriber.resubscribeChannelPattern(channelName);
+    }
+
+    /**
      * Chat Redis에서 punsubscribe를 진행하는 함수
      * @param channelId : 방송 채널별 고유 ID (치지직)
      */
