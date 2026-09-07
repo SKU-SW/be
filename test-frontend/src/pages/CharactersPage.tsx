@@ -30,11 +30,11 @@ export default function CharactersPage() {
   const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({
+    characterAppearanceType: 'TWO_D' as 'TWO_D' | 'THREE_D',
     characterName: '',
     triggerWords: '안녕,하이',
     gender: 'FEMALE',
-    voiceTypeId: 1,
-    characterImageId: 1,
+    targetId: 1,
     presetType: 'DEFAULT',
     speechStyle: '친근하고 밝음',
     personality: '상냥하고 재치 있음',
@@ -77,14 +77,14 @@ export default function CharactersPage() {
     setStatus('');
     try {
       await createCharacter({
+        characterAppearanceType: form.characterAppearanceType,
         characterName: form.characterName,
         triggerWords: form.triggerWords
           .split(',')
           .map((v) => v.trim())
           .filter(Boolean),
         gender: form.gender,
-        voiceTypeId: Number(form.voiceTypeId),
-        characterImageId: Number(form.characterImageId),
+        targetId: Number(form.targetId),
         characterPersona: {
           presetType: form.presetType,
           speechStyle: form.speechStyle,
@@ -148,6 +148,22 @@ export default function CharactersPage() {
         <h2>캐릭터 생성 (POST /characters)</h2>
         <form className="form grid-form" onSubmit={onCreateCharacter}>
           <label>
+            Character Appearance Type
+            <select
+              value={form.characterAppearanceType}
+              onChange={(e) =>
+                setForm((p) => ({
+                  ...p,
+                  characterAppearanceType: e.target.value as 'TWO_D' | 'THREE_D',
+                }))
+              }
+              required
+            >
+              <option value="TWO_D">TWO_D</option>
+              <option value="THREE_D">THREE_D</option>
+            </select>
+          </label>
+          <label>
             이름
             <input
               value={form.characterName}
@@ -174,21 +190,12 @@ export default function CharactersPage() {
             />
           </label>
           <label>
-            Voice Type ID
+            Target ID (2D: Character Image ID / 3D: Character VRM ID)
             <input
               type="number"
-              value={form.voiceTypeId}
-              onChange={(e) => setForm((p) => ({ ...p, voiceTypeId: Number(e.target.value) }))}
-              required
-            />
-          </label>
-          <label>
-            Character Image ID
-            <input
-              type="number"
-              value={form.characterImageId}
+              value={form.targetId}
               onChange={(e) =>
-                setForm((p) => ({ ...p, characterImageId: Number(e.target.value) }))
+                setForm((p) => ({ ...p, targetId: Number(e.target.value) }))
               }
               required
             />

@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Chat Redis의 구독을 관리하는 클래스
@@ -20,6 +21,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 public class ChatRedisSubscriber {
+
+    private static final String CHANNEL_PREFIX = "Chat:";
+    private static final String MESSAGE_CHANNEL_SUFFIX = ".message";
 
     private final RedisMessageListenerContainer chatRedisMessageListenerContainer;
     private final ChzzkChatMessageService chzzkChatMessageService;
@@ -56,12 +60,44 @@ public class ChatRedisSubscriber {
              */
             MessageListener listener = this::handleMessage;
             chatRedisMessageListenerContainer.addMessageListener(listener, PatternTopic.of(pattern));
-            log.info("[ChatRedisSubscriber] subscribeChannelPattern() - Registered | channelId: {}, pattern: {}, channelName: {}",
+            log.info("[ChatRedisSubscriber] subscribeChannelPattern() - Chat Pub/Sub Redis 채널 구독 완료 | channelId: {}, pattern: {}, channelName: {}",
                     channelId, pattern, channelName);
             return listener;
         });
 
         return channelName;
+    }
+
+    /**
+     * Redis 채널 이름에 대응되는 MessageListener 등록 여부를 확인한다.
+     * @param channelName : Chat:{channelId}.message 형식의 Redis 채널 이름
+     * @return : MessageListener 등록 여부
+     */
+    public boolean hasChannelListener(String channelName) {
+        String channelId = extractChannelId(channelName);
+        return channelListeners.containsKey(channelId);
+    }
+
+    /**
+     * Redis 채널 이름을 기준으로 Pattern Channel을 다시 구독한다.
+     * @param channelName : Chat:{channelId}.message 형식의 Redis 채널 이름
+     * @return : 이번 호출에서 MessageListener를 새로 등록했는지 여부
+     */
+    public boolean resubscribeChannelPattern(String channelName) {
+        String channelId = extractChannelId(channelName);
+        String pattern = CHANNEL_PREFIX + channelId + ".*";
+        AtomicBoolean registered = new AtomicBoolean(false);
+
+        channelListeners.computeIfAbsent(channelId, key -> {
+            MessageListener listener = this::handleMessage;
+            chatRedisMessageListenerContainer.addMessageListener(listener, PatternTopic.of(pattern));
+            registered.set(true);
+            log.info("[ChatRedisSubscriber] resubscribeChannelPattern() - Chat Pub/Sub Redis 채널 재구독 완료 | channelId: {}, pattern: {}, channelName: {}",
+                    channelId, pattern, channelName);
+            return listener;
+        });
+
+        return registered.get();
     }
 
     /**
@@ -74,6 +110,28 @@ public class ChatRedisSubscriber {
             chatRedisMessageListenerContainer.removeMessageListener(listener, PatternTopic.of("Chat:" + channelId + ".*"));
             log.info("[ChatRedisSubscriber] unsubscribeChannelPattern() - Unregistered | channelId: {}", channelId);
         }
+    }
+
+    /**
+     * Redis 채널 이름에서 스트리머 채널 고유 ID를 추출한다.
+     * @param channelName : Chat:{channelId}.message 형식의 Redis 채널 이름
+     * @return : 스트리머 채널 고유 ID
+     */
+    private String extractChannelId(String channelName) {
+        if (channelName == null
+                || !channelName.startsWith(CHANNEL_PREFIX)
+                || !channelName.endsWith(MESSAGE_CHANNEL_SUFFIX)) {
+            throw new IllegalArgumentException("Invalid chat Redis channel name: " + channelName);
+        }
+
+        String channelId = channelName.substring(
+                CHANNEL_PREFIX.length(),
+                channelName.length() - MESSAGE_CHANNEL_SUFFIX.length()
+        );
+        if (channelId.isBlank()) {
+            throw new IllegalArgumentException("Invalid chat Redis channel name: " + channelName);
+        }
+        return channelId;
     }
 
     /**

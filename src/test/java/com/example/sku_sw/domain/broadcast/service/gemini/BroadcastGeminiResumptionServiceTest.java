@@ -92,7 +92,7 @@ class BroadcastGeminiResumptionServiceTest {
         assertThat(fallbackCalled).isFalse();
         assertThat(bundle.getGeminiSession()).isEqualTo(resumedGeminiSession);
         assertThat(bundle.getGeminiHandler()).isEqualTo(resumedHandler);
-        assertThat(bundle.getGeminiSessionResumptionInProgress()).isFalse();
+        assertThat(bundle.getGeminiSessionResumptionInProgress()).isTrue();
         verify(broadcastGeminiLiveService, times(1)).resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle");
         verify(broadcastGeminiRequestService, times(1)).getFirstResumptionEvent("stream-1", generation);
     }

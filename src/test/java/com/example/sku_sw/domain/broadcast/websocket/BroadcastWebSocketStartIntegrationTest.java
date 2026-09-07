@@ -3,6 +3,7 @@ package com.example.sku_sw.domain.broadcast.websocket;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastCharacterRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastInfoRedisDto;
 import com.example.sku_sw.domain.broadcast.dto.BroadcastPromptHistoryContext;
+import com.example.sku_sw.domain.broadcast.dto.BroadcastUserRedisDto;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
@@ -20,6 +21,9 @@ import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
 import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
 import com.example.sku_sw.domain.chat.util.FastApiUtil;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
+import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelResDto;
+import com.example.sku_sw.global.exception.CustomException;
 import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,6 +31,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -171,6 +178,83 @@ class BroadcastWebSocketStartIntegrationTest {
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
 
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", " "})
+    @DisplayName("방송 시작 실패 - 치지직 채팅 Redis 채널이 생성되지 않았으면 세션을 종료한다")
+    void 방송_시작_실패_치지직_채팅_Redis_채널_미생성(String channelName) throws Exception {
+        // given
+        WebSocketSession clientSession = createClientSession();
+        BroadcastUserRedisDto broadcastUserRedisDto = BroadcastUserRedisDto.builder()
+                .sessionKey("session-key")
+                .channelId("channel-1")
+                .channelName(channelName)
+                .build();
+        given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        given(broadcastRedisUtil.getBroadcastUserDto(BROADCAST_STREAM_ID)).willReturn(broadcastUserRedisDto);
+
+        // when
+        broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
+
+        // then
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(clientSession, times(1)).sendMessage(captor.capture());
+        JsonNode errorPayload = objectMapper.readTree(captor.getValue().getPayload());
+        assertThat(errorPayload.get("message").asText())
+                .isEqualTo(BroadcastErrorCode.CHZZK_REDIS_CHANNEL_NOT_CREATED.getMessage());
+        verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
+        verifyNoInteractions(chatRedisUtil, fastApiUtil);
+        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("방송 시작 성공 - Redis Listener가 없으면 재등록하고 FastAPI 채널을 다시 연결한다")
+    void 방송_시작_성공_Redis_Listener_재등록() {
+        // given
+        WebSocketSession clientSession = createClientSession();
+        stubChatRedisRecovery(false);
+        stubPromptDependencies();
+        given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        given(chatRedisUtil.resubscribeChannelPattern("Chat:channel-1.message")).willReturn(true);
+        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any()))
+                .willReturn(new CompletableFuture<>());
+
+        // when
+        broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
+
+        // then
+        verify(chatRedisUtil, times(1)).resubscribeChannelPattern("Chat:channel-1.message");
+        verify(fastApiUtil, times(1)).connectChzzkRedisChannel(new FastApiChzzkRedisChannelReqDto(
+                BROADCAST_STREAM_ID,
+                "session-key",
+                "Chat:channel-1.message"
+        ));
+        verify(chatRedisUtil, never()).unsubscribeChannelPattern(any());
+    }
+
+    @Test
+    @DisplayName("방송 시작 실패 - Listener 재등록 후 FastAPI 연결이 실패하면 Listener를 제거한다")
+    void 방송_시작_실패_FastAPI_연결_실패_Listener_제거() throws Exception {
+        // given
+        WebSocketSession clientSession = createClientSession();
+        BroadcastUserRedisDto broadcastUserRedisDto = createBroadcastUserRedisDto();
+        given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        given(broadcastRedisUtil.getBroadcastUserDto(BROADCAST_STREAM_ID)).willReturn(broadcastUserRedisDto);
+        given(chatRedisUtil.hasChannelListener("Chat:channel-1.message")).willReturn(false);
+        given(chatRedisUtil.resubscribeChannelPattern("Chat:channel-1.message")).willReturn(true);
+        given(fastApiUtil.connectChzzkRedisChannel(any(FastApiChzzkRedisChannelReqDto.class)))
+                .willThrow(new CustomException(BroadcastErrorCode.CHZZK_REDIS_CHANNEL_CONNECT_FAILED));
+
+        // when
+        broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
+
+        // then
+        verify(chatRedisUtil, times(1)).unsubscribeChannelPattern("channel-1");
+        verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
+        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
+        assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
+    }
+
     @Test
     @DisplayName("방송 시작 실패 - Gemini bootstrap 예외 발생 시 에러 메시지 전송 후 세션을 종료한다")
     void 방송_시작_실패_Gemini_bootstrap_예외() throws Exception {
@@ -187,6 +271,7 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> failedFuture = new CompletableFuture<>();
         failedFuture.completeExceptionally(new RuntimeException("gemini bootstrap failed"));
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        stubChatRedisRecovery(true);
         stubPromptDependencies();
         given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(failedFuture);
 
@@ -239,6 +324,7 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> firstGeminiFuture = new CompletableFuture<>();
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        stubChatRedisRecovery(true);
         stubPromptDependencies();
         given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
@@ -290,6 +376,7 @@ class BroadcastWebSocketStartIntegrationTest {
         CompletableFuture<WebSocketSession> firstGeminiFuture = new CompletableFuture<>();
         CompletableFuture<WebSocketSession> secondGeminiFuture = new CompletableFuture<>();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
+        stubChatRedisRecovery(true);
         stubPromptDependencies();
         given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
@@ -468,5 +555,36 @@ class BroadcastWebSocketStartIntegrationTest {
                 eq(List.of()),
                 any(BroadcastPromptHistoryContext.class)
         )).willReturn("테스트 시스템 프롬프트");
+    }
+
+    private WebSocketSession createClientSession() {
+        WebSocketSession clientSession = mock(WebSocketSession.class);
+        Map<String, Object> clientAttributes = new HashMap<>();
+        clientAttributes.put(WebSocketAttributes.USER_ID.getValue(), USER_ID);
+        clientAttributes.put(WebSocketAttributes.BROADCAST_STREAM_ID.getValue(), BROADCAST_STREAM_ID);
+        given(clientSession.getAttributes()).willReturn(clientAttributes);
+        given(clientSession.isOpen()).willReturn(true);
+        return clientSession;
+    }
+
+    private BroadcastUserRedisDto createBroadcastUserRedisDto() {
+        return BroadcastUserRedisDto.builder()
+                .sessionKey("session-key")
+                .channelId("channel-1")
+                .channelName("Chat:channel-1.message")
+                .build();
+    }
+
+    private void stubChatRedisRecovery(boolean listenerExists) {
+        BroadcastUserRedisDto broadcastUserRedisDto = createBroadcastUserRedisDto();
+        FastApiChzzkRedisChannelResDto response = FastApiChzzkRedisChannelResDto.builder()
+                .broadcastStreamId(BROADCAST_STREAM_ID)
+                .sessionKey(broadcastUserRedisDto.getSessionKey())
+                .channelName(broadcastUserRedisDto.getChannelName())
+                .status("연결 성공")
+                .build();
+        given(broadcastRedisUtil.getBroadcastUserDto(BROADCAST_STREAM_ID)).willReturn(broadcastUserRedisDto);
+        given(chatRedisUtil.hasChannelListener(broadcastUserRedisDto.getChannelName())).willReturn(listenerExists);
+        given(fastApiUtil.connectChzzkRedisChannel(any(FastApiChzzkRedisChannelReqDto.class))).willReturn(response);
     }
 }

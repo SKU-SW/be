@@ -92,8 +92,18 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
+        // 2. Redis에 저장된 방송 사용자 정보를 기준으로 채팅 Redis 구독 상태 복원
+        try {
+            restoreChatRedisChannel(broadcastStreamId);
+        } catch (CustomException e) {
+            log.error("[BroadcastWebSocketHandler] afterConnectionEstablished() - Chat Redis channel restore failed | userId: {}, streamId: {}, error: {}",
+                    userId, broadcastStreamId, e.getMessage(), e);
+            sendErrorAndClose(clientSession, e.getMessage());
+            return;
+        }
+
         /*
-            2. 이전 Session Bundle과 새로 생성한 Session Bundle을 가져와, Session Registry에 Session Bundle이 정상적으로 등록되었는지 확인한다.
+            3. 이전 Session Bundle과 새로 생성한 Session Bundle을 가져와, Session Registry에 Session Bundle이 정상적으로 등록되었는지 확인한다.
             - 만약 Session Registry에 Session Bundle이 정상적으로 등록되지 않았다면 클라이언트에게 에러 메시지를 전송하고 Client WebSocket Session을 닫는다.
          */
         BroadcastWebSocketSessionBundle oldBundle = sessionRegistry.registerClientSession(broadcastStreamId, clientSession);
@@ -103,21 +113,81 @@ public class BroadcastWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
 
-        // 3. Client WebSocket Session에 SESSION_GENERATION, LAST_PONG_AT 속성을 설정하고, ConnectionTimeout 스케줄러를 삭제한다.
-        long generation = currentBundle.getGeneration();
+        // 4. Client WebSocket Session에 SESSION_GENERATION, LAST_PONG_AT 속성을 설정하고, ConnectionTimeout 스케줄러를 삭제한다.
+        long generation = currentBundle.getGeneration(); // 고유 생성 번호값
         clientSession.getAttributes().put(WebSocketAttributes.SESSION_GENERATION.getValue(), generation);
         clientSession.getAttributes().put(WebSocketAttributes.LAST_PONG_AT.getValue(), Instant.now());
         broadcastConnectionTimeoutService.cancelConnectionTimeout(broadcastStreamId);
 
-        // 4. 오래된 session Bundle을 종료하고 Client에게 GEMINI_CONNECTING 메시지를 보낸다. 이후 Gemini WebSocket 초기 세팅 비동기 작업을 시작한다.
+        // 5. 오래된 session Bundle을 종료하고 Client에게 GEMINI_CONNECTING 메시지를 보낸다. 이후 Gemini WebSocket 초기 세팅 비동기 작업을 시작한다.
         closeOldBundle(oldBundle, broadcastStreamId);
         proactiveChatService.cancel(broadcastStreamId);
         sendStatusMessage(clientSession, WebSocketSessionBundleStatus.GEMINI_CONNECTING.name(), "WebSocket 연결 대기중");
         broadcastGeminiBootstrapService.bootstrapGeminiAsync(broadcastStreamId, clientSession, generation);
+
+        // 6. AI 선제 반응 여부 판별 타이머 시작
         streamerSilenceService.startInitialTimer(broadcastStreamId, generation);
 
         log.info("[BroadcastWebSocketHandler] afterConnectionEstablished() - Session registered | userId: {}, streamId: {}, generation: {}",
                 userId, broadcastStreamId, generation);
+    }
+
+    /**
+     * Redis에 저장된 방송 사용자 정보를 기준으로 채팅 Redis 구독 상태를 복원한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     */
+    private void restoreChatRedisChannel(String broadcastStreamId) {
+        log.debug("[BroadcastWebSocketHandler] restoreChatRedisChannel() - 채팅 Redis Channel 구독 상태 복원 시작 | START | broadcastStreamId: {}", broadcastStreamId);
+        BroadcastUserRedisDto broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
+        String channelName = broadcastUserRedisDto.getChannelName();
+        if (channelName == null || channelName.isBlank()) {
+            throw new CustomException(BroadcastErrorCode.CHZZK_REDIS_CHANNEL_NOT_CREATED);
+        }
+
+        boolean listenerRegistered = false;
+        try {
+            if (!chatRedisUtil.hasChannelListener(channelName)) {
+                listenerRegistered = chatRedisUtil.resubscribeChannelPattern(channelName);
+            }
+
+            fastApiUtil.connectChzzkRedisChannel(new FastApiChzzkRedisChannelReqDto(
+                    broadcastStreamId,
+                    broadcastUserRedisDto.getSessionKey(),
+                    channelName
+            ));
+            log.debug("[BroadcastWebSocketHandler] restoreChatRedisChannel() - 채팅 Redis Channel 구독 상태 복원 종료 | END | broadcastStreamId: {}", broadcastStreamId);
+        } catch (CustomException e) {
+            removeRestoredChannelListener(broadcastStreamId, broadcastUserRedisDto, listenerRegistered);
+            throw e;
+        } catch (Exception e) {
+            removeRestoredChannelListener(broadcastStreamId, broadcastUserRedisDto, listenerRegistered);
+            log.error("[BroadcastWebSocketHandler] restoreChatRedisChannel() - Unexpected error | streamId: {}, error: {}",
+                    broadcastStreamId, e.getMessage(), e);
+            throw new CustomException(BroadcastErrorCode.CHZZK_REDIS_CHANNEL_CONNECT_FAILED);
+        }
+    }
+
+    /**
+     * 채팅 Redis 채널 복원 후 FastAPI 연결에 실패한 경우 이번 복원에서 등록한 Listener를 제거한다.
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param broadcastUserRedisDto : 방송 사용자 Redis 정보
+     * @param listenerRegistered : 이번 복원에서 Listener를 등록했는지 여부
+     */
+    private void removeRestoredChannelListener(
+            String broadcastStreamId,
+            BroadcastUserRedisDto broadcastUserRedisDto,
+            boolean listenerRegistered
+    ) {
+        if (!listenerRegistered) {
+            return;
+        }
+
+        try {
+            chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
+        } catch (Exception e) {
+            log.error("[BroadcastWebSocketHandler] removeRestoredChannelListener() - Listener rollback failed | streamId: {}, channelId: {}, error: {}",
+                    broadcastStreamId, broadcastUserRedisDto.getChannelId(), e.getMessage(), e);
+        }
     }
 
     @Override

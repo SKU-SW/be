@@ -31,6 +31,7 @@ public enum BroadcastErrorCode implements BaseErrorCode {
     CHZZK_SESSION_CONNECT_FAILED(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 요청에 실패했습니다."),
     CHZZK_SESSION_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 응답이 올바르지 않습니다."),
     CHZZK_SESSION_ATTEMPT_MISMATCH(HttpStatus.BAD_GATEWAY, "치지직 세션 연결 시도 ID가 일치하지 않습니다."),
+    CHZZK_REDIS_CHANNEL_NOT_CREATED(HttpStatus.NOT_FOUND, "치지직 채팅 Pub/Sub Redis 채널이 생성되지 않았습니다."),
     CHZZK_REDIS_CHANNEL_CONNECT_FAILED(HttpStatus.BAD_GATEWAY, "치지직 Redis 채널 연결 요청에 실패했습니다."),
     CHZZK_REDIS_CHANNEL_DISCONNECT_FAILED(HttpStatus.BAD_GATEWAY, "치지직 Redis 채널 연결 해제 요청에 실패했습니다."),
     CHZZK_REDIS_CHANNEL_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "치지직 Redis 채널 연결 응답이 올바르지 않습니다.");

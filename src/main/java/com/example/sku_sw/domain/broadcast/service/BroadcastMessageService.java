@@ -22,14 +22,12 @@ import java.util.stream.Collectors;
 
 /**
  * WebSocket을 통해 수신한 클라이언트 텍스트 메시지를 처리하는 서비스
- * - 메시지 정규화, 트리거 워드 검사, BroadcastInfo 저장, Gemini AI 호출을 담당한다.
+ * - 메시지 정규화, 트리거 워드 검사, BroadcastInfo 저장 및 Gemini AI 호출을 담당한다.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class BroadcastMessageService {
-
-    private static final int RECENT_BROADCAST_INFO_LIMIT = 50;
 
     private final BroadcastRedisUtil broadcastRedisUtil;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
@@ -39,8 +37,8 @@ public class BroadcastMessageService {
     /**
      * 클라이언트 텍스트 메시지를 처리한다.
      * - Redis에서 캐릭터 정보를 조회하고, USER 메시지를 BroadcastInfo에 저장한다.
-     * - 트리거 워드 포함 여부와 isTalking 상태에 따라 Gemini 호출 또는 종료를 결정한다.
-     * - Gemini Live WebSocket 세션으로 메시지를 전송한다.
+     * - trigger word 및 isTalking 상태에 따라 Gemini 호출 여부를 결정한다.
+     * - resumption/refresh 중에도 입력을 Redis에 적재해 유실을 방지한다.
      *
      * @param broadcastStreamId : 방송 스트림 ID
      * @param generation        : 현재 세션 generation
@@ -49,108 +47,175 @@ public class BroadcastMessageService {
     public void handleClientMessage(String broadcastStreamId, Long generation, String message) {
         log.info("[BroadcastMessageService] handleClientMessage() - START | streamId: {}, generation: {}, message: {}",
                 broadcastStreamId, generation, message);
+
         /*
-            1. Session Registry에서 broadcastStreamId와 generation 값으로 WebSocket Session Bundle값이 있는지 확인한다.
-            - Bundle이 없다면 예외를 발생시킨다.
-            - Bundle이 클라이언트 메시지를 받을 수 있는 상황인지 확인(status가 Ready이거나 Refreshing인 경우)
+            1. 현재 generation의 Session Bundle이 존재하고 클라이언트 입력 수신 가능한 상태인지 확인한다.
+            - bundle이 없거나 입력 수신 불가 상태면 예외를 발생시킨다.
          */
         BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
         if (bundle == null || !bundle.canAcceptClientMessage()) {
             throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
         }
-        
-        /*
-            2. Redis의 tendency를 통해 message에 답변 지시사항 반영
-            - tendency = POSITIVE인 경우 -> "(긍정적인 방향으로 답변)"
-            - tendency = NEUTRAL인 경우 -> 추가 X
-            - tendency = NEGATIVE인 경우 -> "(부정적인 방향으로 답변)"
-         */
-        String updatedMessage = null;
-        BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
-        switch (character.getTendency()) {
-            case POSITIVE -> updatedMessage = message + "(긍정적인 방향으로 답변)";
-            case NEGATIVE -> updatedMessage = message + "(부정적인 방향으로 답변)";
-            case NEUTRAL -> updatedMessage = message;
-        }
 
-        /*
-            3. Session Registry에 해당 방송의 Bundle이 존재한다면, 아래 작업을 수행한다.
-                1) Redis에 저장되어있는 현재 방송을 진행 중인 AI 캐릭터의 정보를 가져온다.
-                2) 클라이언트로부터 받은 텍스트 데이터를 Redis의 현재 방송 진행 정보 List에 저장한다.
-                3) Redis에 있는 현재 방송 진행 정보의 Compact(요약)을 시도한다.
-         */
-        BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(broadcastStreamId, DialogueSubject.STREAMER, updatedMessage);
-        log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
-                broadcastStreamId, savedUserInfo.cursorId(), updatedMessage);
-        applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
-                .broadcastStreamId(broadcastStreamId)
-                .triggerType(BroadcastCompactionTriggerType.CLIENT_MESSAGE_STORED)
-                .build());
+        synchronized (bundle) {
+            /*
+                2. 동기화 구간에서 현재 bundle이 여전히 유효한지 재검증한다.
+                - resumption 완료 후 backlog flush와 일반 입력 저장/전송이 같은 락을 사용하도록 맞춘다.
+             */
+            BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+            if (currentBundle == null || !currentBundle.canAcceptClientMessage()) {
+                throw new CustomException(BroadcastErrorCode.WEBSOCKET_SESSION_NOT_READY);
+            }
 
-        /*
-            4. 클라이언트 메시지를 정규화한 뒤, 메시지에 AI 캐릭터의 트리거 메시지가 있는지 확인한다.
-            - 메시지에 트리거 메시지가 없는 경우, 아무런 동작 하지 않고 종료
-            - 메시지에 트리거 메시지가 있는 경우, 해당 캐릭터가 말하고 있다고 설정값 변경. 이후 Gemini WebSocket을 통해 요청을 보낸다.
-         */
-        String normalizedMessage = normalize(message);
-        boolean hasTriggerWord = false;
-        if (character.getCharacterTriggerWords() != null) {
-            hasTriggerWord = character.getCharacterTriggerWords().stream()
-                    .anyMatch(trigger -> normalizedMessage.contains(normalize(trigger)));
-        }
-        Boolean isTalking = character.getIsTalking();
+            /*
+                3. 캐릭터 성향(tendency)을 반영한 스트리머 메시지를 만든다.
+             */
+            BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
+            String updatedMessage = applyCharacterTendency(message, character);
 
-        /*
-            5. Gemini Session으로 메시지를 보내기 위한 검증
-            - 입력된 데이터에 Trigger Word가 없는데 isTalking 상태가 아닌 경우
-            - Gemini Seesion이 열려있지 않은 경우
-            - Gemini Session이 Refresh 요청 중인 상태인 경우
-            - WebSocket Session Bundle이 준비되어있지 않은 경우
-            를 제외한다.
-         */
-        if (!hasTriggerWord && (isTalking == null || !isTalking)) {
-            log.info("[BroadcastMessageService] handleClientMessage() - No trigger word and not talking, skipping | streamId: {}", broadcastStreamId);
-            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: skip", broadcastStreamId);
-            return;
-        }
+            /*
+                4. 스트리머 입력을 Redis에 우선 저장하고 compaction 검사를 요청한다.
+                - resumption 중에도 sentToGemini=false 상태로 적재해 유실을 막는다.
+             */
+            BroadcastInfoRedisDto savedUserInfo = broadcastRedisUtil.pushBroadcastInfo(
+                    broadcastStreamId,
+                    DialogueSubject.STREAMER,
+                    updatedMessage
+            );
+            log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
+                    broadcastStreamId, savedUserInfo.cursorId(), updatedMessage);
+            applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
+                    .broadcastStreamId(broadcastStreamId)
+                    .triggerType(BroadcastCompactionTriggerType.CLIENT_MESSAGE_STORED)
+                    .build());
 
-        if (!bundle.isGeminiSessionOpen()) {
-            log.info("[BroadcastMessageService] handleClientMessage() - Gemini Session is No Open | streamId: {}, generation: {}",
-                    broadcastStreamId, generation);
-            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
-            return;
-        }
+            /*
+                5. 현재 입력 기준 trigger word를 확인한다.
+                - trigger가 감지되면 talking 상태를 true로 올려 이후 backlog flush에서도 동일 정책을 적용한다.
+             */
+            boolean hasTriggerWord = hasTriggerWord(message, character);
+            boolean isTalking = Boolean.TRUE.equals(character.getIsTalking());
 
-        if (bundle.isGeminiSessionRefreshRequested()) {
-            log.info("[BroadcastMessageService] handleClientMessage() - Gemini send blocked during refresh | streamId: {}, generation: {}",
-                    broadcastStreamId, generation);
-            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
-            return;
-        }
+            if (!hasTriggerWord && !isTalking) {
+                log.info("[BroadcastMessageService] handleClientMessage() - No trigger word and not talking, skipping | streamId: {}",
+                        broadcastStreamId);
+                log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: skip", broadcastStreamId);
+                return;
+            }
 
-        if (!bundle.isWebSocketSessionBundleReady()) {
-            log.info("[BroadcastMessageService] handleClientMessage() - Gemini Session Bundle is Not Ready | streamId: {}, generation: {}",
-                    broadcastStreamId, generation);
-            log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
-            return;
-        }
+            if (hasTriggerWord) {
+                log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}",
+                        broadcastStreamId);
+                broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
+                character.setIsTalking(true);
+            }
 
-        /*
-            6. Trigger Word가 감지된 경우, Redis에 해당 AI 캐릭터가 talking 중인 것으로 설정 및 데이터 Gemini로 전송
-         */
-        if (hasTriggerWord) {
-            log.info("[BroadcastMessageService] handleClientMessage() - Trigger word detected, activating AI | streamId: {}", broadcastStreamId);
-            broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
+            /*
+                6. 현재 Gemini 전송이 불가능한 상황이면 Redis에만 저장하고 종료한다.
+                - first resumption control event 완료 전에는 backlog를 그대로 유지한다.
+             */
+            if (!canSendPendingDialoguesNow(currentBundle)) {
+                log.info("[BroadcastMessageService] handleClientMessage() - Gemini send blocked, saved only | streamId: {}, generation: {}, status: {}, resumptionInProgress: {}",
+                        broadcastStreamId, generation, currentBundle.getStatus(), currentBundle.getGeminiSessionResumptionInProgress());
+                log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: saved_only", broadcastStreamId);
+                return;
+            }
+
+            /*
+                7. 현재 전송 가능한 상태이면 Redis backlog 전체를 Gemini로 전송한다.
+                - viewer/chat backlog가 함께 쌓여 있었다면 cursor 순서대로 같이 전달된다.
+             */
+            sendPendingDialoguesToGemini(broadcastStreamId, generation, character);
         }
-        sendPendingDialoguesToGemini(broadcastStreamId, generation, character);
 
         log.info("[BroadcastMessageService] handleClientMessage() - END | streamId: {}, action: gemini_called", broadcastStreamId);
     }
 
     /**
-     * Gemini로 아직 전송되지 않은 방송 대화들을 조회해 하나의 payload로 결합 전송한다.
+     * Gemini resumption 완료 후 Redis에 적재된 backlog를 재전송한다.
+     * - first resumption control event가 끝난 뒤에만 호출된다.
+     * - trigger 정책을 유지해 trigger가 없고 talking 상태도 아니면 backlog를 그대로 둔다.
+     *
+     * @param broadcastStreamId : 방송 스트림 ID
+     * @param generation        : 현재 세션 generation
+     * @param reason            : resumption 완료 사유
+     */
+    public void flushPendingDialoguesAfterResumption(String broadcastStreamId, Long generation, String reason) {
+        log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - START | streamId: {}, generation: {}, reason: {}",
+                broadcastStreamId, generation, reason);
+
+        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+        if (bundle == null) {
+            log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: bundle_not_found",
+                    broadcastStreamId);
+            return;
+        }
+
+        synchronized (bundle) {
+            /*
+                1. resumption 완료 이벤트가 stale event인지 확인한다.
+             */
+            BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundleIfCurrent(broadcastStreamId, generation);
+            if (currentBundle == null) {
+                log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: stale_bundle",
+                        broadcastStreamId);
+                return;
+            }
+
+            BroadcastCharacterRedisDto character = broadcastRedisUtil.getBroadcastCharacterDto(broadcastStreamId);
+            List<BroadcastInfoRedisDto> unsentDialogues = broadcastRedisUtil.getUnsentDialogues(broadcastStreamId);
+
+            /*
+                2. resumption 상태를 먼저 해제한다.
+                - 이후 같은 bundle 락 안에서 backlog flush 여부를 판단해 중복 전송 경쟁을 막는다.
+             */
+            currentBundle.clearResumptionInProgress();
+
+            if (unsentDialogues.isEmpty()) {
+                log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: no_unsent_dialogues",
+                        broadcastStreamId);
+                return;
+            }
+
+            /*
+                3. backlog 안의 STREAMER 발화 기준으로 trigger word를 다시 확인한다.
+                - trigger가 하나라도 있으면 talking을 활성화하고 backlog 전체를 보낸다.
+             */
+            boolean hasTriggerWord = hasTriggerWordInDialogues(unsentDialogues, character);
+            boolean isTalking = Boolean.TRUE.equals(character.getIsTalking());
+            if (hasTriggerWord) {
+                broadcastRedisUtil.updateBroadcastCharacterIsTalking(broadcastStreamId, true);
+                character.setIsTalking(true);
+                isTalking = true;
+            }
+
+            if (!hasTriggerWord && !isTalking) {
+                log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: pending_retained_without_trigger",
+                        broadcastStreamId);
+                return;
+            }
+
+            /*
+                4. resumption 해제 직후에도 Gemini 전송 가능 상태인지 다시 확인한다.
+                - socket close/refresh가 다시 겹친 경우에는 backlog를 Redis에 그대로 남긴다.
+             */
+            if (!canSendPendingDialoguesNow(currentBundle)) {
+                log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: gemini_unavailable_after_resumption",
+                        broadcastStreamId);
+                return;
+            }
+
+            sendPendingDialoguesToGemini(broadcastStreamId, generation, character);
+        }
+
+        log.info("[BroadcastMessageService] flushPendingDialoguesAfterResumption() - END | streamId: {}, action: flushed",
+                broadcastStreamId);
+    }
+
+    /**
+     * Gemini로 아직 전송하지 않은 방송 대화들을 조회해 하나의 payload로 결합 후 전송한다.
      * - Redis의 미전송 대화들을 조회한다.
-     * - 각 대화를 Gemini 입력 포맷으로 변환한 뒤 줄바꿈으로 결합한다.
+     * - 각 대화를 Gemini 입력 형식으로 변환한 뒤 줄바꿈으로 결합한다.
      * - Gemini 전송이 성공한 경우에만 sentToGemini를 true로 마킹한다.
      * @param broadcastStreamId : 방송 스트림 ID
      * @param generation : 현재 세션 generation
@@ -166,7 +231,6 @@ public class BroadcastMessageService {
 
         /*
             1. Redis에서 미전송 대화를 조회한다.
-            - 현재 방금 저장된 스트리머 메시지와 이전 viewer/chat 누적분을 함께 조회한다.
          */
         List<BroadcastInfoRedisDto> unsentDialogues = broadcastRedisUtil.getUnsentDialogues(broadcastStreamId);
         if (unsentDialogues.isEmpty()) {
@@ -176,9 +240,7 @@ public class BroadcastMessageService {
         }
 
         /*
-            2. 미전송 대화들을 Gemini 입력용 payload로 결합한다.
-            - STREAMER는 (스트리머) 접두어를 붙인다.
-            - VIEWER는 저장된 문자열을 그대로 사용한다.
+            2. 미전송 대화들을 Gemini 입력 payload로 결합한다.
          */
         String combinedMessage = buildGeminiDialoguePayload(unsentDialogues);
         log.info("[BroadcastMessageService] sendPendingDialoguesToGemini() - Combined dialogues | streamId: {}, unsentCount: {}",
@@ -186,7 +248,6 @@ public class BroadcastMessageService {
 
         /*
             3. 결합한 payload를 Gemini로 전송한다.
-            - 이미 포맷된 여러 줄 대화 블록이므로 추가 접두어 없이 그대로 전송한다.
          */
         broadcastGeminiRequestService.processFormattedDialogueMessage(
                 broadcastStreamId,
@@ -196,7 +257,7 @@ public class BroadcastMessageService {
         );
 
         /*
-            4. 전송 성공 시 해당 대화들을 sentToGemini=true로 마킹한다.
+            4. 전송 성공 후에만 sentToGemini=true로 마킹한다.
          */
         List<Long> unsentCursorIds = unsentDialogues.stream()
                 .map(BroadcastInfoRedisDto::cursorId)
@@ -210,13 +271,13 @@ public class BroadcastMessageService {
     /**
      * 미전송 대화 목록을 Gemini realtimeInput.text payload 문자열로 결합한다.
      * @param dialogues : 미전송 대화 목록
-     * @return : 줄바꿈으로 결합된 Gemini 입력 문자열
+     * @return : 줄바꿈으로 결합한 Gemini 입력 문자열
      */
     private String buildGeminiDialoguePayload(List<BroadcastInfoRedisDto> dialogues) {
         log.info("[BroadcastMessageService] buildGeminiDialoguePayload() - START | dialogueCount: {}", dialogues.size());
 
         /*
-            1. 각 대화를 Gemini 입력 포맷으로 변환한 뒤 줄바꿈으로 결합한다.
+            1. 각 대화를 Gemini 입력 형식으로 변환한 뒤 줄바꿈으로 결합한다.
          */
         String result = dialogues.stream()
                 .map(this::formatDialogueForGemini)
@@ -228,8 +289,8 @@ public class BroadcastMessageService {
 
     /**
      * Redis 대화를 Gemini 입력용 단일 문자열로 변환한다.
-     * - STREAMER는 (스트리머) 접두어를 붙인다.
-     * - VIEWER 및 그 외 대화는 저장된 문자열을 그대로 사용한다.
+     * - STREAMER는 "(스트리머)" 접두어를 붙인다.
+     * - VIEWER 및 기타 대화는 저장된 문자열을 그대로 사용한다.
      * @param dialogue : Redis 대화 DTO
      * @return : Gemini 입력용 단일 문자열
      */
@@ -239,8 +300,6 @@ public class BroadcastMessageService {
 
         /*
             1. subject에 따라 Gemini 입력 문자열을 구성한다.
-            - STREAMER는 원문에 (스트리머) 접두어를 부여한다.
-            - VIEWER는 저장 시점에 prefix가 포함되어 있으므로 그대로 사용한다.
          */
         String result = dialogue.subject() == DialogueSubject.STREAMER
                 ? "(스트리머)" + dialogue.content()
@@ -254,7 +313,7 @@ public class BroadcastMessageService {
      * 메시지 정규화 유틸리티
      * - null-safe: null 입력 시 빈 문자열 반환
      * - trim: 앞뒤 공백 제거
-     * - 모든 whitespace(\s+) 제거 (한글/영어 공통)
+     * - 모든 whitespace(\s+) 제거
      * - 영어 lower-case (Locale.ROOT)
      *
      * @param text : 정규화할 문자열
@@ -265,5 +324,39 @@ public class BroadcastMessageService {
             return "";
         }
         return text.trim().replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+    }
+
+    private String applyCharacterTendency(String message, BroadcastCharacterRedisDto character) {
+        return switch (character.getTendency()) {
+            case POSITIVE -> message + "(긍정적인 방향으로 답변)";
+            case NEGATIVE -> message + "(부정적인 방향으로 답변)";
+            case NEUTRAL -> message;
+        };
+    }
+
+    private boolean hasTriggerWord(String message, BroadcastCharacterRedisDto character) {
+        String normalizedMessage = normalize(message);
+        if (character.getCharacterTriggerWords() == null) {
+            return false;
+        }
+        return character.getCharacterTriggerWords().stream()
+                .anyMatch(trigger -> normalizedMessage.contains(normalize(trigger)));
+    }
+
+    private boolean hasTriggerWordInDialogues(
+            List<BroadcastInfoRedisDto> dialogues,
+            BroadcastCharacterRedisDto character
+    ) {
+        return dialogues.stream()
+                .filter(dialogue -> dialogue.subject() == DialogueSubject.STREAMER)
+                .map(BroadcastInfoRedisDto::content)
+                .anyMatch(content -> hasTriggerWord(content, character));
+    }
+
+    private boolean canSendPendingDialoguesNow(BroadcastWebSocketSessionBundle bundle) {
+        return bundle.isGeminiSessionOpen()
+                && !bundle.isGeminiSessionRefreshRequested()
+                && bundle.isWebSocketSessionBundleReady()
+                && !bundle.getGeminiSessionResumptionInProgress();
     }
 }

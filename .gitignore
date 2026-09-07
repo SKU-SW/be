@@ -46,3 +46,6 @@ application-test.yml
 test-frontend/
 test-frontend-dev-api/
 sku-sw-fe/
+
+.venv
+.venv/

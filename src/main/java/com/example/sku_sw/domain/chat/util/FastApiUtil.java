@@ -109,6 +109,7 @@ public class FastApiUtil {
             BroadcastErrorCode errorCode
     ) {
         try {
+            log.debug("[FastApiUtil] requestChzzkRedisChannel() 치지직 Pub Sub Redis 생성 요청 시작 - START | broadcastStreamId: {}, channelName: {}", reqDto.broadcastStreamId(), reqDto.channelName());
             FastApiChzzkRedisChannelResDto response = webClient.post()
                     .uri(path)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -128,6 +129,7 @@ public class FastApiUtil {
                     .block();
 
             validateRedisChannelResponse(reqDto, response);
+            log.debug("[FastApiUtil] requestChzzkRedisChannel() 치지직 Pub Sub Redis 생성 요청 종료 - END | broadcastStreamId: {}, channelName: {}", reqDto.broadcastStreamId(), reqDto.channelName());
             return response;
         } catch (CustomException e) {
             throw e;
