@@ -391,6 +391,11 @@ public class BroadcastStartService {
             2. 트랜잭션 커밋 후 방송 시작 후속 처리 등록
             - DB 커밋이 확정된 뒤 별도 서비스에서 Redis와 FastAPI 후속 처리를 수행한다.
          */
+        log.info(
+                "[BroadcastStartService] registerBroadcastRedisSaveAfterCommit | threadName: {}, threadId: {}",
+                Thread.currentThread().getName(),
+                Thread.currentThread().threadId()
+        );
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {

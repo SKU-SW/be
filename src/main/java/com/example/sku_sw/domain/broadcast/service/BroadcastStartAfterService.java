@@ -41,7 +41,11 @@ public class BroadcastStartAfterService {
     ) {
         log.info("[BroadcastStartAfterService] 방송 시작 후속 처리됨 | processBroadcastStartAfterCommit() - START | streamId: {}",
                 broadcastStreamId);
-
+        log.info(
+                "[BroadcastStartAfterService] processBroadcastStartAfterCommit | threadName: {}, threadId: {}",
+                Thread.currentThread().getName(),
+                Thread.currentThread().threadId()
+        );
         String subscribedChannelId = null;
         boolean fastApiConnected = false;
         try {
