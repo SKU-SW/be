@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
+    chzzk_mock_enabled: bool
     chat_filter_mode: str  # "filtered" | "passthrough"
     chat_filter_window_sec: float
     chat_filter_buffer_max: int
@@ -26,6 +27,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
+            chzzk_mock_enabled=os.getenv("CHZZK_MOCK_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
             chat_filter_mode=os.getenv("CHAT_FILTER_MODE", "filtered"),
             chat_filter_window_sec=float(os.getenv("CHAT_FILTER_WINDOW_SEC", "3.0")),
             chat_filter_buffer_max=int(os.getenv("CHAT_FILTER_BUFFER_MAX", "200")),

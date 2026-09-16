@@ -10,6 +10,7 @@ import httpx
 import socketio
 
 from ..exceptions import ChzzkSessionException
+from ..config import settings
 from ..models import ChzzkChannelConnectReq, ChzzkChannelConnectRes, ChzzkSessionConnectReq, ChzzkSessionConnectRes
 from ..registry import ActiveChzzkSession, PendingChzzkSessionConnect, chzzk_session_registry
 from .chat_filter_service import chat_filter_service
@@ -29,6 +30,7 @@ class SocketWaitState:
 
 class ChzzkSessionService:
     def __init__(self) -> None:
+        self.mock_enabled = settings.chzzk_mock_enabled
         self.chzzk_api_base_url = os.getenv("CHZZK_API_BASE_URL", "https://openapi.chzzk.naver.com")
         self.session_auth_path = os.getenv("CHZZK_SESSION_AUTH_PATH", "/open/v1/sessions/auth")
         self.chat_subscribe_path = os.getenv("CHZZK_CHAT_SUBSCRIBE_PATH", "/open/v1/sessions/events/subscribe/chat")
@@ -38,6 +40,19 @@ class ChzzkSessionService:
         self.socket_request_timeout_seconds = float(os.getenv("CHZZK_SOCKET_REQUEST_TIMEOUT_SEC", "5"))
 
     async def connect_session(self, request: ChzzkSessionConnectReq) -> ChzzkSessionConnectRes:
+        if self.mock_enabled:
+            logger.info(
+                "[ChzzkSessionService] Mock session connected | streamId=%s attemptId=%s",
+                request.broadcastStreamId,
+                request.attemptId,
+            )
+            return ChzzkSessionConnectRes(
+                broadcastStreamId=request.broadcastStreamId,
+                attemptId=request.attemptId,
+                sessionKey=f"mock-session-{request.broadcastStreamId}",
+                channelId=f"mock-channel-{request.broadcastStreamId}",
+            )
+
         if chzzk_session_registry.shutting_down:
             raise ChzzkSessionException(status_code=503, code="SERVER_SHUTTING_DOWN", message="FastAPI 서버가 종료 중이어서 치지직 세션 연결을 처리할 수 없습니다.", broadcast_stream_id=request.broadcastStreamId, attempt_id=request.attemptId)
 
@@ -85,6 +100,19 @@ class ChzzkSessionService:
             raise ChzzkSessionException(status_code=500, code="UNEXPECTED_INTERNAL_ERROR", message="치지직 세션 연결 처리 중 예기치 않은 내부 오류가 발생했습니다.", broadcast_stream_id=request.broadcastStreamId, attempt_id=request.attemptId) from exc
 
     async def connect_channel(self, request: ChzzkChannelConnectReq) -> ChzzkChannelConnectRes:
+        if self.mock_enabled:
+            logger.info(
+                "[ChzzkSessionService] Mock channel connected | streamId=%s channelName=%s",
+                request.broadcastStreamId,
+                request.channelName,
+            )
+            return ChzzkChannelConnectRes(
+                broadcastStreamId=request.broadcastStreamId,
+                sessionKey=request.sessionKey,
+                channelName=request.channelName,
+                status="연결 성공",
+            )
+
         async with chzzk_session_registry.stream_lock(request.broadcastStreamId):
             active_session = chzzk_session_registry.active_sessions.get(request.broadcastStreamId)
             if active_session is None:
@@ -97,6 +125,19 @@ class ChzzkSessionService:
         return ChzzkChannelConnectRes(broadcastStreamId=request.broadcastStreamId, sessionKey=request.sessionKey, channelName=request.channelName, status="연결 성공")
 
     async def disconnect_channel(self, request: ChzzkChannelConnectReq) -> ChzzkChannelConnectRes:
+        if self.mock_enabled:
+            logger.info(
+                "[ChzzkSessionService] Mock channel disconnected | streamId=%s channelName=%s",
+                request.broadcastStreamId,
+                request.channelName,
+            )
+            return ChzzkChannelConnectRes(
+                broadcastStreamId=request.broadcastStreamId,
+                sessionKey=request.sessionKey,
+                channelName=request.channelName,
+                status="연결 종료",
+            )
+
         async with chzzk_session_registry.stream_lock(request.broadcastStreamId):
             active_session = chzzk_session_registry.active_sessions.get(request.broadcastStreamId)
             if active_session is None:
