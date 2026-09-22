@@ -3,6 +3,8 @@ spring:
     name: "SKU_SW"
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver # MySQL JDBC 드라이버 클래스 지정
+    hikari:
+      maximum-pool-size: 30
   jpa:
     database: mysql # 사용할 데이터베이스 종류 설정 (MySQL)
     show-sql: false # 실행되는 SQL 쿼리를 콘솔에 출력할지 여부 설정
