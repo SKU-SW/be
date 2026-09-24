@@ -104,6 +104,9 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    testLogging {
+        showStandardStreams = project.hasProperty('showTestLogs')
+    }
 }
 
 // --- QueryDSL generated 경로 지정 ---

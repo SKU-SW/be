@@ -4,11 +4,11 @@ import com.example.sku_sw.domain.auth.dto.AuthChzzkAuthUrlResDto;
 import com.example.sku_sw.domain.auth.enums.AuthErrorCode;
 import com.example.sku_sw.domain.auth.service.AuthService;
 import com.example.sku_sw.domain.broadcast.dto.*;
-import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelReqDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkRedisChannelResDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateReqDto;
 import com.example.sku_sw.domain.chat.dto.FastApiChzzkSessionCreateResDto;
 import com.example.sku_sw.domain.broadcast.entity.Broadcast;
+import com.example.sku_sw.domain.broadcast.event.BroadcastTerminateRequestedEvent;
 import com.example.sku_sw.domain.broadcast.entity.BroadcastDialogue;
 import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.exception.ChzzkReauthRequiredException;
@@ -23,10 +23,9 @@ import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepositor
 import com.example.sku_sw.domain.broadcast.repository.BroadcastKeywordsRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastStatsRepository;
-import com.example.sku_sw.domain.chat.util.ChatRedisUtil;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.util.BroadcastTransactionLogger;
 import com.example.sku_sw.domain.broadcast.util.BroadcastStreamIdGenerator;
-import com.example.sku_sw.domain.broadcast.websocket.BroadcastWebSocketSessionRegistry;
 import com.example.sku_sw.domain.character.entity.Character;
 import com.example.sku_sw.domain.character.entity.CharacterImage;
 import com.example.sku_sw.domain.character.entity.CharacterImageDetail;
@@ -43,7 +42,6 @@ import com.example.sku_sw.domain.setting.repository.BroadcastSettingRepository;
 import com.example.sku_sw.domain.user.entity.User;
 import com.example.sku_sw.domain.user.repository.UserRepository;
 import com.example.sku_sw.global.exception.CustomException;
-import com.example.sku_sw.domain.chat.util.FastApiUtil;
 import com.example.sku_sw.global.response.CursorSliceResponse;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.RequiredArgsConstructor;
@@ -51,11 +49,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.util.StringUtils;
-import org.springframework.web.socket.CloseStatus;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -73,23 +70,17 @@ import java.util.UUID;
 public class BroadcastService {
 
     private final BroadcastStartService broadcastStartService;
+    private final ApplicationEventPublisher applicationEventPublisher;
     private final UserRepository userRepository;
     private final BroadcastRepository broadcastRepository;
     private final BroadcastDialogueRepository broadcastDialogueRepository;
     private final BroadcastRedisUtil broadcastRedisUtil;
-    private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastDialoguePersistenceService broadcastDialoguePersistenceService;
-    private final BroadcastAnalysisService broadcastAnalysisService;
-    private final FastApiUtil fastApiUtil;
     private final BroadcastStatsRepository broadcastStatsRepository;
-    private final ChatRedisUtil chatRedisUtil;
     private final BroadcastKeywordsRepository broadcastKeywordsRepository;
     private final CharacterTriggerWordRepository characterTriggerWordRepository;
     private final CharacterImageDetailRepository characterImageDetailRepository;
     private final BroadcastAnalysisRepository broadcastAnalysisRepository;
     private final BroadcastAnalysisMapper broadcastAnalysisMapper;
-    private final BroadcastStreamerSilenceService streamerSilenceService;
-    private final BroadcastProactiveChatService proactiveChatService;
 
     private static final DateTimeFormatter BROADCAST_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH:mm:ss");
     @Value("${spring.cloud.cloudfront.domain}")
@@ -150,6 +141,7 @@ public class BroadcastService {
             - DB 상태를 TERMINATED로 변경하고 종료 시간을 기록한다.
          */
         broadcast.normalTerminate();
+        BroadcastTransactionLogger.logCurrent("terminateCurrentBroadcast.DB_UPDATED", broadcast.getStreamId());
 
         /*
             5. ResponseDto 생성
@@ -584,17 +576,6 @@ public class BroadcastService {
         return result;
     }
 
-    private FastApiChzzkRedisChannelReqDto buildFastApiChzzkRedisChannelReqDto(
-            String broadcastStreamId,
-            BroadcastUserRedisDto broadcastUserRedisDto
-    ) {
-        return new FastApiChzzkRedisChannelReqDto(
-                broadcastStreamId,
-                broadcastUserRedisDto.getSessionKey(),
-                broadcastUserRedisDto.getChannelName()
-        );
-    }
-
     /**
      * 현재 방송 정보 조회용 방송 캐릭터 정보 응답 DTO 생성
      * @param broadcast : 진행 중인 방송 엔티티
@@ -906,56 +887,9 @@ public class BroadcastService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                streamerSilenceService.cancel(broadcastStreamId);
-                proactiveChatService.cancel(broadcastStreamId);
-                BroadcastUserRedisDto broadcastUserRedisDto = null;
-                boolean remainingDialoguesSaved = false;
-                try {
-                    // 1. Redis에 남아있는 대화 데이터를 DB에 저장
-                    broadcastDialoguePersistenceService.saveRemainingRedisDialogues(broadcastStreamId);
-                    remainingDialoguesSaved = true;
-                } catch (Exception e) {
-                    log.error("[BroadcastService] 방송 종료 잔여 대화 저장 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
-                }
-
-                if (remainingDialoguesSaved) {
-                    try {
-                        // 2. 동기적으로 방송 데이터 분석
-                        broadcastAnalysisService.analysisBroadcastDialogues(broadcastStreamId);
-                    } catch (Exception e) {
-                        log.error("[BroadcastService] 방송 분석 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
-                    }
-                } else {
-                    log.warn("[BroadcastService] 잔여 대화 저장 실패로 방송 분석을 건너뜁니다. | streamId: {}", broadcastStreamId);
-                }
-
-                try {
-                    // 3. Redis에서 방송 User 정보 조회
-                    broadcastUserRedisDto = broadcastRedisUtil.getBroadcastUserDto(broadcastStreamId);
-                    // 4. 치지직 Redis 채널 연결 해제 로직
-                    if (StringUtils.hasText(broadcastUserRedisDto.getChannelName())) {
-                        fastApiUtil.disconnectChzzkRedisChannel(
-                                buildFastApiChzzkRedisChannelReqDto(broadcastStreamId, broadcastUserRedisDto)
-                        );
-                    }
-                    if (StringUtils.hasText(broadcastUserRedisDto.getChannelId())) {
-                        chatRedisUtil.unsubscribeChannelPattern(broadcastUserRedisDto.getChannelId());
-                    }
-                } catch (Exception e) {
-                    log.error("[BroadcastService] 방송 종료 정리 중 오류 발생 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e);
-                } finally {
-                    try { broadcastRedisUtil.deleteBroadcastCharacterValue(broadcastStreamId); }
-                    catch (Exception e) { log.error("[BroadcastService] 방송 캐릭터 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
-                    try { broadcastRedisUtil.deleteBroadcastUserValue(broadcastStreamId); }
-                    catch (Exception e) { log.error("[BroadcastService] 방송 유저 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
-                    try { broadcastRedisUtil.deleteBroadcastInfo(broadcastStreamId); }
-                    catch (Exception e) { log.error("[BroadcastService] 방송 정보 Redis 삭제 실패 | streamId: {}, message: {}", broadcastStreamId, e.getMessage(), e); }
-                }
-
-                sessionRegistry.disconnect(
-                        broadcastStreamId,
-                        CloseStatus.NORMAL.withReason("Broadcast terminated")
-                );
+                BroadcastTransactionLogger.logCurrent("terminate.afterCommit.ENTER", broadcastStreamId);
+                applicationEventPublisher.publishEvent(new BroadcastTerminateRequestedEvent(broadcastStreamId));
+                BroadcastTransactionLogger.logCurrent("terminate.afterCommit.EXIT", broadcastStreamId);
             }
         });
         log.debug("[BroadcastService] registerBroadcastTerminateSideEffectsAfterCommit() - END | broadcastStreamId: {}", broadcastStreamId);

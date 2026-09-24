@@ -9,6 +9,7 @@ import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueBulkRepos
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.util.BroadcastTransactionLogger;
 import com.example.sku_sw.global.exception.CustomException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,7 @@ public class BroadcastDialoguePersistenceService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void saveRemainingRedisDialogues(String broadcastStreamId) {
+        BroadcastTransactionLogger.logCurrent("saveRemainingRedisDialogues.ENTER", broadcastStreamId);
         log.info("[BroadcastDialoguePersistenceService] saveRemainingRedisDialogues() - START | streamId: {}", broadcastStreamId);
 
         /*
@@ -53,6 +55,7 @@ public class BroadcastDialoguePersistenceService {
             - saveDialogues() 내부 중복 제거 로직을 통해 이미 저장된 cursorId는 제외한다.
          */
         saveDialogues(broadcastStreamId, remainingDialogues);
+        BroadcastTransactionLogger.logCurrent("saveRemainingRedisDialogues.AFTER_SAVE", broadcastStreamId);
 
         log.info("[BroadcastDialoguePersistenceService] saveRemainingRedisDialogues() - END | streamId: {}, remainingSize: {}",
                 broadcastStreamId, remainingDialogues.size());

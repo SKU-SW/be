@@ -13,6 +13,7 @@ import com.example.sku_sw.domain.broadcast.repository.BroadcastAnalysisRepositor
 import com.example.sku_sw.domain.broadcast.repository.BroadcastDialogueRepository;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
+import com.example.sku_sw.domain.broadcast.util.BroadcastTransactionLogger;
 import com.example.sku_sw.global.exception.CustomException;
 import com.example.sku_sw.global.util.GeminiUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -65,6 +66,7 @@ public class BroadcastAnalysisService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void analysisBroadcastDialogues(String broadcastStreamId) {
+        BroadcastTransactionLogger.logCurrent("analysisBroadcastDialogues.ENTER", broadcastStreamId);
         log.info("[BroadcastAnalysisService] analysisBroadcastDialogues() - START | streamId: {}", broadcastStreamId);
 
         // 1. 방송을 먼저 조회하고, 이미 분석된 방송이면 중복 처리를 막는다.
@@ -84,7 +86,9 @@ public class BroadcastAnalysisService {
 
         // 3. Gemini에 분석을 요청하고 응답 JSON을 DTO로 파싱한다.
         String prompt = createAnalysisPrompt(broadcast, dialogues);
+        BroadcastTransactionLogger.logCurrent("analysisBroadcastDialogues.BEFORE_GEMINI", broadcastStreamId);
         String response = geminiUtil.analyzeBroadcastDialogues(prompt).block();
+        BroadcastTransactionLogger.logCurrent("analysisBroadcastDialogues.AFTER_GEMINI", broadcastStreamId);
         BroadcastAnalysisGeminiResDto analysisResponse = parseAnalysisResponse(response);
 
         // 4. summary는 Redis 0번 슬롯의 방송 요약을 그대로 사용한다.

@@ -46,4 +46,19 @@ public class AppConfig {
         taskExecutor.initialize();
         return taskExecutor;
     }
+
+    /**
+     * 방송 종료 후 후처리 전용 비동기 실행기
+     * @return : 방송 종료 응답 처리 Executor
+     */
+    @Bean(name = "broadcastTerminationExecutor")
+    public Executor broadcastTerminationExecutor() {
+        ThreadPoolTaskExecutor taskExecutor = new ThreadPoolTaskExecutor();
+        taskExecutor.setCorePoolSize(4);
+        taskExecutor.setMaxPoolSize(8);
+        taskExecutor.setQueueCapacity(100);
+        taskExecutor.setThreadNamePrefix("broadcast-termination-");
+        taskExecutor.initialize();
+        return taskExecutor;
+    }
 }
