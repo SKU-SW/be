@@ -8,6 +8,7 @@ import com.example.sku_sw.domain.broadcast.enums.BroadcastErrorCode;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketAttributes;
 import com.example.sku_sw.domain.broadcast.enums.WebSocketSessionBundleStatus;
 import com.example.sku_sw.domain.broadcast.repository.BroadcastRepository;
+import com.example.sku_sw.domain.broadcast.service.BroadcastRestoreService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastConnectionTimeoutService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastDialoguePersistenceService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastMessageService;
@@ -147,6 +148,7 @@ class BroadcastWebSocketStartIntegrationTest {
                 broadcastRepository,
                 transactionTemplate,
                 broadcastGeminiRequestService,
+                new BroadcastRestoreService(broadcastRedisUtil, chatRedisUtil, fastApiUtil),
                 chatRedisUtil,
                 fastApiUtil,
                 streamerSilenceService,

@@ -145,3 +145,70 @@ def test_connect_chzzk_channel_success(monkeypatch) -> None:
         "channelName": "Chat:channel.message",
         "status": "연결 성공",
     }
+
+
+def test_connect_chzzk_session_mock_mode(monkeypatch) -> None:
+    async def fail_on_external_request(_pending):
+        raise AssertionError("Mock 모드에서 치지직 외부 API를 호출하면 안 됩니다.")
+
+    monkeypatch.setattr(chzzk_session_service, "mock_enabled", True)
+    monkeypatch.setattr(chzzk_session_service, "request_session_auth_url", fail_on_external_request)
+
+    response = client.post(
+        "/api/chzzk/session/connect",
+        json={
+            "broadcastStreamId": "stream-mock-1",
+            "attemptId": "attempt-mock-1",
+            "accessToken": "unused-token",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "broadcastStreamId": "stream-mock-1",
+        "attemptId": "attempt-mock-1",
+        "sessionKey": "mock-session-stream-mock-1",
+        "channelId": "mock-channel-stream-mock-1",
+    }
+
+
+def test_connect_chzzk_channel_mock_mode(monkeypatch) -> None:
+    monkeypatch.setattr(chzzk_session_service, "mock_enabled", True)
+
+    response = client.post(
+        "/api/chzzk/channel/connect",
+        json={
+            "broadcastStreamId": "stream-mock-1",
+            "sessionKey": "mock-session-stream-mock-1",
+            "channelName": "Chat:mock-channel-stream-mock-1.message",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "broadcastStreamId": "stream-mock-1",
+        "sessionKey": "mock-session-stream-mock-1",
+        "channelName": "Chat:mock-channel-stream-mock-1.message",
+        "status": "연결 성공",
+    }
+
+
+def test_disconnect_chzzk_channel_mock_mode(monkeypatch) -> None:
+    monkeypatch.setattr(chzzk_session_service, "mock_enabled", True)
+
+    response = client.post(
+        "/api/chzzk/channel/disconnect",
+        json={
+            "broadcastStreamId": "stream-mock-1",
+            "sessionKey": "mock-session-stream-mock-1",
+            "channelName": "Chat:mock-channel-stream-mock-1.message",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "broadcastStreamId": "stream-mock-1",
+        "sessionKey": "mock-session-stream-mock-1",
+        "channelName": "Chat:mock-channel-stream-mock-1.message",
+        "status": "연결 종료",
+    }

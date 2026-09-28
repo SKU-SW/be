@@ -12,6 +12,7 @@ services:
     environment:
       - TZ=${TZ:-Asia/Seoul}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHZZK_MOCK_ENABLED=${CHZZK_MOCK_ENABLED:-false}
       - CHZZK_API_BASE_URL=${CHZZK_API_BASE_URL:-https://openapi.chzzk.naver.com}
       - CHZZK_SESSION_AUTH_PATH=${CHZZK_SESSION_AUTH_PATH:-/open/v1/sessions/auth}
       - CHZZK_CHAT_SUBSCRIBE_PATH=${CHZZK_CHAT_SUBSCRIBE_PATH:-/open/v1/sessions/events/subscribe/chat}
