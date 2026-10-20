@@ -16,7 +16,7 @@ import com.example.sku_sw.domain.broadcast.service.BroadcastProactiveChatService
 import com.example.sku_sw.domain.broadcast.service.BroadcastPromptHistoryService;
 import com.example.sku_sw.domain.broadcast.service.BroadcastStreamerSilenceService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiBootstrapService;
-import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiLiveService;
+import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiWebSocketConnectionService;
 import com.example.sku_sw.domain.broadcast.service.gemini.BroadcastGeminiRequestService;
 import com.example.sku_sw.domain.broadcast.util.BroadcastPromptBuilder;
 import com.example.sku_sw.domain.broadcast.util.BroadcastRedisUtil;
@@ -88,7 +88,7 @@ class BroadcastWebSocketStartIntegrationTest {
     private TransactionTemplate transactionTemplate;
 
     @Mock
-    private BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
 
     @Mock
     private GeminiUtil geminiUtil;
@@ -129,7 +129,7 @@ class BroadcastWebSocketStartIntegrationTest {
         broadcastGeminiBootstrapService = new BroadcastGeminiBootstrapService(
                 objectMapper,
                 sessionRegistry,
-                broadcastGeminiLiveService,
+                broadcastGeminiWebSocketConnectionService,
                 broadcastGeminiRequestService,
                 geminiUtil,
                 broadcastRedisUtil,
@@ -176,7 +176,7 @@ class BroadcastWebSocketStartIntegrationTest {
 
         // then
         verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
-        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
+        verify(broadcastGeminiWebSocketConnectionService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
 
@@ -206,7 +206,7 @@ class BroadcastWebSocketStartIntegrationTest {
                 .isEqualTo(BroadcastErrorCode.CHZZK_REDIS_CHANNEL_NOT_CREATED.getMessage());
         verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
         verifyNoInteractions(chatRedisUtil, fastApiUtil);
-        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
+        verify(broadcastGeminiWebSocketConnectionService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
     }
 
     @Test
@@ -218,7 +218,7 @@ class BroadcastWebSocketStartIntegrationTest {
         stubPromptDependencies();
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         given(chatRedisUtil.resubscribeChannelPattern("Chat:channel-1.message")).willReturn(true);
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any()))
+        given(broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any()))
                 .willReturn(new CompletableFuture<>());
 
         // when
@@ -253,7 +253,7 @@ class BroadcastWebSocketStartIntegrationTest {
         // then
         verify(chatRedisUtil, times(1)).unsubscribeChannelPattern("channel-1");
         verify(clientSession, atLeastOnce()).close(any(CloseStatus.class));
-        verify(broadcastGeminiLiveService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
+        verify(broadcastGeminiWebSocketConnectionService, never()).connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any());
         assertThat(sessionRegistry.getSessionBundle(BROADCAST_STREAM_ID)).isNull();
     }
 
@@ -275,7 +275,7 @@ class BroadcastWebSocketStartIntegrationTest {
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubChatRedisRecovery(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(failedFuture);
+        given(broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(failedFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(clientSession);
@@ -328,7 +328,7 @@ class BroadcastWebSocketStartIntegrationTest {
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubChatRedisRecovery(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
+        given(broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);
@@ -380,7 +380,7 @@ class BroadcastWebSocketStartIntegrationTest {
         given(broadcastRedisUtil.hasBroadcastCharacterValue(BROADCAST_STREAM_ID)).willReturn(true);
         stubChatRedisRecovery(true);
         stubPromptDependencies();
-        given(broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
+        given(broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(any(), anyLong(), any(), any())).willReturn(firstGeminiFuture, secondGeminiFuture);
 
         // when
         broadcastWebSocketHandler.afterConnectionEstablished(firstClientSession);

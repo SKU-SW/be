@@ -55,7 +55,7 @@ class BroadcastGeminiRefreshServiceTest {
     private BroadcastGeminiRequestService broadcastGeminiRequestService;
 
     @Mock
-    private BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
 
     @Mock
     private TaskScheduler taskScheduler;
@@ -170,7 +170,7 @@ class BroadcastGeminiRefreshServiceTest {
         given(sessionRegistry.getSessionBundleIfCurrent(streamId, generation)).willReturn(bundle);
         given(bundle.getGeminiHandler()).willReturn(null);
         given(bundle.getClientSession()).willReturn(mock(WebSocketSession.class));
-        given(broadcastGeminiLiveService.consumePendingHandler("new-session")).willReturn(null);
+        given(broadcastGeminiWebSocketConnectionService.consumePendingHandler("new-session")).willReturn(null);
         given(broadcastRedisUtil.getActiveDialoguesAfterCursor(streamId, snapshotCursorId)).willReturn(List.of());
 
         refreshService.handleRefreshSuccess(streamId, generation, oldGeminiSession, newGeminiSession, snapshotCursorId);

@@ -412,21 +412,7 @@ public class BroadcastRedisUtil {
      * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
      */
     public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content) {
-        return pushBroadcastInfo(broadcastStreamId, subject, content, null);
-    }
-
-    /**
-     * 방송 대화 내역을 Redis List에 추가하는 함수
-     * - Key: BroadcastInfo:{broadcastStreamId}
-     * - Value: cursorId와 dataStatus, emotion이 포함된 BroadcastInfoRedisDto JSON (Right Push)
-     * @param broadcastStreamId : 방송 스트림 ID
-     * @param subject : 대화 주체
-     * @param content : 대화 내용
-     * @param emotion : 응답 감정값
-     * @return : cursorId가 주입되어 Redis에 저장된 방송 대화 정보
-     */
-    public BroadcastInfoRedisDto pushBroadcastInfo(String broadcastStreamId, DialogueSubject subject, String content, Emotion emotion) {
-        return pushBroadcastInfo(broadcastStreamId, subject, content, emotion, false);
+        return pushBroadcastInfo(broadcastStreamId, subject, content, null, false);
     }
 
     /**

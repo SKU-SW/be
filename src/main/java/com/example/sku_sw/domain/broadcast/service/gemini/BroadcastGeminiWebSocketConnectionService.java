@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class BroadcastGeminiLiveService {
+public class BroadcastGeminiWebSocketConnectionService {
 
     private final StandardWebSocketClient webSocketClient;
     private final GeminiLiveWebSocketHandlerFactory geminiLiveWebSocketHandlerFactory;

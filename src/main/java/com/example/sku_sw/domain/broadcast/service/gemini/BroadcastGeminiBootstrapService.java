@@ -43,7 +43,7 @@ public class BroadcastGeminiBootstrapService {
 
     private final ObjectMapper objectMapper;
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final GeminiUtil geminiUtil;
     private final BroadcastRedisUtil broadcastRedisUtil;
@@ -80,12 +80,14 @@ public class BroadcastGeminiBootstrapService {
             String systemPrompt = broadcastPromptBuilder.buildBroadcastDialoguePrompt(character, summary, recentActiveInfos, historyContext);
             String voiceName = deriveVoiceName(character);
 
+
+
             /*
-                2. 생성한 시스템 프롬프트를 포함해 Gemini Live WebSocket bootstrap을 시작한다.
+                3. 생성한 시스템 프롬프트를 포함해 Gemini Live WebSocket bootstrap을 시작한다.
                 - setupComplete까지 성공하면 후속 성공 처리로 연결한다.
                 - 실패하면 현재 generation bundle만 정리한다.
              */
-            broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, generation, systemPrompt, voiceName)
+            broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(broadcastStreamId, generation, systemPrompt, voiceName)
                     .thenAccept(geminiSession -> handleBootstrapSuccess(broadcastStreamId, clientSession, generation, geminiSession))
                     .exceptionally(throwable -> {
                         handleBootstrapFailure(broadcastStreamId, clientSession, generation, throwable);
@@ -131,7 +133,7 @@ public class BroadcastGeminiBootstrapService {
             2. caller가 전달한 프롬프트로 Gemini 연결을 생성한다.
             - setupComplete까지 완료된 신규 Gemini 세션을 Future로 반환한다.
          */
-        return broadcastGeminiLiveService.connectGeminiApiWebSocketAsync(broadcastStreamId, generation, systemPrompt, voiceName)
+        return broadcastGeminiWebSocketConnectionService.connectGeminiApiWebSocketAsync(broadcastStreamId, generation, systemPrompt, voiceName)
                 .whenComplete((geminiSession, throwable) -> {
                     if (geminiSession != null) {
                         log.info("[BroadcastGeminiBootstrapService] bootstrapGeminiForRefreshAsync() - END | streamId: {}, generation: {}, sessionId: {}",
@@ -166,7 +168,7 @@ public class BroadcastGeminiBootstrapService {
             - 만약 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는다면, 새롭게 생성된 Gemini WebSocket Session을 종료시킨다.
             - 현재 Session Registry에 저장된 Session Bundle과 일치하지 않는 경우는, Gemini WebSocket Session이 생성되는 도중에 클라이언트가 새로운 WebSocket 연결을 시도한 것이기 때문에 Gemini Session만 종료시킨다.
          */
-        GeminiLiveWebSocketHandler handler = broadcastGeminiLiveService.consumePendingHandler(geminiSession.getId());
+        GeminiLiveWebSocketHandler handler = broadcastGeminiWebSocketConnectionService.consumePendingHandler(geminiSession.getId());
         if (!sessionRegistry.isCurrentClientSession(broadcastStreamId, generation, clientSession)) {
             BroadcastWebSocketSessionBundle currentBundle = sessionRegistry.getSessionBundle(broadcastStreamId);
             geminiUtil.closeGeminiSessionQuietly(

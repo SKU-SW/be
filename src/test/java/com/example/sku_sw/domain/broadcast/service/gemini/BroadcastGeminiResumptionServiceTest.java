@@ -36,7 +36,7 @@ class BroadcastGeminiResumptionServiceTest {
     private BroadcastGeminiResumptionService broadcastGeminiResumptionService;
 
     @Mock
-    private BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
 
     @Mock
     private BroadcastGeminiRequestService broadcastGeminiRequestService;
@@ -50,7 +50,7 @@ class BroadcastGeminiResumptionServiceTest {
     @BeforeEach
     void setUp() {
         sessionRegistry = new BroadcastWebSocketSessionRegistry();
-        broadcastGeminiResumptionService = new BroadcastGeminiResumptionService(sessionRegistry, broadcastGeminiLiveService, broadcastGeminiRequestService, geminiUtil);
+        broadcastGeminiResumptionService = new BroadcastGeminiResumptionService(sessionRegistry, broadcastGeminiWebSocketConnectionService, broadcastGeminiRequestService, geminiUtil);
     }
 
     @Test
@@ -74,9 +74,9 @@ class BroadcastGeminiResumptionServiceTest {
 
         WebSocketSession resumedGeminiSession = mock(WebSocketSession.class);
         given(resumedGeminiSession.getId()).willReturn("new-session");
-        given(broadcastGeminiLiveService.resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle"))
+        given(broadcastGeminiWebSocketConnectionService.resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle"))
                 .willReturn(CompletableFuture.completedFuture(resumedGeminiSession));
-        given(broadcastGeminiLiveService.consumePendingHandler("new-session")).willReturn(resumedHandler);
+        given(broadcastGeminiWebSocketConnectionService.consumePendingHandler("new-session")).willReturn(resumedHandler);
 
         AtomicBoolean fallbackCalled = new AtomicBoolean(false);
 
@@ -93,7 +93,7 @@ class BroadcastGeminiResumptionServiceTest {
         assertThat(bundle.getGeminiSession()).isEqualTo(resumedGeminiSession);
         assertThat(bundle.getGeminiHandler()).isEqualTo(resumedHandler);
         assertThat(bundle.getGeminiSessionResumptionInProgress()).isTrue();
-        verify(broadcastGeminiLiveService, times(1)).resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle");
+        verify(broadcastGeminiWebSocketConnectionService, times(1)).resumeGeminiApiWebSocketAsync("stream-1", generation, "resume-handle");
         verify(broadcastGeminiRequestService, times(1)).getFirstResumptionEvent("stream-1", generation);
     }
 
@@ -118,6 +118,6 @@ class BroadcastGeminiResumptionServiceTest {
         // then
         assertThat(resumed).isFalse();
         assertThat(fallbackCalled).isTrue();
-        verify(broadcastGeminiLiveService, never()).resumeGeminiApiWebSocketAsync(eq("stream-1"), anyLong(), eq("resume-handle"));
+        verify(broadcastGeminiWebSocketConnectionService, never()).resumeGeminiApiWebSocketAsync(eq("stream-1"), anyLong(), eq("resume-handle"));
     }
 }

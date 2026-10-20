@@ -82,7 +82,7 @@ public class BroadcastMessageService {
                     DialogueSubject.STREAMER,
                     updatedMessage
             );
-            log.info("[BroadcastMessageService] handleClientMessage() - Client message saved | streamId: {}, cursorId: {}, clientMessage: {}",
+            log.info("[BroadcastMessageService] handleClientMessage() - Client의 메시지가 Redis에 저장되었습니다. | streamId: {}, cursorId: {}, clientMessage: {}",
                     broadcastStreamId, savedUserInfo.cursorId(), updatedMessage);
             applicationEventPublisher.publishEvent(BroadcastCompactionCheckRequestedEvent.builder()
                     .broadcastStreamId(broadcastStreamId)

@@ -47,32 +47,6 @@ public class BroadcastGeminiRequestService {
             """;
 
     /**
-     * 클라이언트 메시지를 Gemini Live WebSocket 세션으로 전송한다.
-     * - 현재 generation과 READY 상태를 확인한 후 realtimeInput.text 메시지를 전송한다.
-     *
-     * @param broadcastStreamId : 방송 스트림 ID
-     * @param generation        : 현재 세션 generation
-     * @param character         : 방송 캐릭터 정보
-     * @param clientMessage     : 클라이언트 메시지
-     */
-    public void processClientMessage(
-            String broadcastStreamId,
-            long generation,
-            BroadcastCharacterRedisDto character,
-            String clientMessage
-    ) {
-        log.info("[BroadcastGeminiRequestService] processClientMessage() - START | streamId: {}, generation: {}",
-                broadcastStreamId, generation);
-
-        sendRealtimeText(broadcastStreamId, generation, character, formatStreamerMessage(clientMessage));
-
-        log.info("[BroadcastGeminiRequestService] processClientMessage() - END | streamId: {}, generation: {}, characterId: {}",
-                broadcastStreamId,
-                generation,
-                character.getCharacterId());
-    }
-
-    /**
      * 이미 Gemini 입력 형식으로 포맷된 대화 블록을 Gemini Live WebSocket 세션으로 전송한다.
      * - 여러 줄 대화 블록을 추가 접두어 없이 그대로 realtimeInput.text로 전달한다.
      * @param broadcastStreamId : 방송 스트림 ID
@@ -179,60 +153,6 @@ public class BroadcastGeminiRequestService {
 
         log.info("[BroadcastGeminiRequestService] getFirstResumptionEvent() - END | streamId: {}, generation: {}",
                 broadcastStreamId, generation);
-    }
-
-    /**
-     * 시청자 채팅 메시지를 Gemini 세션의 초기 컨텍스트로 전달한다.
-     * - 모델 응답을 생성하지 않도록 clientContent/turnComplete:false 형식으로 전송한다.
-     * - request-flight는 증가시키지 않는다.
-     * @param message : CHZZK 채팅 메시지 DTO
-     */
-    public void sendViewerChatRequest(ChzzkChatMessageDto message) {
-        log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - START | streamId: {}",
-                message != null ? message.broadcastStreamId() : null);
-
-        /*
-            1. 방송 스트림에 연결된 현재 Session Bundle을 확인한다.
-            - Gemini 전송이 불가능한 상태면 로깅 후 종료한다.
-         */
-        if (message == null || message.broadcastStreamId() == null) {
-            log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | action: message_invalid");
-            return;
-        }
-
-        BroadcastWebSocketSessionBundle bundle = sessionRegistry.getSessionBundle(message.broadcastStreamId());
-        if (bundle == null || !bundle.canSendToGemini() || bundle.getGeminiSession() == null) {
-            log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | streamId: {}, action: skip",
-                    message.broadcastStreamId());
-            return;
-        }
-
-        try {
-            /*
-                2. 시청자/스트리머 메시지를 clientContent payload로 구성해 Gemini에 전송한다.
-                - turnComplete:false로 유지하여 모델 응답 생성 없이 컨텍스트만 적재한다.
-             */
-            ObjectNode requestNode = objectMapper.createObjectNode();
-            ObjectNode clientContentNode = requestNode.putObject("clientContent");
-            ArrayNode turnsNode = clientContentNode.putArray("turns");
-            ObjectNode turnNode = turnsNode.addObject();
-            turnNode.put("role", "user");
-            ArrayNode partsNode = turnNode.putArray("parts");
-            partsNode.addObject().put("text", buildViewerChatText(message));
-            clientContentNode.put("turnComplete", false);
-
-            String requestPayload = objectMapper.writeValueAsString(requestNode);
-            if (bundle.getGeminiHandler() != null) {
-                bundle.getGeminiHandler().recordOutboundMessage("VIEWER_CHAT_REQUEST", requestPayload);
-            }
-            bundle.getGeminiSession().sendMessage(new TextMessage(requestPayload));
-        } catch (Exception e) {
-            log.error("[BroadcastGeminiRequestService] sendViewerChatRequest() - Failed | streamId: {}, error: {}",
-                    message.broadcastStreamId(), e.getMessage(), e);
-        }
-
-        log.info("[BroadcastGeminiRequestService] sendViewerChatRequest() - END | streamId: {}",
-                message.broadcastStreamId());
     }
 
     /**

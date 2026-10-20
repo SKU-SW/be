@@ -21,7 +21,7 @@ import org.springframework.web.socket.WebSocketSession;
 public class BroadcastGeminiResumptionService {
 
     private final BroadcastWebSocketSessionRegistry sessionRegistry;
-    private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
     private final GeminiUtil geminiUtil;
 
@@ -76,10 +76,10 @@ public class BroadcastGeminiResumptionService {
                 - BroadcastGeminiLiveService에서 임시로 갖고 있는 GeminiWebSocketHandler를 remove해서 가져온다.
              */
             bundle.updateStatus(WebSocketSessionBundleStatus.GEMINI_CONNECTING);
-            WebSocketSession resumedGeminiSession = broadcastGeminiLiveService
+            WebSocketSession resumedGeminiSession = broadcastGeminiWebSocketConnectionService
                     .resumeGeminiApiWebSocketAsync(broadcastStreamId, generation, resumptionHandle)
                     .join();
-            GeminiLiveWebSocketHandler resumedHandler = broadcastGeminiLiveService.consumePendingHandler(resumedGeminiSession.getId());
+            GeminiLiveWebSocketHandler resumedHandler = broadcastGeminiWebSocketConnectionService.consumePendingHandler(resumedGeminiSession.getId());
 
             /*
                 4. resumption 완료 시점에도 현재 bundle이 여전히 동일한 generation/세션인지 재검증한다.

@@ -24,7 +24,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 
@@ -50,7 +49,7 @@ public class BroadcastGeminiRefreshService {
     private final GeminiUtil geminiUtil;
     private final BroadcastGeminiBootstrapService broadcastGeminiBootstrapService;
     private final BroadcastGeminiRequestService broadcastGeminiRequestService;
-    private final BroadcastGeminiLiveService broadcastGeminiLiveService;
+    private final BroadcastGeminiWebSocketConnectionService broadcastGeminiWebSocketConnectionService;
     private final TaskScheduler taskScheduler;
 
     /**
@@ -190,7 +189,7 @@ public class BroadcastGeminiRefreshService {
     ) {
         log.info("[BroadcastGeminiRefreshService] handleRefreshSuccess() - START | streamId: {}, generation: {}, snapshotCursorId: {}",
                 broadcastStreamId, generation, snapshotCursorId);
-        GeminiLiveWebSocketHandler newHandler = broadcastGeminiLiveService.consumePendingHandler(newGeminiSession.getId());
+        GeminiLiveWebSocketHandler newHandler = broadcastGeminiWebSocketConnectionService.consumePendingHandler(newGeminiSession.getId());
 
         /*
             1. 현재 generation 번들을 재검증한다.
